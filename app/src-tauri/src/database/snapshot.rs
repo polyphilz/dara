@@ -1,0 +1,346 @@
+use std::{
+    collections::HashSet,
+    fs::{self, File, OpenOptions},
+    io::{BufReader, BufWriter, Read, Write},
+    path::{Component, Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
+
+use super::{
+    connection::{self, DatabaseKind, FileState},
+    error::{DatabaseError, Result},
+    migrations::{self, MigrationHeads},
+    paths::DatabasePaths,
+    validation,
+};
+
+static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SnapshotFile {
+    pub file_name: String,
+    pub sha256: String,
+    pub migration_head: Option<i32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SnapshotManifest {
+    pub format_version: u32,
+    pub created_at: i64,
+    pub application_version: String,
+    pub main: SnapshotFile,
+    pub media: SnapshotFile,
+    pub relationship_validated: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct CreatedSnapshot {
+    pub manifest_path: PathBuf,
+    pub manifest: SnapshotManifest,
+}
+
+pub fn create_snapshot_pair(
+    paths: &DatabasePaths,
+    application_version: &str,
+) -> Result<CreatedSnapshot> {
+    fs::create_dir_all(&paths.backups)?;
+
+    let created_at = now_millis()?;
+    let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let stem = format!("snapshot-{created_at}-{}-{sequence}", std::process::id());
+    let main_name = format!("{stem}-main.sqlite3");
+    let media_name = format!("{stem}-media.sqlite3");
+    let manifest_name = format!("{stem}.json");
+
+    let main_temp = paths.backups.join(format!(".{main_name}.tmp"));
+    let media_temp = paths.backups.join(format!(".{media_name}.tmp"));
+    let manifest_temp = paths.backups.join(format!(".{manifest_name}.tmp"));
+    let main_final = paths.backups.join(&main_name);
+    let media_final = paths.backups.join(&media_name);
+    let manifest_final = paths.backups.join(&manifest_name);
+
+    let mut main_source =
+        connection::open_writer(&paths.main, DatabaseKind::Main, FileState::Existing)?;
+    let mut media_source =
+        connection::open_writer(&paths.media, DatabaseKind::Media, FileState::Existing)?;
+    let heads = migrations::current_heads(&mut main_source, &mut media_source)?;
+
+    vacuum_into(&main_source, &main_temp)?;
+    vacuum_into(&media_source, &media_temp)?;
+    sync_file(&main_temp)?;
+    sync_file(&media_temp)?;
+
+    let mut main_snapshot = connection::open_read_only(&main_temp, DatabaseKind::Main)?;
+    let mut media_snapshot = connection::open_read_only(&media_temp, DatabaseKind::Media)?;
+    let relationship_validated = validation::validate_snapshot_pair(
+        &mut main_snapshot,
+        &mut media_snapshot,
+        &main_temp,
+        &media_temp,
+    )?;
+    drop(main_snapshot);
+    drop(media_snapshot);
+
+    let main_hash = hash_file(&main_temp)?;
+    let media_hash = hash_file(&media_temp)?;
+
+    fs::rename(&main_temp, &main_final)?;
+    fs::rename(&media_temp, &media_final)?;
+    sync_directory(&paths.backups)?;
+
+    let manifest = SnapshotManifest {
+        format_version: 1,
+        created_at,
+        application_version: application_version.to_owned(),
+        main: SnapshotFile {
+            file_name: main_name,
+            sha256: main_hash,
+            migration_head: heads.main,
+        },
+        media: SnapshotFile {
+            file_name: media_name,
+            sha256: media_hash,
+            migration_head: heads.media,
+        },
+        relationship_validated,
+    };
+
+    write_manifest(&manifest_temp, &manifest)?;
+    fs::rename(&manifest_temp, &manifest_final)?;
+    sync_directory(&paths.backups)?;
+
+    Ok(CreatedSnapshot {
+        manifest_path: manifest_final,
+        manifest,
+    })
+}
+
+pub fn load_and_validate_manifest(path: &Path) -> Result<SnapshotManifest> {
+    let file = File::open(path)?;
+    let manifest: SnapshotManifest = serde_json::from_reader(BufReader::new(file))?;
+    if manifest.format_version != 1 {
+        return Err(DatabaseError::InvalidSnapshot(format!(
+            "unsupported format version {}",
+            manifest.format_version
+        )));
+    }
+    if !manifest.relationship_validated {
+        return Err(DatabaseError::InvalidSnapshot(
+            "manifest was not finalized after relationship validation".into(),
+        ));
+    }
+
+    let directory = path.parent().ok_or_else(|| {
+        DatabaseError::InvalidSnapshot("manifest has no containing directory".into())
+    })?;
+    let main_path = resolve_snapshot_file(directory, &manifest.main.file_name)?;
+    let media_path = resolve_snapshot_file(directory, &manifest.media.file_name)?;
+    validate_recorded_hash(&main_path, &manifest.main.sha256)?;
+    validate_recorded_hash(&media_path, &manifest.media.sha256)?;
+
+    let mut main = connection::open_read_only(&main_path, DatabaseKind::Main)?;
+    let mut media = connection::open_read_only(&media_path, DatabaseKind::Media)?;
+    validation::validate_snapshot_pair(&mut main, &mut media, &main_path, &media_path)?;
+    let heads = migrations::current_heads(&mut main, &mut media)?;
+    let recorded = MigrationHeads {
+        main: manifest.main.migration_head,
+        media: manifest.media.migration_head,
+    };
+    if heads != recorded {
+        return Err(DatabaseError::InvalidSnapshot(format!(
+            "migration heads are {heads:?}, manifest records {recorded:?}"
+        )));
+    }
+    Ok(manifest)
+}
+
+pub fn restore_snapshot_pair(manifest_path: &Path, target: &DatabasePaths) -> Result<()> {
+    let manifest = load_and_validate_manifest(manifest_path)?;
+    if target.main.exists() || target.media.exists() {
+        return Err(DatabaseError::InvalidSnapshot(
+            "restore target must not contain an existing database pair".into(),
+        ));
+    }
+    fs::create_dir_all(target.root())?;
+
+    let directory = manifest_path.parent().ok_or_else(|| {
+        DatabaseError::InvalidSnapshot("manifest has no containing directory".into())
+    })?;
+    let source_main = resolve_snapshot_file(directory, &manifest.main.file_name)?;
+    let source_media = resolve_snapshot_file(directory, &manifest.media.file_name)?;
+    let temp_main = target.root.join(".dara.sqlite3.restore.tmp");
+    let temp_media = target.root.join(".media.sqlite3.restore.tmp");
+
+    copy_and_sync(&source_main, &temp_main)?;
+    copy_and_sync(&source_media, &temp_media)?;
+    let mut main = connection::open_read_only(&temp_main, DatabaseKind::Main)?;
+    let mut media = connection::open_read_only(&temp_media, DatabaseKind::Media)?;
+    validation::validate_snapshot_pair(&mut main, &mut media, &temp_main, &temp_media)?;
+    drop(main);
+    drop(media);
+
+    fs::rename(&temp_media, &target.media)?;
+    fs::rename(&temp_main, &target.main)?;
+    sync_directory(target.root())?;
+    Ok(())
+}
+
+pub fn prune_snapshots(backups: &Path) -> Result<()> {
+    if !backups.exists() {
+        return Ok(());
+    }
+
+    let mut snapshots = Vec::new();
+    for entry in fs::read_dir(backups)? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+        let manifest: SnapshotManifest =
+            match serde_json::from_reader::<_, SnapshotManifest>(BufReader::new(file)) {
+                Ok(manifest) if manifest.format_version == 1 => manifest,
+                _ => continue,
+            };
+        snapshots.push((path, manifest));
+    }
+    snapshots.sort_by_key(|snapshot| std::cmp::Reverse(snapshot.1.created_at));
+
+    let mut keep = HashSet::new();
+    let mut daily = HashSet::new();
+    let mut weekly = HashSet::new();
+    let mut monthly = HashSet::new();
+    for (path, manifest) in &snapshots {
+        let datetime = timestamp(manifest.created_at)?;
+        let date = datetime.date();
+        let day_key = (date.year(), date.ordinal());
+        let (iso_year, iso_week, _) = date.to_iso_week_date();
+        let week_key = (iso_year, iso_week);
+        let month_key = (date.year(), u8::from(date.month()));
+
+        let keep_daily = daily.len() < 7 && daily.insert(day_key);
+        let keep_weekly = weekly.len() < 4 && weekly.insert(week_key);
+        let keep_monthly = monthly.len() < 6 && monthly.insert(month_key);
+        if keep_daily || keep_weekly || keep_monthly {
+            keep.insert(path.clone());
+        }
+    }
+
+    for (manifest_path, manifest) in snapshots {
+        if keep.contains(&manifest_path) {
+            continue;
+        }
+        let directory = manifest_path.parent().ok_or_else(|| {
+            DatabaseError::InvalidSnapshot("manifest has no containing directory".into())
+        })?;
+        for file_name in [&manifest.main.file_name, &manifest.media.file_name] {
+            if let Ok(path) = resolve_snapshot_file(directory, file_name) {
+                remove_if_exists(&path)?;
+            }
+        }
+        remove_if_exists(&manifest_path)?;
+    }
+    sync_directory(backups)?;
+    Ok(())
+}
+
+fn vacuum_into(connection: &Connection, destination: &Path) -> Result<()> {
+    remove_if_exists(destination)?;
+    let destination = destination
+        .to_str()
+        .ok_or_else(|| DatabaseError::InvalidSnapshot("snapshot path is not valid UTF-8".into()))?;
+    connection.execute("VACUUM INTO ?1", [destination])?;
+    Ok(())
+}
+
+fn write_manifest(path: &Path, manifest: &SnapshotManifest) -> Result<()> {
+    let file = OpenOptions::new().create_new(true).write(true).open(path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer_pretty(&mut writer, manifest)?;
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    writer.get_ref().sync_all()?;
+    Ok(())
+}
+
+fn copy_and_sync(source: &Path, destination: &Path) -> Result<()> {
+    remove_if_exists(destination)?;
+    fs::copy(source, destination)?;
+    sync_file(destination)
+}
+
+fn sync_file(path: &Path) -> Result<()> {
+    File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+fn sync_directory(path: &Path) -> Result<()> {
+    File::open(path)?.sync_all()?;
+    Ok(())
+}
+
+fn remove_if_exists(path: &Path) -> Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn validate_recorded_hash(path: &Path, expected: &str) -> Result<()> {
+    let actual = hash_file(path)?;
+    if actual != expected {
+        return Err(DatabaseError::InvalidSnapshot(format!(
+            "{} has digest {actual}, expected {expected}",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
+fn hash_file(path: &Path) -> Result<String> {
+    let mut reader = BufReader::new(File::open(path)?);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+fn resolve_snapshot_file(directory: &Path, file_name: &str) -> Result<PathBuf> {
+    let mut components = Path::new(file_name).components();
+    let valid =
+        matches!(components.next(), Some(Component::Normal(_))) && components.next().is_none();
+    if !valid {
+        return Err(DatabaseError::InvalidSnapshot(format!(
+            "unsafe snapshot file name {file_name:?}"
+        )));
+    }
+    Ok(directory.join(file_name))
+}
+
+fn timestamp(milliseconds: i64) -> Result<OffsetDateTime> {
+    OffsetDateTime::from_unix_timestamp_nanos(i128::from(milliseconds) * 1_000_000)
+        .map_err(|error| DatabaseError::InvalidSnapshot(error.to_string()))
+}
+
+fn now_millis() -> Result<i64> {
+    let duration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| DatabaseError::InvalidSystemTime)?;
+    i64::try_from(duration.as_millis()).map_err(|_| DatabaseError::InvalidSystemTime)
+}

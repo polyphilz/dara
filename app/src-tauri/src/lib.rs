@@ -1,8 +1,20 @@
+mod database;
 mod windows;
+
+use std::path::PathBuf;
+
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                if let Err(error) = windows::macos::show_main(app.clone()) {
+                    log::error!("failed to show Dara for the secondary launch: {error}");
+                }
+            },
+        ))
         .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
@@ -20,6 +32,19 @@ pub fn run() {
                         .build(),
                 )?;
             }
+
+            database::register_sqlite_vec()?;
+            let data_root = std::env::var_os("DARA_DATA_DIR")
+                .map(PathBuf::from)
+                .map(Ok)
+                .unwrap_or_else(|| app.path().data_dir().map(|path| path.join("dara")))?;
+            let database = database::initialize(
+                database::DatabasePaths::new(data_root),
+                env!("CARGO_PKG_VERSION"),
+                database::InitializationOptions::default(),
+            )?;
+            log::info!("database ready at {}", database.paths().root().display());
+            app.manage(database);
 
             windows::setup(app)?;
             Ok(())

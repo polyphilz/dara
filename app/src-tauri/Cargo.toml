@@ -3,7 +3,7 @@ name = "dara"
 version = "0.1.0"
 description = "A fast, local-first spaced-repetition app for macOS"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.97.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -20,6 +20,16 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 tauri = { version = "2.11.3", features = [ "tray-icon"] }
 tauri-plugin-log = "2"
+tauri-plugin-single-instance = "2"
+refinery = { version = "=0.9.2", features = ["rusqlite"] }
+rusqlite = { version = "=0.39.0", features = ["bundled"] }
+sha2 = "0.10.9"
+sqlite-vec = "=0.1.9"
+thiserror = "2.0"
+time = "0.3.53"
+
+[dev-dependencies]
+tempfile = "3.23"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block2 = "0.6.2"
