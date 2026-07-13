@@ -1,0 +1,25 @@
+# macOS
+.DS_Store
+
+# local planning notes
+.plans/
+
+# deps / build output
+node_modules/
+dist/
+target/
+**/.pnpm-store
+
+# secrets
+.env
+.env.*
+
+# local model weights (llama.cpp GGUF, ONNX)
+models/
+*.gguf
+*.onnx
+
+# local databases / backups
+*.sqlite3
+*.sqlite3-*
+backups/
