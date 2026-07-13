@@ -8,12 +8,14 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "tsc -p tsconfig.test.json && node --test node_modules/.tmp/dara-tests/tests/scheduling/*.test.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "ts-fsrs": "5.4.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

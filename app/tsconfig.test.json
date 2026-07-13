@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "skipLibCheck": true,
+
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "rewriteRelativeImportExtensions": true,
+
+    "rootDir": ".",
+    "outDir": "node_modules/.tmp/dara-tests",
+    "noEmit": false,
+    "sourceMap": true,
+
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "erasableSyntaxOnly": true
+  },
+  "include": ["src/scheduling/**/*.ts", "tests/scheduling/**/*.ts"]
+}
