@@ -1,11 +1,11 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './styles/base.css'
-import './windows/main/main-window.css'
-import { MainWindow } from './windows/main/MainWindow.tsx'
+import './windows/quick-add/quick-add-window.css'
+import { QuickAddWindow } from './windows/quick-add/QuickAddWindow.tsx'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MainWindow />
+    <QuickAddWindow />
   </StrictMode>,
 )

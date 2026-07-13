@@ -1,0 +1,50 @@
+:root {
+  color: #181716;
+  background: #f5f3ef;
+  font-family:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    "Helvetica Neue", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --ink: #181716;
+  --muted: #716d66;
+  --line: rgba(24, 23, 22, 0.13);
+  --surface: rgba(255, 255, 255, 0.84);
+  --accent: #b24f2e;
+  --accent-soft: rgba(178, 79, 46, 0.1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f2efe9;
+    background: #191817;
+    --ink: #f2efe9;
+    --muted: #aaa49a;
+    --line: rgba(255, 255, 255, 0.13);
+    --surface: rgba(35, 33, 31, 0.9);
+    --accent: #e0835f;
+    --accent-soft: rgba(224, 131, 95, 0.12);
+  }
+}

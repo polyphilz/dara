@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "dara",
+  "productName": "Dara",
   "version": "0.1.0",
   "identifier": "com.rohan.dara",
   "build": {
@@ -13,15 +13,39 @@
     "windows": [
       {
         "label": "main",
-        "title": "dara",
-        "width": 800,
-        "height": 600,
+        "title": "Dara",
+        "width": 1000,
+        "height": 720,
+        "center": true,
+        "visible": false,
         "resizable": true,
-        "fullscreen": false
+        "fullscreen": false,
+        "backgroundThrottling": "disabled"
       }
     ],
     "security": {
-      "csp": null
+      "capabilities": ["main", "quick-add"],
+      "freezePrototype": true,
+      "csp": {
+        "default-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost",
+        "img-src": "'self' blob: data:",
+        "style-src": "'self'",
+        "object-src": "'none'",
+        "frame-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      },
+      "devCsp": {
+        "default-src": "'self'",
+        "connect-src": "'self' ipc: http://ipc.localhost ws://localhost:5173",
+        "img-src": "'self' blob: data:",
+        "style-src": "'self'",
+        "object-src": "'none'",
+        "frame-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      }
     }
   },
   "bundle": {

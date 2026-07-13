@@ -1,0 +1,170 @@
+:root,
+body,
+#root {
+  overflow: hidden;
+  background: transparent;
+}
+
+.quick-add-shell {
+  min-height: 100vh;
+  padding: 12px;
+}
+
+.quick-add-card {
+  min-height: calc(100vh - 24px);
+  padding: 22px 24px 18px;
+  overflow: hidden;
+  border: 1px solid rgba(24, 23, 22, 0.16);
+  border-radius: 17px;
+  background: rgba(250, 249, 247, 0.97);
+  box-shadow:
+    0 26px 64px rgba(22, 19, 16, 0.22),
+    0 3px 12px rgba(22, 19, 16, 0.12);
+}
+
+.quick-add-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 20px;
+}
+
+.quick-add-header p,
+.quick-add-header h1 {
+  margin: 0;
+}
+
+.quick-add-header p {
+  margin-bottom: 2px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.quick-add-header h1 {
+  font-family: ui-serif, Georgia, serif;
+  font-size: 27px;
+  font-weight: 520;
+  letter-spacing: -0.035em;
+}
+
+.quick-add-header > span {
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.field {
+  display: block;
+}
+
+.field > span {
+  display: block;
+  margin: 0 0 7px 2px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.field textarea {
+  display: block;
+  width: 100%;
+  resize: none;
+  padding: 12px 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  outline: none;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.78);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.field textarea:focus {
+  border-color: rgba(178, 79, 46, 0.55);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.field textarea::placeholder {
+  color: #aaa59e;
+}
+
+.secondary-field {
+  margin-top: 13px;
+}
+
+.quick-add-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 17px;
+}
+
+.quick-add-footer > div {
+  display: flex;
+  gap: 8px;
+}
+
+.test-note {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.quick-add-footer button {
+  padding: 8px 11px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.cancel-button {
+  border: 1px solid var(--line);
+  background: transparent;
+}
+
+.save-button {
+  border: 1px solid var(--ink);
+  color: #fff;
+  background: var(--ink);
+}
+
+.save-button kbd {
+  margin-left: 5px;
+  color: rgba(255, 255, 255, 0.64);
+  font: inherit;
+}
+
+.panel-error {
+  margin: 12px 0 0;
+  color: #a63232;
+  font-size: 11px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .quick-add-card {
+    border-color: rgba(255, 255, 255, 0.14);
+    background: rgba(34, 32, 30, 0.97);
+    box-shadow:
+      0 26px 64px rgba(0, 0, 0, 0.42),
+      0 3px 12px rgba(0, 0, 0, 0.3);
+  }
+
+  .field textarea {
+    background: rgba(16, 15, 14, 0.52);
+  }
+
+  .save-button {
+    color: #191817;
+  }
+
+  .save-button kbd {
+    color: rgba(25, 24, 23, 0.58);
+  }
+}

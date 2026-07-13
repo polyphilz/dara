@@ -1,32 +1,32 @@
-# React + TypeScript + Vite
+# dara desktop
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The macOS desktop client: React + TypeScript + Vite inside Tauri v2.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+pnpm install
+pnpm tauri dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The application launches as a menu-bar resident app with both native windows hidden.
+
+## Activation spike
+
+- `⌃⌥⌘D` opens the non-activating quick-add panel.
+- `⌃⌥⌘R` activates dara and opens the ordinary main window.
+- `Esc` cancels quick add; `⌘↵` exercises its temporary save path.
+
+The spike deliberately persists nothing. Its purpose is to validate keyboard input and exact
+focus restoration across applications, Spaces, fullscreen windows, monitors, and IME input
+before product implementation begins.
+
+## Checks
+
+```bash
+pnpm lint
+pnpm build
+cargo test --manifest-path src-tauri/Cargo.toml
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+pnpm tauri build --debug --no-bundle
+```
