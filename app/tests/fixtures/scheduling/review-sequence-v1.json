@@ -1,0 +1,161 @@
+{
+  "schemaVersion": 1,
+  "cardId": "01980c8e-6c00-7000-8000-000000000102",
+  "schedulerConfigId": "019f547b-6200-7000-8000-000000000001",
+  "steps": [
+    {
+      "eventId": "01980c8e-6c00-7000-8000-000000000201",
+      "review": {
+        "reviewedAt": 1783929300000,
+        "studyDay": 20646,
+        "timezoneId": "America/New_York",
+        "utcOffsetMinutes": -240,
+        "grade": 1
+      },
+      "expectedElapsedDays": 0,
+      "expectedCache": {
+        "state": "LEARNING",
+        "dueAt": 1783929900000,
+        "dueStudyDay": null,
+        "lastReviewAt": 1783929300000,
+        "reps": 1,
+        "lapses": 0,
+        "schedulerState": {
+          "stability": 0.212,
+          "difficulty": 6.4133,
+          "scheduledDays": 0,
+          "learningSteps": 0
+        }
+      },
+      "expectedSchedulerLog": {
+        "stateBefore": "NEW",
+        "dueAtBefore": null,
+        "dueStudyDayBefore": null,
+        "stabilityBefore": null,
+        "difficultyBefore": null,
+        "scheduledDaysBefore": null,
+        "learningStepsBefore": null
+      }
+    },
+    {
+      "eventId": "01980c8e-6c00-7000-8000-000000000202",
+      "review": {
+        "reviewedAt": 1783929900000,
+        "studyDay": 20647,
+        "timezoneId": "America/New_York",
+        "utcOffsetMinutes": -240,
+        "grade": 3
+      },
+      "expectedElapsedDays": 1,
+      "expectedCache": {
+        "state": "REVIEW",
+        "dueAt": null,
+        "dueStudyDay": 20649,
+        "lastReviewAt": 1783929900000,
+        "reps": 2,
+        "lapses": 0,
+        "schedulerState": {
+          "stability": 1.88678762,
+          "difficulty": 6.40211507,
+          "scheduledDays": 2,
+          "learningSteps": 0
+        }
+      },
+      "expectedSchedulerLog": {
+        "stateBefore": "LEARNING",
+        "dueAtBefore": 1783929900000,
+        "dueStudyDayBefore": null,
+        "stabilityBefore": 0.212,
+        "difficultyBefore": 6.4133,
+        "scheduledDaysBefore": 0,
+        "learningStepsBefore": 0
+      }
+    },
+    {
+      "eventId": "01980c8e-6c00-7000-8000-000000000203",
+      "review": {
+        "reviewedAt": 1784116800000,
+        "studyDay": 20649,
+        "timezoneId": "UTC",
+        "utcOffsetMinutes": 0,
+        "grade": 1
+      },
+      "expectedElapsedDays": 2,
+      "expectedCache": {
+        "state": "RELEARNING",
+        "dueAt": 1784117400000,
+        "dueStudyDay": null,
+        "lastReviewAt": 1784116800000,
+        "reps": 3,
+        "lapses": 1,
+        "schedulerState": {
+          "stability": 0.50506505,
+          "difficulty": 8.80262806,
+          "scheduledDays": 0,
+          "learningSteps": 0
+        }
+      },
+      "expectedSchedulerLog": {
+        "stateBefore": "REVIEW",
+        "dueAtBefore": null,
+        "dueStudyDayBefore": 20649,
+        "stabilityBefore": 1.88678762,
+        "difficultyBefore": 6.40211507,
+        "scheduledDaysBefore": 2,
+        "learningStepsBefore": 0
+      }
+    },
+    {
+      "eventId": "01980c8e-6c00-7000-8000-000000000204",
+      "review": {
+        "reviewedAt": 1784117400000,
+        "studyDay": 20649,
+        "timezoneId": "UTC",
+        "utcOffsetMinutes": 0,
+        "grade": 3
+      },
+      "expectedElapsedDays": 0,
+      "expectedCache": {
+        "state": "REVIEW",
+        "dueAt": null,
+        "dueStudyDay": 20650,
+        "lastReviewAt": 1784117400000,
+        "reps": 4,
+        "lapses": 1,
+        "schedulerState": {
+          "stability": 0.55507826,
+          "difficulty": 8.7890538,
+          "scheduledDays": 1,
+          "learningSteps": 0
+        }
+      },
+      "expectedSchedulerLog": {
+        "stateBefore": "RELEARNING",
+        "dueAtBefore": 1784117400000,
+        "dueStudyDayBefore": null,
+        "stabilityBefore": 0.50506505,
+        "difficultyBefore": 8.80262806,
+        "scheduledDaysBefore": 0,
+        "learningStepsBefore": 0
+      }
+    }
+  ],
+  "undo": {
+    "eventId": "01980c8e-6c00-7000-8000-000000000205",
+    "targetEventId": "01980c8e-6c00-7000-8000-000000000204",
+    "expectedCache": {
+      "state": "RELEARNING",
+      "dueAt": 1784117400000,
+      "dueStudyDay": null,
+      "lastReviewAt": 1784116800000,
+      "reps": 3,
+      "lapses": 1,
+      "schedulerState": {
+        "stability": 0.50506505,
+        "difficulty": 8.80262806,
+        "scheduledDays": 0,
+        "learningSteps": 0
+      }
+    }
+  }
+}

@@ -27,6 +27,7 @@ sha2 = "0.10.9"
 sqlite-vec = "=0.1.9"
 thiserror = "2.0"
 time = "0.3.53"
+uuid = { version = "=1.23.5", features = ["v7"] }
 
 [dev-dependencies]
 tempfile = "3.23"

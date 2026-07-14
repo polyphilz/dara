@@ -48,6 +48,27 @@ pub enum DatabaseError {
 
     #[error("system time is before the Unix epoch")]
     InvalidSystemTime,
+
+    #[error("database writer is unavailable")]
+    WriterUnavailable,
+
+    #[error("invalid database command: {0}")]
+    InvalidInput(String),
+
+    #[error("{entity} {id} was not found")]
+    NotFound { entity: &'static str, id: String },
+
+    #[error("review context is stale: {0}")]
+    StaleReviewContext(String),
+
+    #[error("event {event_id} was already used for a different request")]
+    IdempotencyConflict { event_id: String },
+
+    #[error("stored review data is invalid: {0}")]
+    CorruptReviewData(String),
+
+    #[error("active scheduler config is unsupported: {0}")]
+    UnsupportedSchedulerConfig(String),
 }
 
 pub type Result<T> = std::result::Result<T, DatabaseError>;

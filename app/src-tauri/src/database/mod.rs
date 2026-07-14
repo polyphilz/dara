@@ -1,4 +1,6 @@
+pub mod commands;
 mod connection;
+mod domain;
 mod embedding_index;
 mod error;
 mod migrations;
@@ -6,11 +8,12 @@ mod paths;
 #[allow(dead_code)]
 pub mod snapshot;
 mod validation;
+mod writer;
 
 use std::{
     fs,
     sync::{
-        mpsc::{self, Receiver, Sender},
+        mpsc::{self, Receiver},
         Mutex,
     },
     thread::{self, JoinHandle},
@@ -19,8 +22,13 @@ use std::{
 use rusqlite::Connection;
 
 pub use connection::register_sqlite_vec;
+pub use domain::{
+    CreateBasicCardInput, RecordGradeInput, ReviewContext, ReviewMutationResult, UndoLastGradeInput,
+};
 pub use error::{DatabaseError, Result};
 pub use paths::DatabasePaths;
+pub use writer::DatabaseClient;
+use writer::WriterMessage;
 
 use connection::{DatabaseKind, FileState};
 
@@ -39,7 +47,7 @@ impl Default for InitializationOptions {
 
 pub struct Database {
     paths: DatabasePaths,
-    writer: Sender<()>,
+    client: DatabaseClient,
     writer_thread: Mutex<Option<JoinHandle<()>>>,
     snapshot_thread: Mutex<Option<JoinHandle<Result<snapshot::CreatedSnapshot>>>>,
 }
@@ -47,6 +55,30 @@ pub struct Database {
 impl Database {
     pub fn paths(&self) -> &DatabasePaths {
         &self.paths
+    }
+
+    pub fn client(&self) -> DatabaseClient {
+        self.client.clone()
+    }
+
+    #[cfg(test)]
+    fn create_basic_card(&self, input: CreateBasicCardInput) -> Result<ReviewContext> {
+        self.client.create_basic_card(input)
+    }
+
+    #[cfg(test)]
+    fn load_review_context(&self, review_card_id: String) -> Result<ReviewContext> {
+        self.client.load_review_context(review_card_id)
+    }
+
+    #[cfg(test)]
+    fn record_grade(&self, input: RecordGradeInput) -> Result<ReviewMutationResult> {
+        self.client.record_grade(input)
+    }
+
+    #[cfg(test)]
+    fn undo_last_grade(&self, input: UndoLastGradeInput) -> Result<ReviewMutationResult> {
+        self.client.undo_last_grade(input)
     }
 
     #[cfg(test)]
@@ -81,7 +113,7 @@ impl Drop for Database {
                 }
             }
         }
-        let _ = self.writer.send(());
+        let _ = self.client.shutdown();
         if let Ok(writer) = self.writer_thread.get_mut() {
             if let Some(thread) = writer.take() {
                 if let Err(error) = thread.join() {
@@ -123,6 +155,7 @@ pub fn initialize(
     validation::validate_migrated_pair(&mut main, &mut media, &paths.main, &paths.media)?;
 
     let (writer, writer_rx) = mpsc::channel();
+    let client = DatabaseClient::new(writer);
     let writer_paths = paths.clone();
     let writer_thread = thread::Builder::new()
         .name("dara-database-writer".into())
@@ -151,14 +184,38 @@ pub fn initialize(
 
     Ok(Database {
         paths,
-        writer,
+        client,
         writer_thread: Mutex::new(Some(writer_thread)),
         snapshot_thread: Mutex::new(snapshot_thread),
     })
 }
 
-fn writer_loop(main: Connection, media: Connection, _paths: DatabasePaths, receiver: Receiver<()>) {
-    let _ = receiver.recv();
+fn writer_loop(
+    mut main: Connection,
+    media: Connection,
+    _paths: DatabasePaths,
+    receiver: Receiver<WriterMessage>,
+) {
+    for message in receiver {
+        match message {
+            WriterMessage::CreateBasicCard { input, reply } => {
+                let _ = reply.send(domain::create_basic_card(&mut main, input));
+            }
+            WriterMessage::LoadReviewContext {
+                review_card_id,
+                reply,
+            } => {
+                let _ = reply.send(domain::load_review_context(&main, &review_card_id));
+            }
+            WriterMessage::RecordGrade { input, reply } => {
+                let _ = reply.send(domain::record_grade(&mut main, input));
+            }
+            WriterMessage::UndoLastGrade { input, reply } => {
+                let _ = reply.send(domain::undo_last_grade(&mut main, input));
+            }
+            WriterMessage::Shutdown => break,
+        }
+    }
     if let Err(error) = checkpoint_pair(&main, &media) {
         log::error!("database checkpoint failed during shutdown: {error}");
     }
@@ -170,5 +227,7 @@ fn checkpoint_pair(main: &Connection, media: &Connection) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod domain_tests;
 #[cfg(test)]
 mod tests;

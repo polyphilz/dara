@@ -18,6 +18,10 @@ pub fn run() {
         .plugin(tauri_nspanel::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            database::commands::create_basic_card,
+            database::commands::load_review_context,
+            database::commands::record_grade,
+            database::commands::undo_last_grade,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,
             windows::macos::save_spike_card,
