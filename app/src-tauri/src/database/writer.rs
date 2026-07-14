@@ -2,7 +2,7 @@ use std::sync::mpsc::{self, Sender, SyncSender};
 
 use super::{
     CreateBasicCardInput, DatabaseError, RecordGradeInput, Result, ReviewContext,
-    ReviewMutationResult, UndoLastGradeInput,
+    ReviewMutationResult, ReviewQueueSelection, SelectNextReviewCardInput, UndoLastGradeInput,
 };
 
 pub(super) enum WriterMessage {
@@ -21,6 +21,10 @@ pub(super) enum WriterMessage {
     UndoLastGrade {
         input: UndoLastGradeInput,
         reply: SyncSender<Result<ReviewMutationResult>>,
+    },
+    SelectNextReviewCard {
+        input: SelectNextReviewCardInput,
+        reply: SyncSender<Result<ReviewQueueSelection>>,
     },
     Shutdown,
 }
@@ -72,6 +76,19 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::UndoLastGrade { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn select_next_review_card(
+        &self,
+        input: SelectNextReviewCardInput,
+    ) -> Result<ReviewQueueSelection> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SelectNextReviewCard { input, reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

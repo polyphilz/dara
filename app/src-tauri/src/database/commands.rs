@@ -3,7 +3,7 @@ use tauri::State;
 
 use super::{
     CreateBasicCardInput, Database, DatabaseError, RecordGradeInput, ReviewContext,
-    ReviewMutationResult, UndoLastGradeInput,
+    ReviewMutationResult, ReviewQueueSelection, SelectNextReviewCardInput, UndoLastGradeInput,
 };
 
 #[derive(Debug, Serialize)]
@@ -68,6 +68,15 @@ pub async fn undo_last_grade(
 ) -> CommandResult<ReviewMutationResult> {
     let client = database.client();
     run_writer(move || client.undo_last_grade(input)).await
+}
+
+#[tauri::command]
+pub async fn select_next_review_card(
+    database: State<'_, Database>,
+    input: SelectNextReviewCardInput,
+) -> CommandResult<ReviewQueueSelection> {
+    let client = database.client();
+    run_writer(move || client.select_next_review_card(input)).await
 }
 
 async fn run_writer<T, F>(operation: F) -> CommandResult<T>

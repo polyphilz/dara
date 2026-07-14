@@ -21,6 +21,7 @@ pub fn run() {
             database::commands::create_basic_card,
             database::commands::load_review_context,
             database::commands::record_grade,
+            database::commands::select_next_review_card,
             database::commands::undo_last_grade,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,

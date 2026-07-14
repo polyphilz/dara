@@ -5,6 +5,7 @@ mod embedding_index;
 mod error;
 mod migrations;
 mod paths;
+mod queue;
 #[allow(dead_code)]
 pub mod snapshot;
 mod validation;
@@ -27,6 +28,7 @@ pub use domain::{
 };
 pub use error::{DatabaseError, Result};
 pub use paths::DatabasePaths;
+pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
 pub use writer::DatabaseClient;
 use writer::WriterMessage;
 
@@ -79,6 +81,14 @@ impl Database {
     #[cfg(test)]
     fn undo_last_grade(&self, input: UndoLastGradeInput) -> Result<ReviewMutationResult> {
         self.client.undo_last_grade(input)
+    }
+
+    #[cfg(test)]
+    fn select_next_review_card(
+        &self,
+        input: SelectNextReviewCardInput,
+    ) -> Result<ReviewQueueSelection> {
+        self.client.select_next_review_card(input)
     }
 
     #[cfg(test)]
@@ -213,6 +223,9 @@ fn writer_loop(
             WriterMessage::UndoLastGrade { input, reply } => {
                 let _ = reply.send(domain::undo_last_grade(&mut main, input));
             }
+            WriterMessage::SelectNextReviewCard { input, reply } => {
+                let _ = reply.send(queue::select_next_review_card(&mut main, input));
+            }
             WriterMessage::Shutdown => break,
         }
     }
@@ -229,5 +242,7 @@ fn checkpoint_pair(main: &Connection, media: &Connection) -> Result<()> {
 
 #[cfg(test)]
 mod domain_tests;
+#[cfg(test)]
+mod queue_tests;
 #[cfg(test)]
 mod tests;
