@@ -416,21 +416,6 @@ fn restore_previous_focus(app: &AppHandle, target: RestoreTarget) -> Result<(), 
 }
 
 #[tauri::command]
-pub fn save_spike_card(app: AppHandle, front: String, back: String) -> Result<(), String> {
-    if front.trim().is_empty() {
-        return Err("front cannot be empty".into());
-    }
-    log::info!(
-        "activation spike save: front={} chars, back={} chars",
-        front.chars().count(),
-        back.chars().count()
-    );
-    dispatch_to_main_thread(&app, "save spike card", |app| {
-        dismiss_quick_add_inner(app, false, DismissFocus::RestorePrevious)
-    })
-}
-
-#[tauri::command]
 pub fn show_main(app: AppHandle) -> Result<(), String> {
     dispatch_to_main_thread(&app, "show main window", show_main_inner)
 }

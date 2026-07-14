@@ -124,6 +124,12 @@ body,
   cursor: pointer;
 }
 
+.quick-add-footer button:disabled,
+.field textarea:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
 .cancel-button {
   border: 1px solid var(--line);
   background: transparent;

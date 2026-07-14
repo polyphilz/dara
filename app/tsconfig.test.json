@@ -22,5 +22,10 @@
     "noFallthroughCasesInSwitch": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["src/scheduling/**/*.ts", "tests/scheduling/**/*.ts"]
+  "include": [
+    "src/review/**/*.ts",
+    "src/scheduling/**/*.ts",
+    "tests/review/**/*.ts",
+    "tests/scheduling/**/*.ts"
+  ]
 }

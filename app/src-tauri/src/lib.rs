@@ -25,7 +25,6 @@ pub fn run() {
             database::commands::undo_last_grade,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,
-            windows::macos::save_spike_card,
             windows::macos::show_main,
             windows::macos::show_quick_add,
         ])

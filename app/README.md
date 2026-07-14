@@ -9,17 +9,15 @@ pnpm install
 pnpm tauri dev
 ```
 
-The application launches as a menu-bar resident app with both native windows hidden.
+The application launches as a menu-bar resident app with both native windows hidden. Development
+data is isolated under `.data/local/`, including `dara.sqlite3`, `media.sqlite3`, and backups.
+Installed builds continue to use the platform application-data directory.
 
-## Activation spike
+## Shortcuts
 
 - `⌃⌥⌘D` opens the non-activating quick-add panel.
 - `⌃⌥⌘R` activates dara and opens the ordinary main window.
-- `Esc` cancels quick add; `⌘↵` exercises its temporary save path.
-
-The spike deliberately persists nothing. Its purpose is to validate keyboard input and exact
-focus restoration across applications, Spaces, fullscreen windows, monitors, and IME input
-before product implementation begins.
+- `Esc` cancels quick add; `⌘↵` saves a BASIC card.
 
 ## Checks
 

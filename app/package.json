@@ -8,8 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "tauri": "tauri",
-    "test": "tsc -p tsconfig.test.json && node --test node_modules/.tmp/dara-tests/tests/scheduling/*.test.js"
+    "tauri": "DARA_DATA_DIR=\"$PWD/.data/local\" tauri",
+    "test": "tsc -p tsconfig.test.json && node --test node_modules/.tmp/dara-tests/tests/scheduling/*.test.js node_modules/.tmp/dara-tests/tests/review/*.test.js"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",

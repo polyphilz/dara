@@ -1,12 +1,16 @@
+import { emit, listen } from '@tauri-apps/api/event'
 import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
-import { listen } from '@tauri-apps/api/event'
 import { native } from '../../lib/native.ts'
+import { createBasicCard } from '../../review/index.ts'
+import { errorMessage } from '../../review/errors.ts'
 
 export function QuickAddWindow() {
   const frontRef = useRef<HTMLTextAreaElement>(null)
+  const backRef = useRef<HTMLTextAreaElement>(null)
   const [front, setFront] = useState('')
   const [back, setBack] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const focusFront = () => {
     requestAnimationFrame(() => frontRef.current?.focus())
@@ -31,31 +35,58 @@ export function QuickAddWindow() {
     }
   }, [])
 
-  const dismiss = () => {
+  const dismiss = async () => {
+    if (saving) {
+      return
+    }
     setError(null)
-    void native.dismissQuickAdd().catch((cause: unknown) => setError(String(cause)))
+    try {
+      await native.dismissQuickAdd()
+    } catch (cause) {
+      setError(errorMessage(cause))
+    }
   }
 
   const save = async () => {
+    if (saving) {
+      return
+    }
     if (!front.trim()) {
+      setError('Add a question before saving.')
       frontRef.current?.focus()
+      return
+    }
+    if (!back.trim()) {
+      setError('Add an answer before saving.')
+      backRef.current?.focus()
       return
     }
 
     setError(null)
+    setSaving(true)
     try {
-      await native.saveSpikeCard(front, back)
+      await createBasicCard({
+        frontMd: front.trim(),
+        backMd: back.trim(),
+        source: null,
+      })
       setFront('')
       setBack('')
+      await emit('card-created').catch((cause: unknown) => {
+        console.error('Could not notify the review window about the new card', cause)
+      })
+      await native.dismissQuickAdd()
     } catch (cause) {
-      setError(String(cause))
+      setError(errorMessage(cause))
+    } finally {
+      setSaving(false)
     }
   }
 
   const handleKeyDown = (event: KeyboardEvent) => {
     if (event.key === 'Escape') {
       event.preventDefault()
-      dismiss()
+      void dismiss()
       return
     }
 
@@ -70,7 +101,7 @@ export function QuickAddWindow() {
       <section className="quick-add-card" aria-labelledby="quick-add-title">
         <header className="quick-add-header">
           <div>
-            <p>Capture</p>
+            <p>New BASIC card</p>
             <h1 id="quick-add-title">Quick add</h1>
           </div>
           <span>Esc to cancel</span>
@@ -79,11 +110,12 @@ export function QuickAddWindow() {
         <label className="field">
           <span>Front</span>
           <textarea
+            disabled={saving}
             ref={frontRef}
             rows={3}
             value={front}
             onChange={(event) => setFront(event.target.value)}
-            placeholder="What do you want to remember?"
+            placeholder="Question"
             spellCheck
           />
         </label>
@@ -91,22 +123,34 @@ export function QuickAddWindow() {
         <label className="field secondary-field">
           <span>Back</span>
           <textarea
+            disabled={saving}
+            ref={backRef}
             rows={2}
             value={back}
             onChange={(event) => setBack(event.target.value)}
-            placeholder="Answer or explanation"
+            placeholder="Answer"
             spellCheck
           />
         </label>
 
         <footer className="quick-add-footer">
-          <span className="test-note">Spike only—nothing is persisted yet.</span>
+          <span className="test-note">Both fields are required.</span>
           <div>
-            <button className="cancel-button" type="button" onClick={dismiss}>
+            <button
+              className="cancel-button"
+              disabled={saving}
+              type="button"
+              onClick={() => void dismiss()}
+            >
               Cancel
             </button>
-            <button className="save-button" type="button" onClick={() => void save()}>
-              Save <kbd>⌘↵</kbd>
+            <button
+              className="save-button"
+              disabled={saving}
+              type="button"
+              onClick={() => void save()}
+            >
+              {saving ? 'Saving…' : 'Save'} <kbd>⌘↵</kbd>
             </button>
           </div>
         </footer>
