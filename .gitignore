@@ -1,8 +1,9 @@
 # macOS
 .DS_Store
 
-# local planning notes
+# local planning notes and remotion clips
 .plans/
+.clips/
 
 # deps / build output
 node_modules/
