@@ -179,6 +179,30 @@ export interface DeleteCardContentInput {
   expectedLifecycleUpdatedAt: number
 }
 
+export interface LoadHomeStatsInput {
+  now: number
+  studyDay: number
+  activityStartStudyDay: number
+}
+
+export interface DailyReviewActivity {
+  studyDay: number
+  count: number
+}
+
+export interface HomeQueueCounts {
+  new: number
+  learning: number
+  review: number
+}
+
+export interface HomeStats {
+  activity: DailyReviewActivity[]
+  reviewedToday: number
+  queue: HomeQueueCounts
+  nextLearningDueAt: number | null
+}
+
 export interface ReviewGateway {
   selectNextReviewCard(
     input: SelectNextReviewCardInput,

@@ -3,6 +3,8 @@ import type {
   CardContentDraft,
   CardContentListItem,
   DeleteCardContentInput,
+  HomeStats,
+  LoadHomeStatsInput,
   RecordGradeInput,
   ReviewContext,
   ReviewGateway,
@@ -52,4 +54,10 @@ export function deleteCardContent(
   input: DeleteCardContentInput,
 ): Promise<void> {
   return invoke<void>('delete_card_content', { input })
+}
+
+export function loadHomeStats(
+  input: LoadHomeStatsInput,
+): Promise<HomeStats> {
+  return invoke<HomeStats>('load_home_stats', { input })
 }

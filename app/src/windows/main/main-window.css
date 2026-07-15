@@ -9,6 +9,10 @@ body {
   padding: 30px 36px 48px;
 }
 
+.main-window-home {
+  width: min(900px, 100%);
+}
+
 .main-window-creating {
   width: min(960px, 100%);
 }
@@ -18,54 +22,28 @@ body {
 }
 
 .main-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 24px;
   padding-bottom: 18px;
   border-bottom: 1px solid var(--line);
 }
 
-.main-toolbar h1 {
-  margin: 0;
-  font-size: 23px;
-  font-weight: 650;
-  letter-spacing: -0.035em;
-}
-
-.main-toolbar-leading,
-.main-section-tabs,
 .card-detail-actions,
 .delete-confirmation > div {
   display: flex;
   align-items: center;
 }
 
-.main-toolbar-leading {
-  gap: 24px;
-}
-
-.main-section-tabs {
-  gap: 3px;
-  padding: 3px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: color-mix(in srgb, var(--surface) 55%, transparent);
-}
-
-.main-section-tabs button {
-  padding: 5px 10px;
-  border: 0;
-  background: transparent;
-}
-
-.main-section-tabs button[aria-current="page"] {
-  background: var(--surface);
-  box-shadow: 0 1px 4px rgba(24, 23, 22, 0.08);
+.main-toolbar > span {
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .toolbar-actions {
   display: flex;
+  justify-self: end;
   gap: 8px;
 }
 
@@ -90,6 +68,160 @@ body {
 .main-window button:disabled {
   cursor: default;
   opacity: 0.62;
+}
+
+.home-screen {
+  padding-top: 4px;
+}
+
+.home-navigation {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+}
+
+.main-window .home-navigation button {
+  padding: 8px 14px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.main-window .home-navigation button:hover:not(:disabled) {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.home-activity {
+  margin-top: 62px;
+}
+
+.home-section-heading {
+  display: flex;
+  max-width: 745px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 auto 17px;
+}
+
+.home-section-heading h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.home-section-heading span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.home-activity .react-activity-calendar {
+  margin: 0 auto;
+  color: var(--muted);
+}
+
+.home-activity .react-activity-calendar__footer {
+  justify-content: center;
+}
+
+.home-activity .react-activity-calendar__legend-colors {
+  margin-left: 0 !important;
+}
+
+.home-activity-loading {
+  display: grid;
+  min-height: 125px;
+  place-items: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.main-window .home-review-card {
+  display: grid;
+  width: min(620px, 100%);
+  margin: 54px auto 0;
+  padding: 22px 24px;
+  gap: 22px;
+  border-color: color-mix(in srgb, #ee9c40 42%, var(--line));
+  border-radius: 12px;
+  text-align: left;
+  background: var(--surface);
+  box-shadow: 0 16px 40px rgba(63, 39, 14, 0.06);
+}
+
+.main-window .home-review-card:hover:not(:disabled) {
+  border-color: #ee9c40;
+  transform: translateY(-1px);
+}
+
+.home-review-card-heading,
+.home-reviewed-today,
+.home-queue-counts,
+.home-queue-counts > span {
+  display: flex;
+}
+
+.home-review-card-heading {
+  align-items: center;
+  justify-content: space-between;
+  color: #d67e20;
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.home-reviewed-today {
+  align-items: baseline;
+  gap: 9px;
+}
+
+.home-reviewed-today strong {
+  color: var(--ink);
+  font-size: 31px;
+  line-height: 1;
+}
+
+.home-reviewed-today > span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.home-queue-counts {
+  padding-top: 17px;
+  border-top: 1px solid var(--line);
+  gap: 28px;
+}
+
+.home-queue-counts > span {
+  align-items: baseline;
+  gap: 6px;
+}
+
+.home-queue-counts strong {
+  font-size: 14px;
+}
+
+.home-queue-counts span span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.home-error {
+  display: flex;
+  width: min(620px, 100%);
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin: 54px auto 0;
+  padding: 15px 17px;
+  border: 1px solid color-mix(in srgb, #a63232 24%, var(--line));
+  border-radius: 9px;
+  color: #a63232;
+  background: color-mix(in srgb, #a63232 7%, var(--surface));
+  font-size: 12px;
+}
+
+.main-window .home-error + .home-review-card {
+  margin-top: 16px;
 }
 
 .review-stage {

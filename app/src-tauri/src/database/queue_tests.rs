@@ -7,8 +7,8 @@ use super::{
     domain::{CardContentType, ReviewCardState, ReviewCardStatus, ReviewEventType},
     initialize,
     queue::ReviewQueueLane,
-    Database, DatabaseError, DatabasePaths, InitializationOptions, ReviewQueueSelection,
-    SelectNextReviewCardInput,
+    Database, DatabaseError, DatabasePaths, InitializationOptions, LoadHomeStatsInput,
+    ReviewQueueSelection, SelectNextReviewCardInput,
 };
 
 const DEFAULT_CONFIG_ID: &str = "019f547b-6200-7000-8000-000000000001";
@@ -508,4 +508,36 @@ fn caught_up_reports_only_the_next_active_intraday_deadline() {
         }),
         Err(DatabaseError::InvalidInput(_))
     ));
+}
+
+#[test]
+fn home_stats_group_review_activity_and_count_the_current_queue() {
+    let seeds = [
+        SeedCard::learning(60, NOW - 50),
+        SeedCard::relearning(61, NOW + 500),
+        SeedCard::review(62, STUDY_DAY),
+        SeedCard::review(63, STUDY_DAY).suspended(),
+        SeedCard::review(64, STUDY_DAY + 1),
+        SeedCard::new(65, NOW - 100),
+    ];
+    let (_directory, _paths, database) = seed_database(&seeds);
+
+    let stats = database
+        .load_home_stats(LoadHomeStatsInput {
+            now: NOW,
+            study_day: STUDY_DAY,
+            activity_start_study_day: STUDY_DAY - 1,
+        })
+        .expect("home stats");
+
+    assert_eq!(stats.reviewed_today, 1);
+    assert_eq!(stats.queue.new, 1);
+    assert_eq!(stats.queue.learning, 1);
+    assert_eq!(stats.queue.review, 1);
+    assert_eq!(stats.next_learning_due_at, Some(NOW + 500));
+    assert_eq!(stats.activity.len(), 2);
+    assert_eq!(stats.activity[0].study_day, STUDY_DAY - 1);
+    assert_eq!(stats.activity[0].count, 4);
+    assert_eq!(stats.activity[1].study_day, STUDY_DAY);
+    assert_eq!(stats.activity[1].count, 1);
 }

@@ -112,6 +112,7 @@ class FakeGateway implements ReviewGateway {
 }
 
 test('drives queue, preview, grade, caught-up, and undo as one loop', async () => {
+  let reviewDataChanges = 0
   let gateway: FakeGateway
   const initial = initialContext()
   gateway = new FakeGateway(
@@ -126,6 +127,9 @@ test('drives queue, preview, grade, caught-up, and undo as one loop', async () =
   const controller = new ReviewController(gateway, {
     captureMoment: () => moment,
     createEventId: () => ids.shift()!,
+    onReviewDataChanged: () => {
+      reviewDataChanges += 1
+    },
   })
 
   await controller.start()
@@ -152,6 +156,7 @@ test('drives queue, preview, grade, caught-up, and undo as one loop', async () =
     gateway.recordInputs[0]!.schedulerLog,
     firstStep.expectedSchedulerLog,
   )
+  assert.equal(reviewDataChanges, 1)
 
   await controller.undo()
   const undone = controller.getSnapshot()
@@ -164,6 +169,7 @@ test('drives queue, preview, grade, caught-up, and undo as one loop', async () =
   assert.equal(undone.canUndo, false)
   assert.equal(gateway.undoInputs[0]!.targetEventId, gateway.recordInputs[0]!.eventId)
   assert.deepEqual(gateway.undoInputs[0]!.nextCache, createNewReviewCardCache())
+  assert.equal(reviewDataChanges, 2)
 })
 
 test('retries an uncertain grade with the same event id', async () => {

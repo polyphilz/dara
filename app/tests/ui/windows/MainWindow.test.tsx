@@ -5,9 +5,11 @@ import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-reg
 import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
 import { CardContentType } from '../../../src/review/contracts.ts'
 import { ReviewControllerPhase } from '../../../src/review/controller.ts'
+import { invalidateHomeStats } from '../../../src/windows/main/home-stats-cache.ts'
 
 const mocks = vi.hoisted(() => ({
   createCardContent: vi.fn(),
+  loadHomeStats: vi.fn(),
   listen: vi.fn(),
   notifyCardCreated: vi.fn(),
   notifyClockChanged: vi.fn(),
@@ -40,6 +42,7 @@ vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/review/index.ts')>()),
   createCardContent: mocks.createCardContent,
   deleteCardContent: vi.fn(),
+  loadHomeStats: mocks.loadHomeStats,
   searchCardContent: vi.fn().mockResolvedValue([]),
   setCardContentSuspended: vi.fn(),
   updateCardContent: vi.fn(),
@@ -58,8 +61,15 @@ import { MainWindow } from '../../../src/windows/main/MainWindow.tsx'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  invalidateHomeStats()
   caughtUpState.nextDueAt = null
   mocks.createCardContent.mockResolvedValue(undefined)
+  mocks.loadHomeStats.mockResolvedValue({
+    activity: [],
+    reviewedToday: 7,
+    queue: { new: 2, learning: 3, review: 4 },
+    nextLearningDueAt: null,
+  })
   mocks.listen.mockResolvedValue(() => undefined)
   mocks.start.mockResolvedValue(undefined)
 })
@@ -71,19 +81,19 @@ afterEach(() => {
 test('Add card opens a persistent main-window editor rather than Quick Add', () => {
   const { getByRole, queryByRole } = render(<MainWindow />)
 
-  fireEvent.click(getByRole('button', { name: 'Add card' }))
+  fireEvent.click(getByRole('button', { name: 'Add' }))
 
   expect(getByRole('heading', { name: 'Add a card' })).toBeTruthy()
   expect(queryByRole('heading', { name: 'Caught up for now' })).toBeNull()
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
 
   fireEvent.click(getByRole('button', { name: 'Cancel' }))
-  expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
+  expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy()
 })
 
-test('saving in the main editor creates the card and returns to review', async () => {
+test('saving in the main editor creates the card and returns home', async () => {
   const { getByRole } = render(<MainWindow />)
-  fireEvent.click(getByRole('button', { name: 'Add card' }))
+  fireEvent.click(getByRole('button', { name: 'Add' }))
 
   replaceEditorDocument(getByRole('textbox', { name: 'Front' }), '**front**')
   replaceEditorDocument(getByRole('textbox', { name: 'Back' }), 'back')
@@ -101,8 +111,21 @@ test('saving in the main editor creates the card and returns to review', async (
     })
   })
   expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(1)
-  expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
+  expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy()
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
+})
+
+test('home shows review and queue stats and opens the review flow', async () => {
+  const { findByText, getByRole, queryByText } = render(<MainWindow />)
+
+  expect(queryByText('dara')).toBeNull()
+  expect(await findByText('7')).toBeTruthy()
+  expect(getByRole('button', { name: /Review.*7.*reviewed today.*2.*New.*3.*Learning.*4.*Review/ })).toBeTruthy()
+
+  fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
+
+  expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
+  expect(mocks.refresh).toHaveBeenCalled()
 })
 
 test('automatically rechecks the queue when the next learning deadline arrives', () => {
@@ -114,6 +137,20 @@ test('automatically rechecks the queue when the next learning deadline arrives',
   act(() => vi.advanceTimersByTime(526))
 
   expect(mocks.notifyClockChanged).toHaveBeenCalledTimes(1)
+})
+
+test('reuses cached home stats when the app regains focus', async () => {
+  const { findByText } = render(<MainWindow />)
+
+  expect(await findByText('7')).toBeTruthy()
+  expect(mocks.loadHomeStats).toHaveBeenCalledTimes(1)
+
+  fireEvent.focus(window)
+
+  await waitFor(() => {
+    expect(mocks.notifyClockChanged).toHaveBeenCalledTimes(1)
+  })
+  expect(mocks.loadHomeStats).toHaveBeenCalledTimes(1)
 })
 
 function replaceEditorDocument(element: HTMLElement, value: string) {

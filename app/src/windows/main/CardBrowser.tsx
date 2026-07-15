@@ -24,11 +24,16 @@ import { BasicCardFormVariant } from '../shared/card-form.ts'
 const SEARCH_LIMIT = 75
 
 interface CardBrowserProps {
+  onCardContentChanged?: () => void
   onQueueChanged: () => void
   refreshToken?: number
 }
 
-export function CardBrowser({ onQueueChanged, refreshToken = 0 }: CardBrowserProps) {
+export function CardBrowser({
+  onQueueChanged,
+  onCardContentChanged = onQueueChanged,
+  refreshToken = 0,
+}: CardBrowserProps) {
   const searchRef = useRef<HTMLInputElement>(null)
   const requestId = useRef(0)
   const [query, setQuery] = useState('')
@@ -204,7 +209,7 @@ export function CardBrowser({ onQueueChanged, refreshToken = 0 }: CardBrowserPro
             )
           }
           setEditing(false)
-          onQueueChanged()
+          onCardContentChanged()
           refresh()
         }}
         variant={BasicCardFormVariant.Main}

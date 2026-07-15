@@ -8,6 +8,7 @@ mod paths;
 mod queue;
 #[allow(dead_code)]
 pub mod snapshot;
+mod stats;
 mod validation;
 mod writer;
 
@@ -31,6 +32,7 @@ pub use domain::{
 pub use error::{DatabaseError, Result};
 pub use paths::DatabasePaths;
 pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
+pub use stats::{HomeStats, LoadHomeStatsInput};
 pub use writer::DatabaseClient;
 use writer::WriterMessage;
 
@@ -117,6 +119,11 @@ impl Database {
         input: SelectNextReviewCardInput,
     ) -> Result<ReviewQueueSelection> {
         self.client.select_next_review_card(input)
+    }
+
+    #[cfg(test)]
+    fn load_home_stats(&self, input: LoadHomeStatsInput) -> Result<HomeStats> {
+        self.client.load_home_stats(input)
     }
 
     #[cfg(test)]
@@ -265,6 +272,9 @@ fn writer_loop(
             }
             WriterMessage::SelectNextReviewCard { input, reply } => {
                 let _ = reply.send(queue::select_next_review_card(&mut main, input));
+            }
+            WriterMessage::LoadHomeStats { input, reply } => {
+                let _ = reply.send(stats::load_home_stats(&main, input));
             }
             WriterMessage::Shutdown => break,
         }

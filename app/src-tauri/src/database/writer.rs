@@ -1,10 +1,10 @@
 use std::sync::mpsc::{self, Sender, SyncSender};
 
 use super::{
-    CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput, RecordGradeInput,
-    Result, ReviewContext, ReviewMutationResult, ReviewQueueSelection, SearchCardContentInput,
-    SelectNextReviewCardInput, SetCardContentSuspendedInput, UndoLastGradeInput,
-    UpdateCardContentInput,
+    CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput, HomeStats,
+    LoadHomeStatsInput, RecordGradeInput, Result, ReviewContext, ReviewMutationResult,
+    ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
+    SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
 };
 
 pub(super) enum WriterMessage {
@@ -43,6 +43,10 @@ pub(super) enum WriterMessage {
     SelectNextReviewCard {
         input: SelectNextReviewCardInput,
         reply: SyncSender<Result<ReviewQueueSelection>>,
+    },
+    LoadHomeStats {
+        input: LoadHomeStatsInput,
+        reply: SyncSender<Result<HomeStats>>,
     },
     Shutdown,
 }
@@ -156,6 +160,16 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::SelectNextReviewCard { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn load_home_stats(&self, input: LoadHomeStatsInput) -> Result<HomeStats> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadHomeStats { input, reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

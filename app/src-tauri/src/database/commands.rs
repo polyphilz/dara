@@ -3,9 +3,9 @@ use tauri::State;
 
 use super::{
     CardContentDraft, CardContentListItem, Database, DatabaseError, DeleteCardContentInput,
-    RecordGradeInput, ReviewContext, ReviewMutationResult, ReviewQueueSelection,
-    SearchCardContentInput, SelectNextReviewCardInput, SetCardContentSuspendedInput,
-    UndoLastGradeInput, UpdateCardContentInput,
+    HomeStats, LoadHomeStatsInput, RecordGradeInput, ReviewContext, ReviewMutationResult,
+    ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
+    SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
 };
 
 #[derive(Debug, Serialize)]
@@ -132,6 +132,15 @@ pub async fn select_next_review_card(
 ) -> CommandResult<ReviewQueueSelection> {
     let client = database.client();
     run_writer(move || client.select_next_review_card(input)).await
+}
+
+#[tauri::command]
+pub async fn load_home_stats(
+    database: State<'_, Database>,
+    input: LoadHomeStatsInput,
+) -> CommandResult<HomeStats> {
+    let client = database.client();
+    run_writer(move || client.load_home_stats(input)).await
 }
 
 async fn run_writer<T, F>(operation: F) -> CommandResult<T>

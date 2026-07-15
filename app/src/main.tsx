@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import 'katex/dist/katex.min.css'
+import 'react-activity-calendar/tooltips.css'
 import './styles/base.css'
 import './markdown/markdown-renderer.css'
 import './markdown/rich-text-editor.css'

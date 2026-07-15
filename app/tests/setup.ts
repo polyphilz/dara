@@ -28,6 +28,16 @@ globalThis.ResizeObserver = class ResizeObserver {
   unobserve() {}
 }
 
+Object.defineProperty(SVGElement.prototype, 'getBBox', {
+  configurable: true,
+  value: () => new DOMRect(),
+})
+
+Object.defineProperty(globalThis, 'CSS', {
+  configurable: true,
+  value: { supports: () => true },
+})
+
 if (!Range.prototype.getClientRects) {
   Range.prototype.getClientRects = () => [] as unknown as DOMRectList
 }

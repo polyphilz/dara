@@ -19,6 +19,8 @@ import { CardSource } from '../../markdown/CardSource.tsx'
 import { BasicCardForm } from '../shared/BasicCardForm.tsx'
 import { BasicCardFormVariant } from '../shared/card-form.ts'
 import { CardBrowser } from './CardBrowser.tsx'
+import { Home } from './Home.tsx'
+import { invalidateHomeStats } from './home-stats-cache.ts'
 
 const grades = [
   { grade: 1, label: 'Again' },
@@ -30,6 +32,7 @@ const grades = [
 const MAX_TIMER_DELAY = 2_147_000_000
 
 const MainWindowMode = {
+  Home: 'HOME',
   Review: 'REVIEW',
   Browse: 'BROWSE',
   Create: 'CREATE',
@@ -40,13 +43,17 @@ type MainWindowMode =
 
 export function MainWindow() {
   const controller = useMemo(
-    () => new ReviewController(tauriReviewGateway),
+    () =>
+      new ReviewController(tauriReviewGateway, {
+        onReviewDataChanged: invalidateHomeStats,
+      }),
     [],
   )
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const spaceCanSubmit = useRef(true)
-  const [mode, setMode] = useState<MainWindowMode>(MainWindowMode.Review)
+  const [mode, setMode] = useState<MainWindowMode>(MainWindowMode.Home)
   const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
+  const [homeRefreshToken, setHomeRefreshToken] = useState(0)
 
   useEffect(() => {
     void controller.start()
@@ -63,12 +70,20 @@ export function MainWindow() {
       MAX_TIMER_DELAY,
       Math.max(0, state.nextDueAt - Date.now() + 25),
     )
-    const timer = window.setTimeout(() => controller.notifyClockChanged(), delay)
+    const timer = window.setTimeout(() => {
+      void controller.notifyClockChanged()
+    }, delay)
     return () => window.clearTimeout(timer)
   }, [controller, state])
 
   useEffect(() => {
-    const refreshClock = () => controller.notifyClockChanged()
+    const refreshClock = () => {
+      if (document.visibilityState !== 'visible') {
+        return
+      }
+      void controller.notifyClockChanged()
+      setHomeRefreshToken((value) => value + 1)
+    }
     window.addEventListener('focus', refreshClock)
     document.addEventListener('visibilitychange', refreshClock)
 
@@ -96,7 +111,9 @@ export function MainWindow() {
 
     void listen('card-created', () => {
       controller.notifyCardCreated()
+      invalidateHomeStats()
       setBrowseRefreshToken((value) => value + 1)
+      setHomeRefreshToken((value) => value + 1)
     }).then(
       (unlisten) => {
         if (disposed) {
@@ -196,62 +213,66 @@ export function MainWindow() {
 
   const queueChanged = () => {
     void controller.refresh()
+    invalidateHomeStats()
+    setHomeRefreshToken((value) => value + 1)
+  }
+
+  const cardContentChanged = () => {
+    void controller.refresh()
+  }
+
+  const showHome = () => setMode(MainWindowMode.Home)
+  const showReview = () => {
+    setMode(MainWindowMode.Review)
+    void controller.refresh()
   }
 
   return (
     <main
-      className={`main-window${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}`}
+      className={`main-window${mode === MainWindowMode.Home ? ' main-window-home' : ''}${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}`}
     >
-      <header className="main-toolbar">
-        <div className="main-toolbar-leading">
-          <h1>dara</h1>
-          {mode !== MainWindowMode.Create && (
-            <nav aria-label="Main sections" className="main-section-tabs">
-              <button
-                aria-current={mode === MainWindowMode.Review ? 'page' : undefined}
-                onClick={() => {
-                  setMode(MainWindowMode.Review)
-                  void controller.refresh()
-                }}
-                type="button"
-              >
-                Review
+      {(mode === MainWindowMode.Review || mode === MainWindowMode.Browse) && (
+        <header className="main-toolbar">
+          <button onClick={showHome} type="button">
+            Home
+          </button>
+          <span>{mode === MainWindowMode.Review ? 'Review' : 'Browse'}</span>
+          <div className="toolbar-actions">
+            {mode === MainWindowMode.Review && canUndo(state) && (
+              <button type="button" onClick={() => void controller.undo()}>
+                Undo
               </button>
-              <button
-                aria-current={mode === MainWindowMode.Browse ? 'page' : undefined}
-                onClick={() => setMode(MainWindowMode.Browse)}
-                type="button"
-              >
-                Browse
+            )}
+            {mode === MainWindowMode.Browse && (
+              <button type="button" onClick={() => setMode(MainWindowMode.Create)}>
+                Add
               </button>
-            </nav>
-          )}
-        </div>
-        <div className="toolbar-actions">
-          {mode === MainWindowMode.Review && canUndo(state) && (
-            <button type="button" onClick={() => void controller.undo()}>
-              Undo
-            </button>
-          )}
-          {mode !== MainWindowMode.Create && (
-            <button type="button" onClick={() => setMode(MainWindowMode.Create)}>
-              Add card
-            </button>
-          )}
-        </div>
-      </header>
+            )}
+          </div>
+        </header>
+      )}
 
-      {mode === MainWindowMode.Create ? (
+      {mode === MainWindowMode.Home ? (
+        <Home
+          onAdd={() => setMode(MainWindowMode.Create)}
+          onBrowse={() => setMode(MainWindowMode.Browse)}
+          onReview={showReview}
+          refreshToken={homeRefreshToken}
+        />
+      ) : mode === MainWindowMode.Create ? (
         <BasicCardForm
-          onCancel={() => setMode(MainWindowMode.Review)}
+          onCancel={showHome}
           onSaved={() => {
             controller.notifyCardCreated()
-            setMode(MainWindowMode.Review)
+            invalidateHomeStats()
+            setHomeRefreshToken((value) => value + 1)
+            showHome()
           }}
           variant={BasicCardFormVariant.Main}
         />
       ) : mode === MainWindowMode.Browse ? (
         <CardBrowser
+          onCardContentChanged={cardContentChanged}
           onQueueChanged={queueChanged}
           refreshToken={browseRefreshToken}
         />

@@ -6,6 +6,7 @@ export type {
 export {
   createCardContent,
   deleteCardContent,
+  loadHomeStats,
   searchCardContent,
   setCardContentSuspended,
   tauriReviewGateway,

@@ -96,6 +96,7 @@ type RetryOperation = () => Promise<void>
 export interface ReviewControllerOptions {
   captureMoment?: () => StudyMoment
   createEventId?: () => string
+  onReviewDataChanged?: () => void
 }
 
 export class ReviewController {
@@ -107,6 +108,7 @@ export class ReviewController {
   private readonly listeners = new Set<Listener>()
   private readonly captureMoment: () => StudyMoment
   private readonly createEventId: () => string
+  private readonly onReviewDataChanged: () => void
   private normalLaneCursor = 0
   private lastGrade: UndoRecord | null = null
   private retryOperation: RetryOperation | null = null
@@ -120,6 +122,7 @@ export class ReviewController {
     this.captureMoment =
       options.captureMoment ?? (() => captureStudyMoment(Date.now()))
     this.createEventId = options.createEventId ?? (() => createUuidV7())
+    this.onReviewDataChanged = options.onReviewDataChanged ?? (() => undefined)
   }
 
   readonly getSnapshot = (): ReviewControllerState => this.state
@@ -298,6 +301,7 @@ export class ReviewController {
         selectionCursor: card.selectionCursor,
         nextNormalLaneCursor: card.nextNormalLaneCursor,
       }
+      this.onReviewDataChanged()
       this.normalLaneCursor = card.nextNormalLaneCursor
       await this.loadNext(this.normalLaneCursor, null)
     } catch (error) {
@@ -330,6 +334,7 @@ export class ReviewController {
         return
       }
       this.lastGrade = null
+      this.onReviewDataChanged()
       this.normalLaneCursor = undoRecord.nextNormalLaneCursor
       this.publish({
         phase: ReviewControllerPhase.Question,
