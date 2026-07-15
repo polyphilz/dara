@@ -20,6 +20,7 @@ import type { Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, Selection, TextSelection } from 'prosemirror-state'
 import { redo, undo } from 'prosemirror-history'
 import type { EditorView, NodeView } from 'prosemirror-view'
+import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
 import { codeLanguageDisplayName } from './languages.ts'
 
 const daraCodeHighlightStyle = HighlightStyle.define([
@@ -115,7 +116,10 @@ class CodeBlockView implements NodeView {
         CodeMirrorView.editorAttributes.of({
           class: 'dara-code-block-editor',
         }),
-        CodeMirrorView.contentAttributes.of({ tabindex: '-1' }),
+        CodeMirrorView.contentAttributes.of({
+          ...DARA_WRITING_ASSISTANCE_ATTRIBUTES,
+          tabindex: '-1',
+        }),
         codeMirrorKeymap.of([
           ...this.navigationKeymap(),
           ...defaultKeymap.filter(

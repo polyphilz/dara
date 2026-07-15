@@ -1,18 +1,25 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
-import { beforeEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
 import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
 
 const mocks = vi.hoisted(() => ({
-  createBasicCard: vi.fn(),
+  createCardContent: vi.fn(),
   listen: vi.fn(),
   notifyCardCreated: vi.fn(),
+  notifyClockChanged: vi.fn(),
+  refresh: vi.fn(),
   showQuickAdd: vi.fn(),
   start: vi.fn(),
 }))
 
-const caughtUpState = {
+const caughtUpState: {
+  canUndo: boolean
+  nextDueAt: number | null
+  notice: string | null
+  phase: 'CAUGHT_UP'
+} = {
   canUndo: false,
   nextDueAt: null,
   notice: null,
@@ -28,10 +35,16 @@ vi.mock('../../../src/lib/native.ts', () => ({
 }))
 
 vi.mock('../../../src/review/index.ts', () => ({
-  createBasicCard: mocks.createBasicCard,
+  createCardContent: mocks.createCardContent,
+  deleteCardContent: vi.fn(),
+  searchCardContent: vi.fn().mockResolvedValue([]),
+  setCardContentSuspended: vi.fn(),
+  updateCardContent: vi.fn(),
   ReviewController: class {
     getSnapshot = () => caughtUpState
     notifyCardCreated = mocks.notifyCardCreated
+    notifyClockChanged = mocks.notifyClockChanged
+    refresh = mocks.refresh
     start = mocks.start
     subscribe = () => () => undefined
   },
@@ -42,9 +55,14 @@ import { MainWindow } from '../../../src/windows/main/MainWindow.tsx'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.createBasicCard.mockResolvedValue(undefined)
+  caughtUpState.nextDueAt = null
+  mocks.createCardContent.mockResolvedValue(undefined)
   mocks.listen.mockResolvedValue(() => undefined)
   mocks.start.mockResolvedValue(undefined)
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 test('Add card opens a persistent main-window editor rather than Quick Add', () => {
@@ -72,15 +90,27 @@ test('saving in the main editor creates the card and returns to review', async (
   fireEvent.click(getByRole('button', { name: /^Add/ }))
 
   await waitFor(() => {
-    expect(mocks.createBasicCard).toHaveBeenCalledWith({
+    expect(mocks.createCardContent).toHaveBeenCalledWith({
       backMd: 'back',
       frontMd: '**front**',
       source: 'source',
+      type: 'BASIC',
     })
   })
   expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(1)
   expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
+})
+
+test('automatically rechecks the queue when the next learning deadline arrives', () => {
+  vi.useFakeTimers()
+  const now = Date.now()
+  caughtUpState.nextDueAt = now + 500
+  render(<MainWindow />)
+
+  act(() => vi.advanceTimersByTime(526))
+
+  expect(mocks.notifyClockChanged).toHaveBeenCalledTimes(1)
 })
 
 function replaceEditorDocument(element: HTMLElement, value: string) {

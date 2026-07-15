@@ -2,8 +2,10 @@ use serde::Serialize;
 use tauri::State;
 
 use super::{
-    CreateBasicCardInput, Database, DatabaseError, RecordGradeInput, ReviewContext,
-    ReviewMutationResult, ReviewQueueSelection, SelectNextReviewCardInput, UndoLastGradeInput,
+    CardContentDraft, CardContentListItem, Database, DatabaseError, DeleteCardContentInput,
+    RecordGradeInput, ReviewContext, ReviewMutationResult, ReviewQueueSelection,
+    SearchCardContentInput, SelectNextReviewCardInput, SetCardContentSuspendedInput,
+    UndoLastGradeInput, UpdateCardContentInput,
 };
 
 #[derive(Debug, Serialize)]
@@ -19,6 +21,7 @@ impl From<DatabaseError> for CommandError {
             DatabaseError::InvalidInput(_) => "invalidInput",
             DatabaseError::NotFound { .. } => "notFound",
             DatabaseError::StaleReviewContext(_) => "staleReviewContext",
+            DatabaseError::StaleCardContent(_) => "staleCardContent",
             DatabaseError::IdempotencyConflict { .. } => "idempotencyConflict",
             DatabaseError::WriterUnavailable => "databaseUnavailable",
             DatabaseError::CorruptReviewData(_) => "corruptReviewData",
@@ -35,12 +38,48 @@ impl From<DatabaseError> for CommandError {
 type CommandResult<T> = std::result::Result<T, CommandError>;
 
 #[tauri::command]
-pub async fn create_basic_card(
+pub async fn create_card_content(
     database: State<'_, Database>,
-    input: CreateBasicCardInput,
+    input: CardContentDraft,
 ) -> CommandResult<ReviewContext> {
     let client = database.client();
-    run_writer(move || client.create_basic_card(input)).await
+    run_writer(move || client.create_card_content(input)).await
+}
+
+#[tauri::command]
+pub async fn update_card_content(
+    database: State<'_, Database>,
+    input: UpdateCardContentInput,
+) -> CommandResult<CardContentListItem> {
+    let client = database.client();
+    run_writer(move || client.update_card_content(input)).await
+}
+
+#[tauri::command]
+pub async fn search_card_content(
+    database: State<'_, Database>,
+    input: SearchCardContentInput,
+) -> CommandResult<Vec<CardContentListItem>> {
+    let client = database.client();
+    run_writer(move || client.search_card_content(input)).await
+}
+
+#[tauri::command]
+pub async fn set_card_content_suspended(
+    database: State<'_, Database>,
+    input: SetCardContentSuspendedInput,
+) -> CommandResult<CardContentListItem> {
+    let client = database.client();
+    run_writer(move || client.set_card_content_suspended(input)).await
+}
+
+#[tauri::command]
+pub async fn delete_card_content(
+    database: State<'_, Database>,
+    input: DeleteCardContentInput,
+) -> CommandResult<()> {
+    let client = database.client();
+    run_writer(move || client.delete_card_content(input)).await
 }
 
 #[tauri::command]

@@ -53,6 +53,8 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from 'react'
+import { DaraInput } from '../components/DaraInput.tsx'
+import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
 import { daraEditorSchema } from './editor-schema.ts'
 import {
   registerRichTextEditorView,
@@ -83,6 +85,10 @@ interface MathDialogState {
   position?: number
 }
 
+interface LinkDialogState {
+  href: string
+}
+
 const externalValueUpdate = 'dara-external-value-update'
 let codeBlockNodeViewPromise: Promise<NodeViewConstructor> | null = null
 
@@ -100,16 +106,23 @@ export const RichTextEditor = forwardRef<
   const openMathDialogRef = useRef(
     (_display: boolean, _formula: string, _position?: number) => undefined,
   )
+  const openLinkDialogRef = useRef((_view: EditorView) => undefined)
   const initialValueRef = useRef(value)
   const initialAriaLabelRef = useRef(ariaLabel)
   const initialPlaceholderRef = useRef(placeholder)
   const [, renderToolbar] = useReducer((count) => count + 1, 0)
   const [mathDialog, setMathDialog] = useState<MathDialogState | null>(null)
+  const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null)
 
   onChangeRef.current = onChange
   disabledRef.current = disabled
   openMathDialogRef.current = (display, formula, position) => {
+    setLinkDialog(null)
     setMathDialog({ display, formula, position })
+  }
+  openLinkDialogRef.current = (editorView) => {
+    setMathDialog(null)
+    setLinkDialog({ href: activeLinkHref(editorView) ?? 'https://' })
   }
 
   useImperativeHandle(
@@ -129,7 +142,7 @@ export const RichTextEditor = forwardRef<
       plugins: [
         history(),
         editorInputRules(),
-        keymap(editorKeyBindings()),
+        keymap(editorKeyBindings((editorView) => openLinkDialogRef.current(editorView))),
         keymap(baseKeymap),
         dropCursor(),
         gapCursor(),
@@ -140,11 +153,11 @@ export const RichTextEditor = forwardRef<
 
     const props: DirectEditorProps = {
       attributes: {
+        ...DARA_WRITING_ASSISTANCE_ATTRIBUTES,
         'aria-label': initialAriaLabelRef.current,
         'aria-multiline': 'true',
         class: 'dara-rich-text-content',
         role: 'textbox',
-        spellcheck: 'true',
       },
       dispatchTransaction(transaction) {
         const view = viewRef.current
@@ -238,7 +251,11 @@ export const RichTextEditor = forwardRef<
       <EditorToolbar
         ariaLabel={ariaLabel}
         disabled={disabled}
-        onMath={(display) => setMathDialog({ display, formula: '' })}
+        onLink={() => view && openLinkDialogRef.current(view)}
+        onMath={(display) => {
+          setLinkDialog(null)
+          setMathDialog({ display, formula: '' })
+        }}
         view={view}
       />
       <div className="rich-text-editor-surface" ref={hostRef} />
@@ -255,11 +272,24 @@ export const RichTextEditor = forwardRef<
           }}
         />
       )}
+      {linkDialog && view && (
+        <LinkDialog
+          dialog={linkDialog}
+          onCancel={() => {
+            setLinkDialog(null)
+            view.focus()
+          }}
+          onConfirm={(href) => {
+            applyLink(view, href)
+            setLinkDialog(null)
+          }}
+        />
+      )}
     </div>
   )
 })
 
-function editorKeyBindings(): Record<string, Command> {
+function editorKeyBindings(openLink: (view: EditorView) => void): Record<string, Command> {
   const listItem = daraEditorSchema.nodes.list_item!
   const hardBreak = insertHardBreak()
   return {
@@ -274,7 +304,7 @@ function editorKeyBindings(): Record<string, Command> {
       if (!view) {
         return false
       }
-      editLink(view)
+      openLink(view)
       return true
     },
     'Mod-Shift-x': toggleMark(daraEditorSchema.marks.strike!),
@@ -383,11 +413,13 @@ function insertHardBreak(): Command {
 function EditorToolbar({
   ariaLabel,
   disabled,
+  onLink,
   onMath,
   view,
 }: {
   ariaLabel: string
   disabled: boolean
+  onLink: () => void
   onMath: (display: boolean) => void
   view: EditorView | null
 }) {
@@ -449,7 +481,7 @@ function EditorToolbar({
         active={markIsActive(view, 'link')}
         disabled={disabled || !view}
         label="Link"
-        onPress={() => view && editLink(view)}
+        onPress={onLink}
         shortcut="⌘K"
       >
         Link
@@ -702,29 +734,24 @@ function ancestorIsActive(state: EditorState, nodeName: string): boolean {
   return false
 }
 
-function editLink(view: EditorView): void {
+function activeLinkHref(view: EditorView): string | null {
   const current = view.state.schema.marks.link!.isInSet(
     view.state.storedMarks ?? view.state.selection.$from.marks(),
   )
-  const entered = window.prompt('Link URL', current?.attrs.href ?? 'https://')
-  if (entered === null) {
-    view.focus()
+  return typeof current?.attrs.href === 'string' ? current.attrs.href : null
+}
+
+function applyLink(view: EditorView, href: string | null): void {
+  const link = view.state.schema.marks.link!
+  if (href === null) {
+    if (markIsActive(view, 'link')) {
+      runCommand(view, toggleMark(link))
+    } else {
+      view.focus()
+    }
     return
   }
-  if (!entered.trim()) {
-    runCommand(view, toggleMark(view.state.schema.marks.link!))
-    return
-  }
-  const href = externalHttpUrl(entered.trim())
-  if (!href) {
-    window.alert('Links must use http:// or https://.')
-    view.focus()
-    return
-  }
-  runCommand(
-    view,
-    toggleMark(view.state.schema.marks.link!, { href, title: null }),
-  )
+  runCommand(view, toggleMark(link, { href, title: null }))
 }
 
 function commitMath(
@@ -838,11 +865,10 @@ function FormulaDialog({
         <span>LaTeX-style formula</span>
       </div>
       <div aria-live="polite" className="formula-preview" ref={previewRef} />
-      <input
+      <DaraInput
         aria-label="Formula"
         onChange={(event) => setFormula(event.target.value)}
         ref={inputRef}
-        spellCheck={false}
         type="text"
         value={formula}
       />
@@ -857,6 +883,74 @@ function FormulaDialog({
       <div className="formula-dialog-actions">
         <button onClick={onCancel} type="button">Cancel</button>
         <button disabled={!formula.trim()} type="submit">Apply</button>
+      </div>
+    </form>
+  )
+}
+
+function LinkDialog({
+  dialog,
+  onCancel,
+  onConfirm,
+}: {
+  dialog: LinkDialogState
+  onCancel: () => void
+  onConfirm: (href: string | null) => void
+}) {
+  const [href, setHref] = useState(dialog.href)
+  const [error, setError] = useState<string | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    inputRef.current?.focus()
+    inputRef.current?.select()
+  }, [])
+
+  return (
+    <form
+      aria-label="Link editor"
+      className="formula-dialog"
+      onKeyDown={(event) => {
+        event.stopPropagation()
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          onCancel()
+        }
+      }}
+      onSubmit={(event) => {
+        event.preventDefault()
+        const entered = href.trim()
+        if (!entered) {
+          onConfirm(null)
+          return
+        }
+        const safeHref = externalHttpUrl(entered)
+        if (!safeHref) {
+          setError('Links must use http:// or https://.')
+          return
+        }
+        onConfirm(safeHref)
+      }}
+      role="dialog"
+    >
+      <div className="formula-dialog-heading">
+        <strong>Link</strong>
+        <span>Absolute HTTP URL</span>
+      </div>
+      <DaraInput
+        aria-label="Link URL"
+        onChange={(event) => {
+          setHref(event.target.value)
+          setError(null)
+        }}
+        ref={inputRef}
+        type="url"
+        value={href}
+      />
+      {error && <span role="alert">{error}</span>}
+      <div className="formula-dialog-actions">
+        <button onClick={onCancel} type="button">Cancel</button>
+        <button type="submit">Apply</button>
       </div>
     </form>
   )

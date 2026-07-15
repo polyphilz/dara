@@ -3,5 +3,12 @@ export type {
   ReviewControllerOptions,
   ReviewControllerState,
 } from './controller.ts'
-export { createBasicCard, tauriReviewGateway } from './gateway.ts'
+export {
+  createCardContent,
+  deleteCardContent,
+  searchCardContent,
+  setCardContentSuspended,
+  tauriReviewGateway,
+  updateCardContent,
+} from './gateway.ts'
 export type * from './contracts.ts'

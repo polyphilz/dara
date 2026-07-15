@@ -1,14 +1,32 @@
 use std::sync::mpsc::{self, Sender, SyncSender};
 
 use super::{
-    CreateBasicCardInput, DatabaseError, RecordGradeInput, Result, ReviewContext,
-    ReviewMutationResult, ReviewQueueSelection, SelectNextReviewCardInput, UndoLastGradeInput,
+    CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput, RecordGradeInput,
+    Result, ReviewContext, ReviewMutationResult, ReviewQueueSelection, SearchCardContentInput,
+    SelectNextReviewCardInput, SetCardContentSuspendedInput, UndoLastGradeInput,
+    UpdateCardContentInput,
 };
 
 pub(super) enum WriterMessage {
-    CreateBasicCard {
-        input: CreateBasicCardInput,
+    CreateCardContent {
+        input: CardContentDraft,
         reply: SyncSender<Result<ReviewContext>>,
+    },
+    UpdateCardContent {
+        input: UpdateCardContentInput,
+        reply: SyncSender<Result<CardContentListItem>>,
+    },
+    SearchCardContent {
+        input: SearchCardContentInput,
+        reply: SyncSender<Result<Vec<CardContentListItem>>>,
+    },
+    SetCardContentSuspended {
+        input: SetCardContentSuspendedInput,
+        reply: SyncSender<Result<CardContentListItem>>,
+    },
+    DeleteCardContent {
+        input: DeleteCardContentInput,
+        reply: SyncSender<Result<()>>,
     },
     LoadReviewContext {
         review_card_id: String,
@@ -39,10 +57,59 @@ impl DatabaseClient {
         Self { sender }
     }
 
-    pub fn create_basic_card(&self, input: CreateBasicCardInput) -> Result<ReviewContext> {
+    pub fn create_card_content(&self, input: CardContentDraft) -> Result<ReviewContext> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(WriterMessage::CreateBasicCard { input, reply })
+            .send(WriterMessage::CreateCardContent { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn update_card_content(
+        &self,
+        input: UpdateCardContentInput,
+    ) -> Result<CardContentListItem> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::UpdateCardContent { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn search_card_content(
+        &self,
+        input: SearchCardContentInput,
+    ) -> Result<Vec<CardContentListItem>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SearchCardContent { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn set_card_content_suspended(
+        &self,
+        input: SetCardContentSuspendedInput,
+    ) -> Result<CardContentListItem> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SetCardContentSuspended { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn delete_card_content(&self, input: DeleteCardContentInput) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::DeleteCardContent { input, reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

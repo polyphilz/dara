@@ -61,6 +61,9 @@ pub enum DatabaseError {
     #[error("review context is stale: {0}")]
     StaleReviewContext(String),
 
+    #[error("card content is stale: {0}")]
+    StaleCardContent(String),
+
     #[error("event {event_id} was already used for a different request")]
     IdempotencyConflict { event_id: String },
 

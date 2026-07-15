@@ -118,6 +118,12 @@ export class ReviewController {
     }
   }
 
+  async notifyClockChanged(): Promise<void> {
+    if (this.state.phase === 'CAUGHT_UP') {
+      await this.loadNext(this.normalLaneCursor, null)
+    }
+  }
+
   reveal(): void {
     if (this.state.phase !== 'QUESTION') {
       return
@@ -417,6 +423,7 @@ function recordGradeInput(
     eventId,
     reviewCardId: context.reviewCard.id,
     expectedReviewCardUpdatedAt: context.reviewCard.updatedAt,
+    expectedCardContentUpdatedAt: context.cardContent.updatedAt,
     expectedCardSequence: context.lastCardSequence,
     expectedSchedulerConfigId: context.schedulerConfig.id,
     review: { ...moment, grade },

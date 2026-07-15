@@ -1,6 +1,12 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
+use pulldown_cmark::{
+    Event as MarkdownEvent, Options as MarkdownOptions, Parser as MarkdownParser,
+};
+use rusqlite::{
+    params, params_from_iter, types::Value as SqlValue, Connection, OptionalExtension, Row,
+    Transaction, TransactionBehavior,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -13,22 +19,115 @@ const SCHEDULER_STATE_SCHEMA_VERSION: i64 = 1;
 const MAX_JSON_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 // An explicit, non-token field boundary keeps the aggregate deterministic.
 const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
+const CARD_CONTENT_LIST_SELECT: &str = "
+    WITH lifecycle AS (
+        SELECT
+            card_content_id,
+            CASE
+                WHEN count(*) FILTER (WHERE status = 'SUSPENDED') = count(*) THEN 'SUSPENDED'
+                WHEN count(*) FILTER (WHERE status = 'ACTIVE') = count(*) THEN 'ACTIVE'
+                ELSE 'MIXED'
+            END AS review_status,
+            max(updated_at) AS lifecycle_updated_at
+        FROM review_card
+        WHERE deleted_at IS NULL
+        GROUP BY card_content_id
+    )
+    SELECT
+        content.id, content.created_at, content.updated_at, content.type,
+        content.front_md, content.back_md, content.source,
+        lifecycle.review_status, lifecycle.lifecycle_updated_at
+    FROM card_content AS content
+    JOIN lifecycle ON lifecycle.card_content_id = content.id";
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+pub enum CardContentDraft {
+    Basic {
+        #[serde(rename = "frontMd")]
+        front_md: String,
+        #[serde(rename = "backMd")]
+        back_md: String,
+        source: Option<String>,
+    },
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CreateBasicCardInput {
-    pub front_md: String,
-    pub back_md: String,
-    pub source: Option<String>,
+pub struct UpdateCardContentInput {
+    pub id: String,
+    pub expected_updated_at: i64,
+    pub content: CardContentDraft,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CardContent {
+    Basic {
+        id: String,
+        #[serde(rename = "createdAt")]
+        created_at: i64,
+        #[serde(rename = "updatedAt")]
+        updated_at: i64,
+        #[serde(rename = "frontMd")]
+        front_md: String,
+        #[serde(rename = "backMd")]
+        back_md: String,
+        source: Option<String>,
+    },
+}
+
+impl CardContent {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Basic { id, .. } => id,
+        }
+    }
+
+    pub fn updated_at(&self) -> i64 {
+        match self {
+            Self::Basic { updated_at, .. } => *updated_at,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum CardContentReviewStatus {
+    Active,
+    Suspended,
+    Mixed,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct BasicCardContent {
-    pub id: String,
-    pub front_md: String,
-    pub back_md: String,
-    pub source: Option<String>,
+pub struct CardContentListItem {
+    pub card_content: CardContent,
+    pub review_status: CardContentReviewStatus,
+    pub lifecycle_updated_at: i64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SearchCardContentInput {
+    pub query: String,
+    pub limit: i64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetCardContentSuspendedInput {
+    pub card_content_id: String,
+    pub expected_lifecycle_updated_at: i64,
+    pub suspended: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DeleteCardContentInput {
+    pub card_content_id: String,
+    pub expected_updated_at: i64,
+    pub expected_lifecycle_updated_at: i64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -138,7 +237,7 @@ pub struct PersistedReviewFact {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewContext {
-    pub card_content: BasicCardContent,
+    pub card_content: CardContent,
     pub review_card: ReviewCardSummary,
     pub cache: ReviewCardCache,
     pub cache_scheduler_config_id: Option<String>,
@@ -153,6 +252,7 @@ pub struct RecordGradeInput {
     pub event_id: String,
     pub review_card_id: String,
     pub expected_review_card_updated_at: i64,
+    pub expected_card_content_updated_at: i64,
     pub expected_card_sequence: i64,
     pub expected_scheduler_config_id: String,
     pub review: ReviewFact,
@@ -190,6 +290,9 @@ pub struct ReviewMutationResult {
 
 struct StoredCard {
     content_id: String,
+    content_created_at: i64,
+    content_updated_at: i64,
+    content_type: String,
     front_md: String,
     back_md: String,
     source: Option<String>,
@@ -223,23 +326,24 @@ struct StoredEvent {
     target_event_id: Option<String>,
 }
 
-pub(super) fn create_basic_card(
+pub(super) fn create_card_content(
     connection: &mut Connection,
-    input: CreateBasicCardInput,
+    input: CardContentDraft,
 ) -> Result<ReviewContext> {
-    validate_basic_card(&input)?;
+    validate_card_content(&input)?;
     let now = now_millis()?;
     let content_id = Uuid::now_v7().to_string();
     let review_card_id = Uuid::now_v7().to_string();
-    let search_body = search_body(&input);
+    let (content_type, front_md, back_md, source) = draft_fields(&input);
+    let search_body = search_body(front_md, back_md, source);
     let content_hash = Sha256::digest(search_body.as_bytes());
 
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     transaction.execute(
         "INSERT INTO card_content (
             id, created_at, updated_at, deleted_at, type, front_md, back_md, source
-         ) VALUES (?1, ?2, ?2, NULL, 'BASIC', ?3, ?4, ?5)",
-        params![content_id, now, input.front_md, input.back_md, input.source],
+         ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5, ?6)",
+        params![content_id, now, content_type, front_md, back_md, source],
     )?;
     transaction.execute(
         "INSERT INTO review_card (
@@ -261,6 +365,216 @@ pub(super) fn create_basic_card(
     transaction.commit()?;
 
     load_review_context(connection, &review_card_id)
+}
+
+pub(super) fn update_card_content(
+    connection: &mut Connection,
+    input: UpdateCardContentInput,
+) -> Result<CardContentListItem> {
+    validate_uuid_v7(&input.id, "id")?;
+    validate_non_negative_safe(input.expected_updated_at, "expectedUpdatedAt")?;
+    validate_card_content(&input.content)?;
+
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let current = load_card_content(&transaction, &input.id)?;
+    if current.updated_at() != input.expected_updated_at {
+        return Err(DatabaseError::StaleCardContent(format!(
+            "card content timestamp is {}, expected {}",
+            current.updated_at(),
+            input.expected_updated_at
+        )));
+    }
+
+    let now = now_millis()?;
+    let updated_at = next_updated_at(current.updated_at(), now)?;
+    let (content_type, front_md, back_md, source) = draft_fields(&input.content);
+    let changed = transaction.execute(
+        "UPDATE card_content
+         SET updated_at = ?1, type = ?2, front_md = ?3, back_md = ?4, source = ?5
+         WHERE id = ?6 AND updated_at = ?7 AND deleted_at IS NULL",
+        params![
+            updated_at,
+            content_type,
+            front_md,
+            back_md,
+            source,
+            input.id,
+            input.expected_updated_at,
+        ],
+    )?;
+    if changed != 1 {
+        return Err(DatabaseError::StaleCardContent(
+            "card content changed before the edit was saved".into(),
+        ));
+    }
+    rebuild_search_document(
+        &transaction,
+        &input.id,
+        front_md,
+        back_md,
+        source,
+        updated_at,
+    )?;
+    transaction.commit()?;
+    load_card_content_list_item(connection, &input.id)
+}
+
+pub(super) fn search_card_content(
+    connection: &mut Connection,
+    input: SearchCardContentInput,
+) -> Result<Vec<CardContentListItem>> {
+    if !(1..=100).contains(&input.limit) {
+        return Err(DatabaseError::InvalidInput(
+            "limit must be between 1 and 100".into(),
+        ));
+    }
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    let terms = literal_search_terms(&input.query);
+    let mut results = Vec::new();
+    if !terms.is_empty() && terms.iter().all(|term| term.chars().count() >= 3) {
+        let fts_query = literal_trigram_query(&terms);
+        let mut statement = transaction.prepare(&format!(
+            "{CARD_CONTENT_LIST_SELECT}
+             JOIN search_document AS document ON document.card_content_id = content.id
+             JOIN search_document_fts ON search_document_fts.rowid = document.rowid
+             WHERE content.deleted_at IS NULL
+               AND search_document_fts MATCH ?1
+             ORDER BY bm25(search_document_fts), content.updated_at DESC, content.id
+             LIMIT ?2"
+        ))?;
+        let rows = statement.query_map(params![fts_query, input.limit], card_content_list_row)?;
+        for row in rows {
+            results.push(row?);
+        }
+    } else if !terms.is_empty() {
+        // FTS5's trigram tokenizer cannot produce a token for a one- or
+        // two-character term. Keep those early keystrokes useful with a
+        // literal scan; normal queries remain index-backed.
+        let predicates = terms
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("instr(lower(document.body), lower(?{})) > 0", index + 1))
+            .collect::<Vec<_>>()
+            .join(" AND ");
+        let limit_parameter = terms.len() + 1;
+        let mut parameters = terms.into_iter().map(SqlValue::Text).collect::<Vec<_>>();
+        parameters.push(SqlValue::Integer(input.limit));
+        let mut statement = transaction.prepare(&format!(
+            "{CARD_CONTENT_LIST_SELECT}
+             JOIN search_document AS document ON document.card_content_id = content.id
+             WHERE content.deleted_at IS NULL
+               AND {predicates}
+             ORDER BY content.updated_at DESC, content.id
+             LIMIT ?{limit_parameter}"
+        ))?;
+        let rows = statement.query_map(params_from_iter(parameters), card_content_list_row)?;
+        for row in rows {
+            results.push(row?);
+        }
+    } else if input.query.trim().is_empty() {
+        let mut statement = transaction.prepare(&format!(
+            "{CARD_CONTENT_LIST_SELECT}
+             WHERE content.deleted_at IS NULL
+             ORDER BY content.updated_at DESC, content.id
+             LIMIT ?1"
+        ))?;
+        let rows = statement.query_map([input.limit], card_content_list_row)?;
+        for row in rows {
+            results.push(row?);
+        }
+    }
+    drop(transaction);
+    Ok(results)
+}
+
+pub(super) fn set_card_content_suspended(
+    connection: &mut Connection,
+    input: SetCardContentSuspendedInput,
+) -> Result<CardContentListItem> {
+    validate_uuid_v7(&input.card_content_id, "cardContentId")?;
+    validate_non_negative_safe(
+        input.expected_lifecycle_updated_at,
+        "expectedLifecycleUpdatedAt",
+    )?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let current = load_card_content_list_item(&transaction, &input.card_content_id)?;
+    if current.lifecycle_updated_at != input.expected_lifecycle_updated_at {
+        return Err(DatabaseError::StaleCardContent(format!(
+            "card lifecycle timestamp is {}, expected {}",
+            current.lifecycle_updated_at, input.expected_lifecycle_updated_at
+        )));
+    }
+    let now = now_millis()?;
+    let updated_at = next_updated_at(current.lifecycle_updated_at, now)?;
+    let (status, suspended_at) = if input.suspended {
+        ("SUSPENDED", Some(now))
+    } else {
+        ("ACTIVE", None)
+    };
+    let changed = transaction.execute(
+        "UPDATE review_card
+         SET status = ?1, suspended_at = ?2, updated_at = ?3
+         WHERE card_content_id = ?4 AND deleted_at IS NULL",
+        params![status, suspended_at, updated_at, input.card_content_id],
+    )?;
+    if changed == 0 {
+        return Err(DatabaseError::NotFound {
+            entity: "active review cards for content",
+            id: input.card_content_id,
+        });
+    }
+    transaction.commit()?;
+    load_card_content_list_item(connection, current.card_content.id())
+}
+
+pub(super) fn delete_card_content(
+    connection: &mut Connection,
+    input: DeleteCardContentInput,
+) -> Result<()> {
+    validate_uuid_v7(&input.card_content_id, "cardContentId")?;
+    validate_non_negative_safe(input.expected_updated_at, "expectedUpdatedAt")?;
+    validate_non_negative_safe(
+        input.expected_lifecycle_updated_at,
+        "expectedLifecycleUpdatedAt",
+    )?;
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let current = load_card_content_list_item(&transaction, &input.card_content_id)?;
+    if current.card_content.updated_at() != input.expected_updated_at
+        || current.lifecycle_updated_at != input.expected_lifecycle_updated_at
+    {
+        return Err(DatabaseError::StaleCardContent(
+            "card content changed before it could be deleted".into(),
+        ));
+    }
+
+    let now = now_millis()?;
+    let content_updated_at = next_updated_at(current.card_content.updated_at(), now)?;
+    let lifecycle_updated_at = next_updated_at(current.lifecycle_updated_at, now)?;
+    transaction.execute(
+        "UPDATE card_content
+         SET updated_at = ?1, deleted_at = ?2
+         WHERE id = ?3 AND updated_at = ?4 AND deleted_at IS NULL",
+        params![
+            content_updated_at,
+            now,
+            input.card_content_id,
+            input.expected_updated_at
+        ],
+    )?;
+    transaction.execute(
+        "UPDATE review_card
+         SET updated_at = ?1, deleted_at = ?2
+         WHERE card_content_id = ?3 AND deleted_at IS NULL",
+        params![lifecycle_updated_at, now, input.card_content_id],
+    )?;
+    // Search documents are derived rather than tombstoned. No embedding rows are
+    // produced before the complete-search milestone, so vector invalidation remains deferred.
+    transaction.execute(
+        "DELETE FROM search_document WHERE card_content_id = ?1",
+        [&input.card_content_id],
+    )?;
+    transaction.commit()?;
+    Ok(())
 }
 
 pub(super) fn load_review_context(
@@ -294,12 +608,15 @@ pub(super) fn load_review_context(
     validate_materialized_history(&cache, &review_history)?;
 
     Ok(ReviewContext {
-        card_content: BasicCardContent {
-            id: stored.content_id,
-            front_md: stored.front_md,
-            back_md: stored.back_md,
-            source: stored.source,
-        },
+        card_content: card_content_from_fields(
+            stored.content_id,
+            stored.content_created_at,
+            stored.content_updated_at,
+            &stored.content_type,
+            stored.front_md,
+            stored.back_md,
+            stored.source,
+        )?,
         review_card: ReviewCardSummary {
             id: stored.card_id,
             status,
@@ -341,6 +658,7 @@ pub(super) fn record_grade(
     validate_preconditions(
         &context,
         input.expected_review_card_updated_at,
+        Some(input.expected_card_content_updated_at),
         input.expected_card_sequence,
         &input.expected_scheduler_config_id,
     )?;
@@ -423,6 +741,7 @@ pub(super) fn undo_last_grade(
     validate_preconditions(
         &context,
         input.expected_review_card_updated_at,
+        None,
         input.expected_card_sequence,
         &input.expected_scheduler_config_id,
     )?;
@@ -482,33 +801,236 @@ pub(super) fn undo_last_grade(
     })
 }
 
-fn validate_basic_card(input: &CreateBasicCardInput) -> Result<()> {
-    if input.front_md.trim().is_empty() {
-        return Err(DatabaseError::InvalidInput(
-            "frontMd must contain visible text".into(),
-        ));
-    }
-    if input.back_md.trim().is_empty() {
-        return Err(DatabaseError::InvalidInput(
-            "backMd must contain visible text".into(),
-        ));
+fn validate_card_content(input: &CardContentDraft) -> Result<()> {
+    match input {
+        CardContentDraft::Basic {
+            front_md, back_md, ..
+        } => {
+            if markdown_plain_text(front_md).trim().is_empty() {
+                return Err(DatabaseError::InvalidInput(
+                    "frontMd must contain visible text".into(),
+                ));
+            }
+            if markdown_plain_text(back_md).trim().is_empty() {
+                return Err(DatabaseError::InvalidInput(
+                    "backMd must contain visible text".into(),
+                ));
+            }
+        }
     }
     Ok(())
 }
 
-fn search_body(input: &CreateBasicCardInput) -> String {
-    let mut fields = vec![input.front_md.as_str(), input.back_md.as_str()];
-    if let Some(source) = input.source.as_deref().filter(|source| !source.is_empty()) {
-        fields.push(source);
+fn draft_fields(input: &CardContentDraft) -> (&'static str, &str, &str, Option<&str>) {
+    match input {
+        CardContentDraft::Basic {
+            front_md,
+            back_md,
+            source,
+        } => ("BASIC", front_md, back_md, source.as_deref()),
+    }
+}
+
+fn search_body(front_md: &str, back_md: &str, source: Option<&str>) -> String {
+    let front = markdown_plain_text(front_md);
+    let back = markdown_plain_text(back_md);
+    let mut fields = vec![front, back];
+    if let Some(source) = source.map(str::trim).filter(|source| !source.is_empty()) {
+        fields.push(source.to_owned());
     }
     fields.join(SEARCH_FIELD_SEPARATOR)
+}
+
+fn markdown_plain_text(markdown: &str) -> String {
+    let options = MarkdownOptions::ENABLE_STRIKETHROUGH
+        | MarkdownOptions::ENABLE_TABLES
+        | MarkdownOptions::ENABLE_TASKLISTS
+        | MarkdownOptions::ENABLE_FOOTNOTES
+        | MarkdownOptions::ENABLE_MATH;
+    let mut output = String::new();
+    for event in MarkdownParser::new_ext(markdown, options) {
+        match event {
+            MarkdownEvent::Text(text)
+            | MarkdownEvent::Code(text)
+            | MarkdownEvent::Html(text)
+            | MarkdownEvent::InlineHtml(text)
+            | MarkdownEvent::InlineMath(text)
+            | MarkdownEvent::DisplayMath(text) => {
+                if !output.is_empty()
+                    && !output.chars().last().is_some_and(char::is_whitespace)
+                    && !text.chars().next().is_some_and(char::is_whitespace)
+                {
+                    output.push(' ');
+                }
+                output.push_str(&text);
+            }
+            MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak | MarkdownEvent::Rule => {
+                if !output.ends_with('\n') {
+                    output.push('\n');
+                }
+            }
+            MarkdownEvent::TaskListMarker(checked) => {
+                output.push_str(if checked { " checked " } else { " unchecked " });
+            }
+            MarkdownEvent::Start(_)
+            | MarkdownEvent::End(_)
+            | MarkdownEvent::FootnoteReference(_) => {}
+        }
+    }
+    output.trim().to_owned()
+}
+
+fn rebuild_search_document(
+    transaction: &Transaction<'_>,
+    card_content_id: &str,
+    front_md: &str,
+    back_md: &str,
+    source: Option<&str>,
+    updated_at: i64,
+) -> Result<()> {
+    let body = search_body(front_md, back_md, source);
+    let content_hash = Sha256::digest(body.as_bytes());
+    let changed = transaction.execute(
+        "UPDATE search_document
+         SET body = ?1, content_hash = ?2, updated_at = ?3
+         WHERE card_content_id = ?4",
+        params![body, content_hash.as_slice(), updated_at, card_content_id],
+    )?;
+    if changed != 1 {
+        return Err(DatabaseError::CorruptReviewData(format!(
+            "active card content {card_content_id} has no search document"
+        )));
+    }
+    Ok(())
+}
+
+fn literal_search_terms(query: &str) -> Vec<String> {
+    query
+        .split(|character: char| !character.is_alphanumeric() && character != '_')
+        .filter(|term| !term.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+fn literal_trigram_query(terms: &[String]) -> String {
+    terms
+        .iter()
+        .map(|term| format!("\"{term}\""))
+        .collect::<Vec<_>>()
+        .join(" AND ")
+}
+
+fn load_card_content(connection: &Connection, card_content_id: &str) -> Result<CardContent> {
+    connection
+        .query_row(
+            "SELECT id, created_at, updated_at, type, front_md, back_md, source
+             FROM card_content
+             WHERE id = ?1 AND deleted_at IS NULL",
+            [card_content_id],
+            card_content_row,
+        )
+        .optional()?
+        .ok_or_else(|| DatabaseError::NotFound {
+            entity: "card content",
+            id: card_content_id.to_owned(),
+        })
+}
+
+fn load_card_content_list_item(
+    connection: &Connection,
+    card_content_id: &str,
+) -> Result<CardContentListItem> {
+    connection
+        .query_row(
+            &format!(
+                "{CARD_CONTENT_LIST_SELECT}
+                 WHERE content.id = ?1 AND content.deleted_at IS NULL"
+            ),
+            [card_content_id],
+            card_content_list_row,
+        )
+        .optional()?
+        .ok_or_else(|| DatabaseError::NotFound {
+            entity: "card content",
+            id: card_content_id.to_owned(),
+        })
+}
+
+fn card_content_row(row: &Row<'_>) -> rusqlite::Result<CardContent> {
+    let id = row.get(0)?;
+    let created_at = row.get(1)?;
+    let updated_at = row.get(2)?;
+    let content_type: String = row.get(3)?;
+    let front_md = row.get(4)?;
+    let back_md = row.get(5)?;
+    let source = row.get(6)?;
+    card_content_from_fields(
+        id,
+        created_at,
+        updated_at,
+        &content_type,
+        front_md,
+        back_md,
+        source,
+    )
+    .map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error))
+    })
+}
+
+fn card_content_list_row(row: &Row<'_>) -> rusqlite::Result<CardContentListItem> {
+    let card_content = card_content_row(row)?;
+    let review_status = match row.get::<_, String>(7)?.as_str() {
+        "ACTIVE" => CardContentReviewStatus::Active,
+        "SUSPENDED" => CardContentReviewStatus::Suspended,
+        "MIXED" => CardContentReviewStatus::Mixed,
+        value => {
+            return Err(rusqlite::Error::FromSqlConversionFailure(
+                7,
+                rusqlite::types::Type::Text,
+                Box::new(std::io::Error::other(format!(
+                    "unknown card content review status {value}"
+                ))),
+            ))
+        }
+    };
+    Ok(CardContentListItem {
+        card_content,
+        review_status,
+        lifecycle_updated_at: row.get(8)?,
+    })
+}
+
+fn card_content_from_fields(
+    id: String,
+    created_at: i64,
+    updated_at: i64,
+    content_type: &str,
+    front_md: String,
+    back_md: String,
+    source: Option<String>,
+) -> Result<CardContent> {
+    match content_type {
+        "BASIC" => Ok(CardContent::Basic {
+            id,
+            created_at,
+            updated_at,
+            front_md,
+            back_md,
+            source,
+        }),
+        value => Err(DatabaseError::CorruptReviewData(format!(
+            "unsupported active card content type {value}"
+        ))),
+    }
 }
 
 fn load_stored_card(connection: &Connection, review_card_id: &str) -> Result<StoredCard> {
     connection
         .query_row(
             "SELECT
-                content.id, content.front_md, content.back_md, content.source,
+                content.id, content.created_at, content.updated_at, content.type,
+                content.front_md, content.back_md, content.source,
                 card.id, card.status, card.variant_key, card.updated_at,
                 card.state, card.due_at, card.due_study_day, card.last_review_at,
                 card.reps, card.lapses, card.scheduler_config_id,
@@ -517,28 +1039,30 @@ fn load_stored_card(connection: &Connection, review_card_id: &str) -> Result<Sto
              JOIN card_content AS content ON content.id = card.card_content_id
              WHERE card.id = ?1
                AND card.deleted_at IS NULL
-               AND content.deleted_at IS NULL
-               AND content.type = 'BASIC'",
+               AND content.deleted_at IS NULL",
             [review_card_id],
             |row| {
                 Ok(StoredCard {
                     content_id: row.get(0)?,
-                    front_md: row.get(1)?,
-                    back_md: row.get(2)?,
-                    source: row.get(3)?,
-                    card_id: row.get(4)?,
-                    status: row.get(5)?,
-                    variant_key: row.get(6)?,
-                    updated_at: row.get(7)?,
-                    state: row.get(8)?,
-                    due_at: row.get(9)?,
-                    due_study_day: row.get(10)?,
-                    last_review_at: row.get(11)?,
-                    reps: row.get(12)?,
-                    lapses: row.get(13)?,
-                    scheduler_config_id: row.get(14)?,
-                    scheduler_state_schema_version: row.get(15)?,
-                    scheduler_state_json: row.get(16)?,
+                    content_created_at: row.get(1)?,
+                    content_updated_at: row.get(2)?,
+                    content_type: row.get(3)?,
+                    front_md: row.get(4)?,
+                    back_md: row.get(5)?,
+                    source: row.get(6)?,
+                    card_id: row.get(7)?,
+                    status: row.get(8)?,
+                    variant_key: row.get(9)?,
+                    updated_at: row.get(10)?,
+                    state: row.get(11)?,
+                    due_at: row.get(12)?,
+                    due_study_day: row.get(13)?,
+                    last_review_at: row.get(14)?,
+                    reps: row.get(15)?,
+                    lapses: row.get(16)?,
+                    scheduler_config_id: row.get(17)?,
+                    scheduler_state_schema_version: row.get(18)?,
+                    scheduler_state_json: row.get(19)?,
                 })
             },
         )
@@ -784,6 +1308,10 @@ fn validate_record_input(input: &RecordGradeInput) -> Result<()> {
         input.expected_review_card_updated_at,
         "expectedReviewCardUpdatedAt",
     )?;
+    validate_non_negative_safe(
+        input.expected_card_content_updated_at,
+        "expectedCardContentUpdatedAt",
+    )?;
     validate_non_negative_safe(input.expected_card_sequence, "expectedCardSequence")?;
     validate_review_fact(&input.review)?;
     validate_cache(&input.next_cache).map_err(DatabaseError::InvalidInput)?;
@@ -815,6 +1343,7 @@ fn validate_undo_input(input: &UndoLastGradeInput) -> Result<()> {
 fn validate_preconditions(
     context: &ReviewContext,
     expected_updated_at: i64,
+    expected_content_updated_at: Option<i64>,
     expected_sequence: i64,
     expected_scheduler_config_id: &str,
 ) -> Result<()> {
@@ -829,6 +1358,15 @@ fn validate_preconditions(
             "review card timestamp is {}, expected {}",
             context.review_card.updated_at, expected_updated_at
         )));
+    }
+    if let Some(expected_content_updated_at) = expected_content_updated_at {
+        if context.card_content.updated_at() != expected_content_updated_at {
+            return Err(DatabaseError::StaleReviewContext(format!(
+                "card content timestamp is {}, expected {}",
+                context.card_content.updated_at(),
+                expected_content_updated_at
+            )));
+        }
     }
     if context.last_card_sequence != expected_sequence {
         return Err(DatabaseError::StaleReviewContext(format!(

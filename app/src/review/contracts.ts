@@ -13,9 +13,27 @@ export type MutationDisposition = 'APPLIED' | 'ALREADY_APPLIED'
 
 export interface BasicCardContent {
   id: string
+  createdAt: number
+  updatedAt: number
+  type: 'BASIC'
   frontMd: string
   backMd: string
   source: string | null
+}
+
+export type CardContent = BasicCardContent
+
+export type CardContentDraft = Pick<
+  BasicCardContent,
+  'type' | 'frontMd' | 'backMd' | 'source'
+>
+
+export type CardContentReviewStatus = 'ACTIVE' | 'SUSPENDED' | 'MIXED'
+
+export interface CardContentListItem {
+  cardContent: CardContent
+  reviewStatus: CardContentReviewStatus
+  lifecycleUpdatedAt: number
 }
 
 export interface ReviewCardSummary {
@@ -38,7 +56,7 @@ export interface PersistedReviewFact {
 }
 
 export interface ReviewContext {
-  cardContent: BasicCardContent
+  cardContent: CardContent
   reviewCard: ReviewCardSummary
   cache: ReviewCardCache
   cacheSchedulerConfigId: string | null
@@ -70,6 +88,7 @@ export interface RecordGradeInput {
   eventId: string
   reviewCardId: string
   expectedReviewCardUpdatedAt: number
+  expectedCardContentUpdatedAt: number
   expectedCardSequence: number
   expectedSchedulerConfigId: string
   review: ReviewFact
@@ -94,10 +113,27 @@ export interface ReviewMutationResult {
   context: ReviewContext
 }
 
-export interface CreateBasicCardInput {
-  frontMd: string
-  backMd: string
-  source: string | null
+export interface UpdateCardContentInput {
+  id: string
+  expectedUpdatedAt: number
+  content: CardContentDraft
+}
+
+export interface SearchCardContentInput {
+  query: string
+  limit: number
+}
+
+export interface SetCardContentSuspendedInput {
+  cardContentId: string
+  expectedLifecycleUpdatedAt: number
+  suspended: boolean
+}
+
+export interface DeleteCardContentInput {
+  cardContentId: string
+  expectedUpdatedAt: number
+  expectedLifecycleUpdatedAt: number
 }
 
 export interface ReviewGateway {

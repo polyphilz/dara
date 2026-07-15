@@ -24,7 +24,9 @@ use rusqlite::Connection;
 
 pub use connection::register_sqlite_vec;
 pub use domain::{
-    CreateBasicCardInput, RecordGradeInput, ReviewContext, ReviewMutationResult, UndoLastGradeInput,
+    CardContentDraft, CardContentListItem, DeleteCardContentInput, RecordGradeInput, ReviewContext,
+    ReviewMutationResult, SearchCardContentInput, SetCardContentSuspendedInput, UndoLastGradeInput,
+    UpdateCardContentInput,
 };
 pub use error::{DatabaseError, Result};
 pub use paths::DatabasePaths;
@@ -64,8 +66,34 @@ impl Database {
     }
 
     #[cfg(test)]
-    fn create_basic_card(&self, input: CreateBasicCardInput) -> Result<ReviewContext> {
-        self.client.create_basic_card(input)
+    fn create_card_content(&self, input: CardContentDraft) -> Result<ReviewContext> {
+        self.client.create_card_content(input)
+    }
+
+    #[cfg(test)]
+    fn update_card_content(&self, input: UpdateCardContentInput) -> Result<CardContentListItem> {
+        self.client.update_card_content(input)
+    }
+
+    #[cfg(test)]
+    fn search_card_content(
+        &self,
+        input: SearchCardContentInput,
+    ) -> Result<Vec<CardContentListItem>> {
+        self.client.search_card_content(input)
+    }
+
+    #[cfg(test)]
+    fn set_card_content_suspended(
+        &self,
+        input: SetCardContentSuspendedInput,
+    ) -> Result<CardContentListItem> {
+        self.client.set_card_content_suspended(input)
+    }
+
+    #[cfg(test)]
+    fn delete_card_content(&self, input: DeleteCardContentInput) -> Result<()> {
+        self.client.delete_card_content(input)
     }
 
     #[cfg(test)]
@@ -208,8 +236,20 @@ fn writer_loop(
 ) {
     for message in receiver {
         match message {
-            WriterMessage::CreateBasicCard { input, reply } => {
-                let _ = reply.send(domain::create_basic_card(&mut main, input));
+            WriterMessage::CreateCardContent { input, reply } => {
+                let _ = reply.send(domain::create_card_content(&mut main, input));
+            }
+            WriterMessage::UpdateCardContent { input, reply } => {
+                let _ = reply.send(domain::update_card_content(&mut main, input));
+            }
+            WriterMessage::SearchCardContent { input, reply } => {
+                let _ = reply.send(domain::search_card_content(&mut main, input));
+            }
+            WriterMessage::SetCardContentSuspended { input, reply } => {
+                let _ = reply.send(domain::set_card_content_suspended(&mut main, input));
+            }
+            WriterMessage::DeleteCardContent { input, reply } => {
+                let _ = reply.send(domain::delete_card_content(&mut main, input));
             }
             WriterMessage::LoadReviewContext {
                 review_card_id,

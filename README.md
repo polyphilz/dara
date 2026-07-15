@@ -136,4 +136,4 @@ A new upstream GGUF or `llama.cpp` commit does not itself create a new index. Da
 
 ## Status
 
-Early development. The macOS windowing spike and SQLite foundation are implemented; the review, editing, and search workflows are still under construction.
+Early development. The macOS windowing and SQLite foundations are implemented, together with BASIC capture/review, saved-card editing, lexical search, suspension, and tombstone deletion. Cloze, images/OCR, semantic search, and distribution remain under construction.

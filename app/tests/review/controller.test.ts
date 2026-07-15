@@ -228,10 +228,31 @@ test('reselects stale data without silently resubmitting the grade', async () =>
   )
 })
 
+test('rechecks a caught-up queue when the clock advances after a timer or wake', async () => {
+  const context = initialContext()
+  const gateway = new FakeGateway(
+    [caughtUpSelection(0, moment.reviewedAt + 600_000), cardSelection(context)],
+    async (input) => mutation(input.eventId, 1, gradedContext(input)),
+    async (input) => mutation(input.eventId, 2, undoneContext(input.eventId)),
+  )
+  const controller = new ReviewController(gateway, {
+    captureMoment: () => moment,
+  })
+
+  await controller.start()
+  assert.equal(controller.getSnapshot().phase, 'CAUGHT_UP')
+  await controller.notifyClockChanged()
+  assert.equal(controller.getSnapshot().phase, 'QUESTION')
+  assert.equal(gateway.selectionInputs.length, 2)
+})
+
 function initialContext(): ReviewContext {
   return {
     cardContent: {
       id: '01980c8e-6c00-7000-8000-000000000101',
+      createdAt: 900,
+      updatedAt: 1_000,
+      type: 'BASIC',
       frontMd: 'fixture front',
       backMd: 'fixture back',
       source: null,
@@ -291,10 +312,13 @@ function cardSelection(context: ReviewContext): ReviewQueueSelection {
   }
 }
 
-function caughtUpSelection(cursor: number): ReviewQueueSelection {
+function caughtUpSelection(
+  cursor: number,
+  nextDueAt: number | null = null,
+): ReviewQueueSelection {
   return {
     kind: 'CAUGHT_UP',
-    nextDueAt: null,
+    nextDueAt,
     nextNormalLaneCursor: cursor,
   }
 }

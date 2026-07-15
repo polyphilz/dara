@@ -119,7 +119,7 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 1);
+    assert_eq!(history_rows, 2);
 }
 
 #[test]
@@ -322,6 +322,37 @@ fn fts_triggers_work_with_trusted_schema_disabled() {
 }
 
 #[test]
+fn trigram_search_migration_rebuilds_existing_documents() {
+    let (_directory, paths) = test_paths();
+    create_identified_unmigrated_pair(&paths);
+    let mut main = open_existing(&paths.main, DatabaseKind::Main);
+    let v1 = migrations::main_runner().get_migrations()[0].clone();
+    Runner::new(&[v1])
+        .set_grouped(true)
+        .run(&mut main)
+        .expect("V1 schema");
+
+    insert_basic_content(&main);
+    main.execute(
+        "INSERT INTO search_document(rowid, card_content_id, body, content_hash, updated_at)
+         VALUES(1, ?1, 'prefix ffsef suffix', zeroblob(32), 100)",
+        [BASIC_CONTENT_ID],
+    )
+    .expect("pre-migration search document");
+
+    migrations::run_main(&mut main).expect("trigram migration");
+    let match_count: i64 = main
+        .query_row(
+            "SELECT count(*) FROM search_document_fts
+             WHERE search_document_fts MATCH 'sef'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("substring query after rebuild");
+    assert_eq!(match_count, 1);
+}
+
+#[test]
 fn state_checks_partial_uniqueness_and_append_only_history_are_enforced() {
     let (_directory, paths) = test_paths();
     drop(initialize_test(&paths));
@@ -499,7 +530,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 2, 'future', applied_on, '0'
+         SELECT 3, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -520,17 +551,17 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V2__grouped_good.sql",
+            "V3__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
-        .expect("V2 migration"),
+        .expect("V3 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V3__grouped_failure.sql",
+            "V4__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
-        .expect("V3 migration"),
+        .expect("V4 migration"),
     );
     let runner = Runner::new(&all).set_grouped(true);
     assert!(runner.run(&mut main).is_err());
@@ -539,9 +570,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V1")
+            .expect("V2")
             .version(),
-        1
+        2
     );
 }
 
@@ -585,7 +616,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(1));
+    assert_eq!(launch.manifest.main.migration_head, Some(2));
     drop(database);
 
     let base = launch.manifest.created_at;

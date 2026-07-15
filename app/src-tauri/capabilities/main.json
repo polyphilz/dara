@@ -4,5 +4,5 @@
   "description": "IPC boundary for dara's ordinary main window",
   "windows": ["main"],
   "platforms": ["macOS"],
-  "permissions": []
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
 }

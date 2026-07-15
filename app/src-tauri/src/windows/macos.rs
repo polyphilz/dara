@@ -436,6 +436,8 @@ fn activate_main_window(app: &AppHandle) -> Result<(), String> {
     window
         .set_focus()
         .map_err(|error| format!("could not focus main window: {error}"))?;
+    app.emit_to(MAIN_LABEL, "review-clock-refresh", ())
+        .map_err(|error| format!("could not refresh the review clock: {error}"))?;
     Ok(())
 }
 
@@ -503,6 +505,11 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
                 {
                     log::error!("failed to dismiss Quick Add after focus loss: {error}");
                 }
+            }
+        }
+        WindowEvent::Focused(true) if window.label() == MAIN_LABEL => {
+            if let Err(error) = window.emit("review-clock-refresh", ()) {
+                log::error!("failed to refresh review clock after activation: {error}");
             }
         }
         _ => {}

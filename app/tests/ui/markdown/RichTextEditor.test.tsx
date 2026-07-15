@@ -48,6 +48,7 @@ test('starts with the controlled value and reports a canonical document change',
     <RichTextEditor ariaLabel="Front" onChange={onChange} value="initial" />,
   )
   const textbox = getByRole('textbox', { name: 'Front' })
+  expectWritingAssistanceDisabled(textbox)
   const view = editorView(textbox)
   expect(view.state.doc.textContent).toBe('initial')
 
@@ -143,6 +144,25 @@ test('keyboard shortcuts toggle bold and italic marks', () => {
   expect(serialized).toContain('*')
 })
 
+test('link editing uses an app-owned Dara input', () => {
+  const { getByRole, view } = controlledEditor('word')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)),
+    )
+  })
+
+  fireEvent.mouseDown(getByRole('button', { name: 'Link' }))
+  const input = getByRole('textbox', { name: 'Link URL' })
+  expectWritingAssistanceDisabled(input)
+  fireEvent.change(input, { target: { value: 'https://example.com' } })
+  fireEvent.click(getByRole('button', { name: 'Apply' }))
+
+  expect(serializeDaraMarkdown(view.state.doc)).toBe(
+    '[word](https://example.com/)',
+  )
+})
+
 test('math toolbar inserts a rendered node and serializes delimiters', () => {
   const { container, getByRole, view } = controlledEditor('formula:')
   act(() => {
@@ -153,7 +173,9 @@ test('math toolbar inserts a rendered node and serializes delimiters', () => {
   })
 
   fireEvent.mouseDown(getByRole('button', { name: 'Inline math' }))
-  fireEvent.change(getByRole('textbox', { name: 'Formula' }), {
+  const formula = getByRole('textbox', { name: 'Formula' })
+  expectWritingAssistanceDisabled(formula)
+  fireEvent.change(formula, {
     target: { value: 'E = mc^2' },
   })
   expect(getByRole('dialog', { name: 'Inline math editor' }).querySelector('.katex')).not.toBeNull()
@@ -177,6 +199,7 @@ test('code blocks lazy-load CodeMirror and synchronize code changes', async () =
   if (!codeEditor) {
     throw new Error('CodeMirror content not found')
   }
+  expectWritingAssistanceDisabled(codeEditor)
   const codeView = CodeMirrorView.findFromDOM(codeEditor)
   if (!codeView) {
     throw new Error('CodeMirror view not found')
@@ -409,6 +432,14 @@ async function embeddedCodeView(container: HTMLElement) {
     throw new Error('CodeMirror view not found')
   }
   return view
+}
+
+function expectWritingAssistanceDisabled(element: HTMLElement) {
+  expect(element.getAttribute('autocapitalize')).toBe('none')
+  expect(element.getAttribute('autocomplete')).toBe('off')
+  expect(element.getAttribute('autocorrect')).toBe('off')
+  expect(element.getAttribute('spellcheck')).toBe('false')
+  expect(element.getAttribute('writingsuggestions')).toBe('false')
 }
 
 function typeText(view: ReturnType<typeof editorView>, text: string) {

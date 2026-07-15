@@ -7,11 +7,17 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react'
+import { DaraInput } from '../../components/DaraInput.tsx'
 import {
   RichTextEditor,
   type RichTextEditorHandle,
 } from '../../markdown/RichTextEditor.tsx'
-import { createBasicCard } from '../../review/index.ts'
+import {
+  createCardContent,
+  updateCardContent,
+  type BasicCardContent,
+  type CardContentListItem,
+} from '../../review/index.ts'
 import { errorMessage } from '../../review/errors.ts'
 
 export interface BasicCardFormHandle {
@@ -20,20 +26,21 @@ export interface BasicCardFormHandle {
 }
 
 interface BasicCardFormProps {
+  initialContent?: BasicCardContent
   onCancel: () => void | Promise<void>
-  onSaved: () => void | Promise<void>
+  onSaved: (item?: CardContentListItem) => void | Promise<void>
   variant: 'main' | 'quick'
 }
 
 export const BasicCardForm = forwardRef<
   BasicCardFormHandle,
   BasicCardFormProps
->(function BasicCardForm({ onCancel, onSaved, variant }, ref) {
+>(function BasicCardForm({ initialContent, onCancel, onSaved, variant }, ref) {
   const frontRef = useRef<RichTextEditorHandle>(null)
   const backRef = useRef<RichTextEditorHandle>(null)
-  const [front, setFront] = useState('')
-  const [back, setBack] = useState('')
-  const [source, setSource] = useState('')
+  const [front, setFront] = useState(initialContent?.frontMd ?? '')
+  const [back, setBack] = useState(initialContent?.backMd ?? '')
+  const [source, setSource] = useState(initialContent?.source ?? '')
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
 
@@ -60,6 +67,13 @@ export const BasicCardForm = forwardRef<
   )
   useEffect(focusFront, [focusFront])
 
+  useEffect(() => {
+    setFront(initialContent?.frontMd ?? '')
+    setBack(initialContent?.backMd ?? '')
+    setSource(initialContent?.source ?? '')
+    setError(null)
+  }, [initialContent])
+
   const save = async () => {
     if (saving) {
       return
@@ -78,15 +92,26 @@ export const BasicCardForm = forwardRef<
     setError(null)
     setSaving(true)
     try {
-      await createBasicCard({
+      const content = {
+        type: 'BASIC' as const,
         frontMd: front,
         backMd: back,
         source: source.trim() || null,
-      })
-      setFront('')
-      setBack('')
-      setSource('')
-      await onSaved()
+      }
+      if (initialContent) {
+        const item = await updateCardContent({
+          id: initialContent.id,
+          expectedUpdatedAt: initialContent.updatedAt,
+          content,
+        })
+        await onSaved(item)
+      } else {
+        await createCardContent(content)
+        setFront('')
+        setBack('')
+        setSource('')
+        await onSaved()
+      }
     } catch (cause) {
       setError(errorMessage(cause))
     } finally {
@@ -114,7 +139,12 @@ export const BasicCardForm = forwardRef<
     }
   }
 
-  const title = variant === 'quick' ? 'Quick add' : 'Add a card'
+  const editing = initialContent !== undefined
+  const title = editing
+    ? 'Edit card'
+    : variant === 'quick'
+      ? 'Quick add'
+      : 'Add a card'
   return (
     <section
       className={`basic-card-form basic-card-form-${variant}`}
@@ -123,7 +153,7 @@ export const BasicCardForm = forwardRef<
     >
       <header className="card-editor-header">
         <div>
-          <p>New BASIC card</p>
+          <p>{editing ? 'BASIC card' : 'New BASIC card'}</p>
           <h1 id={`${variant}-card-editor-title`}>{title}</h1>
         </div>
         <span>{variant === 'quick' ? 'Esc to cancel' : 'Rich text · Markdown saved automatically'}</span>
@@ -157,7 +187,7 @@ export const BasicCardForm = forwardRef<
         <span>
           Source <small>optional</small>
         </span>
-        <input
+        <DaraInput
           disabled={saving}
           onChange={(event) => setSource(event.target.value)}
           onKeyDown={(event) => {
@@ -185,7 +215,8 @@ export const BasicCardForm = forwardRef<
             onClick={() => void save()}
             type="button"
           >
-            {saving ? 'Adding…' : 'Add'} <kbd>⌘↵</kbd>
+            {saving ? (editing ? 'Saving…' : 'Adding…') : editing ? 'Save' : 'Add'}{' '}
+            <kbd>⌘↵</kbd>
           </button>
           <button
             className="cancel-button"

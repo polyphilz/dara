@@ -16,6 +16,7 @@ import type { ReviewCardCache, ReviewGrade } from '../../scheduling/index.ts'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { BasicCardForm } from '../shared/BasicCardForm.tsx'
+import { CardBrowser } from './CardBrowser.tsx'
 
 const grades = [
   { grade: 1, label: 'Again' },
@@ -24,6 +25,8 @@ const grades = [
   { grade: 4, label: 'Easy' },
 ] as const
 
+const MAX_TIMER_DELAY = 2_147_000_000
+
 export function MainWindow() {
   const controller = useMemo(
     () => new ReviewController(tauriReviewGateway),
@@ -31,17 +34,56 @@ export function MainWindow() {
   )
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const spaceCanSubmit = useRef(true)
-  const [creating, setCreating] = useState(false)
+  const [mode, setMode] = useState<'REVIEW' | 'BROWSE' | 'CREATE'>('REVIEW')
+  const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
 
   useEffect(() => {
     void controller.start()
   }, [controller])
 
   useEffect(() => {
+    if (state.phase !== 'CAUGHT_UP' || state.nextDueAt === null) {
+      return
+    }
+    const delay = Math.min(
+      MAX_TIMER_DELAY,
+      Math.max(0, state.nextDueAt - Date.now() + 25),
+    )
+    const timer = window.setTimeout(() => controller.notifyClockChanged(), delay)
+    return () => window.clearTimeout(timer)
+  }, [controller, state])
+
+  useEffect(() => {
+    const refreshClock = () => controller.notifyClockChanged()
+    window.addEventListener('focus', refreshClock)
+    document.addEventListener('visibilitychange', refreshClock)
+
+    let disposed = false
+    let stopListening: (() => void) | undefined
+    void listen('review-clock-refresh', refreshClock).then((unlisten) => {
+      if (disposed) {
+        unlisten()
+      } else {
+        stopListening = unlisten
+      }
+    })
+
+    return () => {
+      disposed = true
+      stopListening?.()
+      window.removeEventListener('focus', refreshClock)
+      document.removeEventListener('visibilitychange', refreshClock)
+    }
+  }, [controller])
+
+  useEffect(() => {
     let disposed = false
     let stopListening: (() => void) | undefined
 
-    void listen('card-created', () => controller.notifyCardCreated()).then(
+    void listen('card-created', () => {
+      controller.notifyCardCreated()
+      setBrowseRefreshToken((value) => value + 1)
+    }).then(
       (unlisten) => {
         if (disposed) {
           unlisten()
@@ -59,7 +101,7 @@ export function MainWindow() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (creating) {
+      if (mode !== 'REVIEW') {
         return
       }
       if (
@@ -132,34 +174,68 @@ export function MainWindow() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [controller, creating, state])
+  }, [controller, mode, state])
+
+  const queueChanged = () => {
+    void controller.refresh()
+  }
 
   return (
-    <main className={creating ? 'main-window main-window-creating' : 'main-window'}>
+    <main
+      className={`main-window${mode === 'CREATE' ? ' main-window-creating' : ''}${mode === 'BROWSE' ? ' main-window-browsing' : ''}`}
+    >
       <header className="main-toolbar">
-        <h1>dara</h1>
+        <div className="main-toolbar-leading">
+          <h1>dara</h1>
+          {mode !== 'CREATE' && (
+            <nav aria-label="Main sections" className="main-section-tabs">
+              <button
+                aria-current={mode === 'REVIEW' ? 'page' : undefined}
+                onClick={() => {
+                  setMode('REVIEW')
+                  void controller.refresh()
+                }}
+                type="button"
+              >
+                Review
+              </button>
+              <button
+                aria-current={mode === 'BROWSE' ? 'page' : undefined}
+                onClick={() => setMode('BROWSE')}
+                type="button"
+              >
+                Browse
+              </button>
+            </nav>
+          )}
+        </div>
         <div className="toolbar-actions">
-          {!creating && canUndo(state) && (
+          {mode === 'REVIEW' && canUndo(state) && (
             <button type="button" onClick={() => void controller.undo()}>
               Undo
             </button>
           )}
-          {!creating && (
-            <button type="button" onClick={() => setCreating(true)}>
+          {mode !== 'CREATE' && (
+            <button type="button" onClick={() => setMode('CREATE')}>
               Add card
             </button>
           )}
         </div>
       </header>
 
-      {creating ? (
+      {mode === 'CREATE' ? (
         <BasicCardForm
-          onCancel={() => setCreating(false)}
+          onCancel={() => setMode('REVIEW')}
           onSaved={() => {
             controller.notifyCardCreated()
-            setCreating(false)
+            setMode('REVIEW')
           }}
           variant="main"
+        />
+      ) : mode === 'BROWSE' ? (
+        <CardBrowser
+          onQueueChanged={queueChanged}
+          refreshToken={browseRefreshToken}
         />
       ) : (
         <ReviewContent controller={controller} state={state} />

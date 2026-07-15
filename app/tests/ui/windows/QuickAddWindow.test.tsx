@@ -7,7 +7,7 @@ import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
 import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
 
 const mocks = vi.hoisted(() => ({
-  createBasicCard: vi.fn(),
+  createCardContent: vi.fn(),
   dismissQuickAdd: vi.fn(),
   emit: vi.fn(),
   listen: vi.fn(),
@@ -25,14 +25,15 @@ vi.mock('../../../src/lib/native.ts', () => ({
 }))
 
 vi.mock('../../../src/review/index.ts', () => ({
-  createBasicCard: mocks.createBasicCard,
+  createCardContent: mocks.createCardContent,
+  updateCardContent: vi.fn(),
 }))
 
 import { QuickAddWindow } from '../../../src/windows/quick-add/QuickAddWindow.tsx'
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.createBasicCard.mockResolvedValue(undefined)
+  mocks.createCardContent.mockResolvedValue(undefined)
   mocks.dismissQuickAdd.mockResolvedValue(undefined)
   mocks.emit.mockResolvedValue(undefined)
   mocks.listen.mockResolvedValue(() => undefined)
@@ -73,10 +74,11 @@ test('persists canonical Markdown, trims source, and clears all values after suc
   fireEvent.click(getByRole('button', { name: /Add/ }))
 
   await waitFor(() => {
-    expect(mocks.createBasicCard).toHaveBeenCalledWith({
+    expect(mocks.createCardContent).toHaveBeenCalledWith({
       backMd: 'answer\nwith a break',
       frontMd: '**question**',
       source: 'Chapter 4',
+      type: 'BASIC',
     })
   })
   await waitFor(() => {
@@ -100,10 +102,11 @@ test('normalizes whitespace-only source to null and Mod-Enter saves from Source'
   await user.keyboard('{Meta>}{Enter}{/Meta}')
 
   await waitFor(() => {
-    expect(mocks.createBasicCard).toHaveBeenCalledWith({
+    expect(mocks.createCardContent).toHaveBeenCalledWith({
       backMd: 'back',
       frontMd: 'front',
       source: null,
+      type: 'BASIC',
     })
   })
 })
@@ -121,11 +124,11 @@ test('plain Enter in Source neither submits nor changes its value', async () => 
 
   expect(source.value).toBe('notes')
   expect(document.activeElement).toBe(source)
-  expect(mocks.createBasicCard).not.toHaveBeenCalled()
+  expect(mocks.createCardContent).not.toHaveBeenCalled()
 })
 
 test('a failed save retains all values and a retry can succeed', async () => {
-  mocks.createBasicCard.mockRejectedValueOnce(new Error('database unavailable'))
+  mocks.createCardContent.mockRejectedValueOnce(new Error('database unavailable'))
   const { getByRole } = render(<QuickAddWindow />)
   const front = getByRole('textbox', { name: 'Front' })
   const back = getByRole('textbox', { name: 'Back' })
@@ -154,7 +157,7 @@ test('validation focuses the missing field and composition Escape does not dismi
 
   fireEvent.click(getByRole('button', { name: /Add/ }))
   expect(document.activeElement).toBe(back)
-  expect(mocks.createBasicCard).not.toHaveBeenCalled()
+  expect(mocks.createCardContent).not.toHaveBeenCalled()
 
   fireEvent.keyDown(back, { isComposing: true, key: 'Escape' })
   expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
@@ -254,7 +257,7 @@ test('Control-Enter exits a front code block without submitting or focusing Back
   expect(editorView(front).state.doc.lastChild?.type.name).toBe('paragraph')
   expect(document.activeElement).toBe(front)
   expect(document.activeElement).not.toBe(back)
-  expect(mocks.createBasicCard).not.toHaveBeenCalled()
+  expect(mocks.createCardContent).not.toHaveBeenCalled()
 })
 
 test('a nested code block is not an extra Tab stop between Front and Back', async () => {

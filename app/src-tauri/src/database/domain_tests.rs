@@ -5,9 +5,13 @@ use tempfile::TempDir;
 
 use super::{
     connection::{self, DatabaseKind, FileState},
-    domain::{MutationDisposition, ReviewCardCache, ReviewCardState, ReviewFact, SchedulerLogV1},
-    initialize, CreateBasicCardInput, Database, DatabaseError, DatabasePaths,
-    InitializationOptions, RecordGradeInput, ReviewContext, UndoLastGradeInput,
+    domain::{
+        CardContent, CardContentDraft, CardContentReviewStatus, DeleteCardContentInput,
+        MutationDisposition, ReviewCardCache, ReviewCardState, ReviewFact, SchedulerLogV1,
+        SearchCardContentInput, SetCardContentSuspendedInput, UpdateCardContentInput,
+    },
+    initialize, Database, DatabaseError, DatabasePaths, InitializationOptions, RecordGradeInput,
+    ReviewContext, UndoLastGradeInput,
 };
 
 const FIXTURE_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -111,11 +115,20 @@ fn seed_fixture_card(paths: &DatabasePaths, fixture: &PersistenceFixture) {
         .expect("fixture search document");
 }
 
+fn basic_draft(front: &str, back: &str, source: Option<&str>) -> CardContentDraft {
+    CardContentDraft::Basic {
+        front_md: front.into(),
+        back_md: back.into(),
+        source: source.map(str::to_owned),
+    }
+}
+
 fn grade_input(context: &ReviewContext, step: &FixtureStep) -> RecordGradeInput {
     RecordGradeInput {
         event_id: step.event_id.clone(),
         review_card_id: context.review_card.id.clone(),
         expected_review_card_updated_at: context.review_card.updated_at,
+        expected_card_content_updated_at: context.card_content.updated_at(),
         expected_card_sequence: context.last_card_sequence,
         expected_scheduler_config_id: context.scheduler_config.id.clone(),
         review: step.review.clone(),
@@ -129,18 +142,18 @@ fn creates_a_basic_card_and_loads_its_scheduling_context() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);
     let context = database
-        .create_basic_card(CreateBasicCardInput {
-            front_md: "What is the capital of France?".into(),
-            back_md: "Paris".into(),
-            source: Some("Geography notes".into()),
-        })
+        .create_card_content(basic_draft(
+            "What is the capital of France?",
+            "Paris",
+            Some("Geography notes"),
+        ))
         .expect("basic card");
 
-    assert_eq!(
-        context.card_content.front_md,
-        "What is the capital of France?"
-    );
-    assert_eq!(context.card_content.back_md, "Paris");
+    let CardContent::Basic {
+        front_md, back_md, ..
+    } = &context.card_content;
+    assert_eq!(front_md, "What is the capital of France?");
+    assert_eq!(back_md, "Paris");
     assert_eq!(context.review_card.variant_key, "basic");
     assert_eq!(context.cache.state, ReviewCardState::New);
     assert_eq!(context.last_card_sequence, 0);
@@ -158,7 +171,7 @@ fn creates_a_basic_card_and_loads_its_scheduling_context() {
     let row: (i64, String) = connection
         .query_row(
             "SELECT count(*), body FROM search_document WHERE card_content_id = ?1",
-            [&context.card_content.id],
+            [context.card_content.id()],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("search document");
@@ -167,6 +180,217 @@ fn creates_a_basic_card_and_loads_its_scheduling_context() {
         row.1,
         "What is the capital of France?\n\u{1e}\nParis\n\u{1e}\nGeography notes"
     );
+}
+
+#[test]
+fn lexical_search_and_protected_edits_share_one_plain_text_document() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let original = database
+        .create_card_content(basic_draft(
+            "Why is **copper** used for wire?",
+            "It conducts electricity well.",
+            Some("EE notes"),
+        ))
+        .expect("basic card");
+
+    let matches = database
+        .search_card_content(SearchCardContentInput {
+            query: "copp".into(),
+            limit: 20,
+        })
+        .expect("substring search");
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0].card_content.id(), original.card_content.id());
+    assert_eq!(matches[0].review_status, CardContentReviewStatus::Active);
+
+    assert_eq!(
+        database
+            .search_card_content(SearchCardContentInput {
+                query: "opp".into(),
+                limit: 20,
+            })
+            .expect("infix search")
+            .len(),
+        1
+    );
+    assert_eq!(
+        database
+            .search_card_content(SearchCardContentInput {
+                query: "op".into(),
+                limit: 20,
+            })
+            .expect("short literal search")
+            .len(),
+        1
+    );
+
+    let updated = database
+        .update_card_content(UpdateCardContentInput {
+            id: original.card_content.id().into(),
+            expected_updated_at: original.card_content.updated_at(),
+            content: basic_draft(
+                "Why is **aluminum** used for overhead wire?",
+                "It has a favorable mass-to-conductivity tradeoff.",
+                Some("Power systems notes"),
+            ),
+        })
+        .expect("protected edit");
+    assert!(updated.card_content.updated_at() > original.card_content.updated_at());
+
+    assert!(database
+        .search_card_content(SearchCardContentInput {
+            query: "copper".into(),
+            limit: 20,
+        })
+        .expect("old search")
+        .is_empty());
+    assert_eq!(
+        database
+            .search_card_content(SearchCardContentInput {
+                query: "alum".into(),
+                limit: 20,
+            })
+            .expect("new search")
+            .len(),
+        1
+    );
+
+    let stale_edit = database.update_card_content(UpdateCardContentInput {
+        id: original.card_content.id().into(),
+        expected_updated_at: original.card_content.updated_at(),
+        content: basic_draft("stale front", "stale back", None),
+    });
+    assert!(matches!(
+        stale_edit,
+        Err(DatabaseError::StaleCardContent(_))
+    ));
+
+    let stale_grade = database.record_grade(grade_input(&original, &fixture.steps[0]));
+    assert!(matches!(
+        stale_grade,
+        Err(DatabaseError::StaleReviewContext(_))
+    ));
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let body: String = connection
+        .query_row(
+            "SELECT body FROM search_document WHERE card_content_id = ?1",
+            [original.card_content.id()],
+            |row| row.get(0),
+        )
+        .expect("search document");
+    assert!(body.contains("Why is aluminum used for overhead wire?"));
+    assert!(!body.contains("**"));
+}
+
+#[test]
+fn suspend_unsuspend_and_tombstone_delete_preserve_scheduler_history() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let initial = database
+        .create_card_content(basic_draft("front", "back", None))
+        .expect("basic card");
+    let recent = database
+        .search_card_content(SearchCardContentInput {
+            query: String::new(),
+            limit: 20,
+        })
+        .expect("recent cards")
+        .pop()
+        .expect("created card");
+
+    let suspended = database
+        .set_card_content_suspended(SetCardContentSuspendedInput {
+            card_content_id: initial.card_content.id().into(),
+            expected_lifecycle_updated_at: recent.lifecycle_updated_at,
+            suspended: true,
+        })
+        .expect("suspend content");
+    assert_eq!(suspended.review_status, CardContentReviewStatus::Suspended);
+    assert!(suspended.lifecycle_updated_at > recent.lifecycle_updated_at);
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let suspended_row: (String, Option<i64>) = connection
+        .query_row(
+            "SELECT status, suspended_at FROM review_card WHERE id = ?1",
+            [&initial.review_card.id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("suspended row");
+    assert_eq!(suspended_row.0, "SUSPENDED");
+    assert!(suspended_row.1.is_some());
+    drop(connection);
+
+    let resumed = database
+        .set_card_content_suspended(SetCardContentSuspendedInput {
+            card_content_id: initial.card_content.id().into(),
+            expected_lifecycle_updated_at: suspended.lifecycle_updated_at,
+            suspended: false,
+        })
+        .expect("unsuspend content");
+    assert_eq!(resumed.review_status, CardContentReviewStatus::Active);
+
+    let current_context = database
+        .load_review_context(initial.review_card.id.clone())
+        .expect("context after resume");
+    let graded = database
+        .record_grade(grade_input(&current_context, &fixture.steps[0]))
+        .expect("grade before deletion")
+        .context;
+    let current_item = database
+        .search_card_content(SearchCardContentInput {
+            query: String::new(),
+            limit: 20,
+        })
+        .expect("current card")
+        .pop()
+        .expect("current item");
+    database
+        .delete_card_content(DeleteCardContentInput {
+            card_content_id: graded.card_content.id().into(),
+            expected_updated_at: graded.card_content.updated_at(),
+            expected_lifecycle_updated_at: current_item.lifecycle_updated_at,
+        })
+        .expect("tombstone content");
+
+    assert!(database
+        .search_card_content(SearchCardContentInput {
+            query: String::new(),
+            limit: 20,
+        })
+        .expect("recent cards after deletion")
+        .is_empty());
+    assert!(matches!(
+        database.load_review_context(initial.review_card.id.clone()),
+        Err(DatabaseError::NotFound { .. })
+    ));
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let counts: (i64, i64, i64) = connection
+        .query_row(
+            "SELECT
+                (SELECT count(*) FROM card_content WHERE id = ?1 AND deleted_at IS NOT NULL),
+                (SELECT count(*) FROM review_card WHERE card_content_id = ?1 AND deleted_at IS NOT NULL),
+                (SELECT count(*) FROM review_event WHERE review_card_id = ?2)",
+            params![initial.card_content.id(), initial.review_card.id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("tombstone and history counts");
+    assert_eq!(counts, (1, 1, 1));
+    let search_documents: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM search_document WHERE card_content_id = ?1",
+            [initial.card_content.id()],
+            |row| row.get(0),
+        )
+        .expect("derived search document count");
+    assert_eq!(search_documents, 0);
 }
 
 #[test]
@@ -252,11 +476,7 @@ fn grade_is_atomic_and_an_idempotent_retry_writes_one_event() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);
     let context = database
-        .create_basic_card(CreateBasicCardInput {
-            front_md: "front".into(),
-            back_md: "back".into(),
-            source: None,
-        })
+        .create_card_content(basic_draft("front", "back", None))
         .expect("basic card");
     let input = grade_input(&context, &fixture.steps[0]);
 
@@ -322,11 +542,7 @@ fn stale_timestamp_sequence_and_scheduler_config_are_rejected_without_writes() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);
     let initial = database
-        .create_basic_card(CreateBasicCardInput {
-            front_md: "front".into(),
-            back_md: "back".into(),
-            source: None,
-        })
+        .create_card_content(basic_draft("front", "back", None))
         .expect("basic card");
     let current = database
         .record_grade(grade_input(&initial, &fixture.steps[0]))
