@@ -9,6 +9,10 @@ body {
   padding: 30px 36px 48px;
 }
 
+.main-window-creating {
+  width: min(960px, 100%);
+}
+
 .main-toolbar {
   display: flex;
   align-items: center;
@@ -63,13 +67,6 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--surface);
-}
-
-.card-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-size: 22px;
-  line-height: 1.5;
 }
 
 .answer {

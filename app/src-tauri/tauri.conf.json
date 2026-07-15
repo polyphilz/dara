@@ -10,6 +10,7 @@
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -30,7 +31,7 @@
         "default-src": "'self'",
         "connect-src": "ipc: http://ipc.localhost",
         "img-src": "'self' blob: data:",
-        "style-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
         "object-src": "'none'",
         "frame-src": "'none'",
         "base-uri": "'none'",
@@ -40,7 +41,7 @@
         "default-src": "'self'",
         "connect-src": "'self' ipc: http://ipc.localhost ws://localhost:5173",
         "img-src": "'self' blob: data:",
-        "style-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
         "object-src": "'none'",
         "frame-src": "'none'",
         "base-uri": "'none'",

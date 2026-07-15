@@ -15,13 +15,21 @@ Installed builds continue to use the platform application-data directory.
 
 ## Shortcuts
 
-- `⌃⌥⌘D` opens the non-activating quick-add panel.
+- `⌃⌥⌘D` activates the frameless Quick Add window while Dara remains in menu-bar-only Accessory mode.
 - `⌃⌥⌘R` activates dara and opens the ordinary main window.
 - `Esc` cancels quick add; `⌘↵` saves a BASIC card.
+- `⌘B`, `⌘I`, and `⌘K` apply bold, italic, and link formatting in card editors.
+
+`Add card` in the main window opens a persistent rich-text creation view in that window. Quick Add
+is reserved for global capture over another application. Both surfaces serialize formatted content
+to Dara Markdown when saving; users do not edit Markdown punctuation directly. Save or Cancel
+hides Quick Add and restores the previously active application. Dara appears in the Dock and owns
+the application menu only while its ordinary main window is open.
 
 ## Checks
 
 ```bash
+pnpm test
 pnpm lint
 pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml

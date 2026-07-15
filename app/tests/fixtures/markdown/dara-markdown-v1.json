@@ -1,0 +1,68 @@
+[
+  {
+    "id": "commonmark-structure",
+    "source": "## Heading\n\nEscaped \\*asterisk\\*, *emphasis*, and **strong**.\n\n> A quotation\n\n---",
+    "text": ["Heading", "Escaped *asterisk*, emphasis, and strong.", "A quotation"],
+    "selectors": ["h2", "em", "strong", "blockquote", "hr"]
+  },
+  {
+    "id": "nested-lists",
+    "source": "1. first\n2. second\n   - nested\n     1. deep\n\n- another",
+    "text": ["first", "second", "nested", "deep", "another"],
+    "selectors": ["ol", "ul", "li"]
+  },
+  {
+    "id": "card-friendly-breaks",
+    "source": "line one\nline two\n\nnew paragraph",
+    "text": ["line one", "line two", "new paragraph"],
+    "selectors": ["br", "p"]
+  },
+  {
+    "id": "inline-and-fenced-code",
+    "source": "`**literal**`\n\n```TS\nconst answer: number = 42\n```\n\n```madeup\nplain <tag>\n```",
+    "text": ["**literal**", "const answer: number = 42", "plain <tag>"],
+    "selectors": ["code.language-typescript", "code.language-madeup"]
+  },
+  {
+    "id": "canonical-alias-and-unlabelled-fences",
+    "source": "```javascript\nconst one = 1\n```\n\n```rs\nfn two() -> i32 { 2 }\n```\n\n```\nplain code\n```",
+    "text": ["const one = 1", "fn two()", "plain code"],
+    "selectors": ["code.language-javascript", "code.language-rust", "pre code:not([class])"]
+  },
+  {
+    "id": "gfm",
+    "source": "~~old~~\n\n| Left | Right |\n| --- | ---: |\n| a | 2 |\n\n- [x] done\n- [ ] later\n\nhttps://example.com/path",
+    "text": ["old", "Left", "Right", "done", "later", "https://example.com/path"],
+    "selectors": ["del", "table", "input[type=checkbox]", "a"]
+  },
+  {
+    "id": "math",
+    "source": "Inline $E = mc^2$.\n\n$$\nP(A \\mid B) = \\frac{P(B \\mid A)P(A)}{P(B)}\n$$\n\nInvalid $\\sqrt{$ remains visible.",
+    "text": ["Inline", "Invalid"],
+    "selectors": [".katex", ".katex-display", ".katex-error"]
+  },
+  {
+    "id": "escaped-currency-and-adjacent-math",
+    "source": "Literal \\$5 and inline $x + 1$ beside prose.",
+    "text": ["Literal $5 and inline", "beside prose."],
+    "selectors": [".katex"]
+  },
+  {
+    "id": "unicode-and-rtl",
+    "source": "naïve café — 日本語 — مرحبا بالعالم",
+    "text": ["naïve café", "日本語", "مرحبا بالعالم"],
+    "selectors": ["p"]
+  },
+  {
+    "id": "disabled-domain-extensions",
+    "source": "{{c1::literal cloze}} and ![[dara-image:01980c8e]]",
+    "text": ["{{c1::literal cloze}}", "![[dara-image:01980c8e]]"],
+    "selectors": ["p"]
+  },
+  {
+    "id": "overflow-content",
+    "source": "| very long heading | value |\n| --- | --- |\n| abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz | 1 |\n\n```python\nprint('abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz')\n```\n\n$$\n\\displaystyle \\sum_{i=1}^{100} i^2 + \\sum_{j=1}^{100} j^3\n$$",
+    "text": ["very long heading", "print"],
+    "selectors": [".dara-markdown-table-scroll", "pre", ".katex-display"]
+  }
+]

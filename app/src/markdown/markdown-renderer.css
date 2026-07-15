@@ -1,0 +1,241 @@
+.dara-markdown {
+  max-width: 68ch;
+  overflow-wrap: anywhere;
+  font-size: 22px;
+  line-height: 1.5;
+}
+
+.dara-markdown > :first-child {
+  margin-top: 0;
+}
+
+.dara-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.dara-markdown p,
+.dara-markdown blockquote,
+.dara-markdown pre,
+.dara-markdown ul,
+.dara-markdown ol,
+.dara-markdown .dara-markdown-table-scroll,
+.dara-markdown .katex-display {
+  margin-block: 0.8em;
+}
+
+.dara-markdown h1,
+.dara-markdown h2,
+.dara-markdown h3,
+.dara-markdown h4,
+.dara-markdown h5,
+.dara-markdown h6 {
+  margin: 1.1em 0 0.45em;
+  line-height: 1.2;
+}
+
+.dara-markdown h1 {
+  font-size: 1.45em;
+}
+
+.dara-markdown h2 {
+  font-size: 1.28em;
+}
+
+.dara-markdown h3 {
+  font-size: 1.14em;
+}
+
+.dara-markdown ul,
+.dara-markdown ol {
+  padding-inline-start: 1.55em;
+}
+
+.dara-markdown li + li {
+  margin-top: 0.25em;
+}
+
+.dara-markdown blockquote {
+  padding-left: 1em;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
+.dara-markdown hr {
+  margin-block: 1.4em;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.dara-markdown a {
+  color: var(--accent);
+  text-underline-offset: 0.14em;
+}
+
+.dara-markdown a:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.dara-markdown-inert-link,
+.dara-markdown-inert-image {
+  color: var(--muted);
+}
+
+.dara-markdown-inert-image {
+  font-size: 0.78em;
+  font-style: italic;
+}
+
+.dara-markdown code {
+  border-radius: 0.25em;
+  background: rgba(24, 23, 22, 0.07);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 0.84em;
+}
+
+.dara-markdown :not(pre) > code {
+  padding: 0.12em 0.3em;
+}
+
+.dara-markdown pre {
+  max-width: 100%;
+  overflow: auto;
+  padding: 0.9em 1em;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(24, 23, 22, 0.055);
+  tab-size: 2;
+}
+
+.dara-markdown pre code {
+  padding: 0;
+  background: transparent;
+  white-space: pre;
+}
+
+.dara-markdown-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.dara-markdown-table-scroll:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 2px;
+}
+
+.dara-markdown table {
+  min-width: max-content;
+  border-spacing: 0;
+  border-collapse: collapse;
+  font-size: 0.76em;
+}
+
+.dara-markdown th,
+.dara-markdown td {
+  padding: 0.45em 0.65em;
+  border: 1px solid var(--line);
+  text-align: left;
+}
+
+.dara-markdown th {
+  background: rgba(24, 23, 22, 0.045);
+  font-weight: 700;
+}
+
+.dara-markdown input[type="checkbox"] {
+  margin-right: 0.45em;
+  accent-color: var(--accent);
+}
+
+.dara-markdown .katex-display {
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-block: 0.2em;
+}
+
+.dara-markdown .katex-error {
+  color: #a63232;
+  font-family: ui-monospace, "SFMono-Regular", monospace;
+  font-size: 0.8em;
+}
+
+.dara-markdown .hljs-comment,
+.dara-markdown .hljs-quote {
+  color: #77716a;
+  font-style: italic;
+}
+
+.dara-markdown .hljs-keyword,
+.dara-markdown .hljs-selector-tag,
+.dara-markdown .hljs-type {
+  color: #9a3f88;
+}
+
+.dara-markdown .hljs-string,
+.dara-markdown .hljs-attr,
+.dara-markdown .hljs-template-tag {
+  color: #8a531d;
+}
+
+.dara-markdown .hljs-number,
+.dara-markdown .hljs-literal,
+.dara-markdown .hljs-built_in {
+  color: #2e6490;
+}
+
+.dara-markdown .hljs-title,
+.dara-markdown .hljs-function {
+  color: #8b4a2e;
+}
+
+.dara-markdown-error {
+  font-size: 15px;
+}
+
+.dara-markdown-error > p {
+  color: #a63232;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dara-markdown code,
+  .dara-markdown pre,
+  .dara-markdown th {
+    background: rgba(255, 255, 255, 0.065);
+  }
+
+  .dara-markdown .hljs-comment,
+  .dara-markdown .hljs-quote {
+    color: #aaa49a;
+  }
+
+  .dara-markdown .hljs-keyword,
+  .dara-markdown .hljs-selector-tag,
+  .dara-markdown .hljs-type {
+    color: #dc91cc;
+  }
+
+  .dara-markdown .hljs-string,
+  .dara-markdown .hljs-attr,
+  .dara-markdown .hljs-template-tag {
+    color: #e0aa6d;
+  }
+
+  .dara-markdown .hljs-number,
+  .dara-markdown .hljs-literal,
+  .dara-markdown .hljs-built_in {
+    color: #8fc3ea;
+  }
+
+  .dara-markdown .hljs-title,
+  .dara-markdown .hljs-function {
+    color: #e8a486;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dara-markdown * {
+    scroll-behavior: auto !important;
+  }
+}

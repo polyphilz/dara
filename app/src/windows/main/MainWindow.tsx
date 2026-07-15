@@ -7,14 +7,15 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from 'react'
-import { native } from '../../lib/native.ts'
 import {
   ReviewController,
   tauriReviewGateway,
   type ReviewControllerState,
 } from '../../review/index.ts'
 import type { ReviewCardCache, ReviewGrade } from '../../scheduling/index.ts'
-import { errorMessage } from '../../review/errors.ts'
+import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
+import { CardSource } from '../../markdown/CardSource.tsx'
+import { BasicCardForm } from '../shared/BasicCardForm.tsx'
 
 const grades = [
   { grade: 1, label: 'Again' },
@@ -30,7 +31,7 @@ export function MainWindow() {
   )
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const spaceCanSubmit = useRef(true)
-  const [windowError, setWindowError] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
     void controller.start()
@@ -58,6 +59,9 @@ export function MainWindow() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (creating) {
+        return
+      }
       if (
         event.metaKey &&
         !event.altKey &&
@@ -128,40 +132,38 @@ export function MainWindow() {
       window.removeEventListener('keydown', handleKeyDown)
       window.removeEventListener('keyup', handleKeyUp)
     }
-  }, [controller, state])
-
-  const openQuickAdd = async () => {
-    setWindowError(null)
-    try {
-      await native.showQuickAdd()
-    } catch (cause) {
-      setWindowError(errorMessage(cause))
-    }
-  }
+  }, [controller, creating, state])
 
   return (
-    <main className="main-window">
+    <main className={creating ? 'main-window main-window-creating' : 'main-window'}>
       <header className="main-toolbar">
         <h1>dara</h1>
         <div className="toolbar-actions">
-          {canUndo(state) && (
+          {!creating && canUndo(state) && (
             <button type="button" onClick={() => void controller.undo()}>
               Undo
             </button>
           )}
-          <button type="button" onClick={() => void openQuickAdd()}>
-            Add card
-          </button>
+          {!creating && (
+            <button type="button" onClick={() => setCreating(true)}>
+              Add card
+            </button>
+          )}
         </div>
       </header>
 
-      {windowError && (
-        <p className="error-banner" role="alert">
-          {windowError}
-        </p>
+      {creating ? (
+        <BasicCardForm
+          onCancel={() => setCreating(false)}
+          onSaved={() => {
+            controller.notifyCardCreated()
+            setCreating(false)
+          }}
+          variant="main"
+        />
+      ) : (
+        <ReviewContent controller={controller} state={state} />
       )}
-
-      <ReviewContent controller={controller} state={state} />
     </main>
   )
 }
@@ -182,7 +184,7 @@ function ReviewContent({
         <section className="review-stage">
           {state.notice && <p className="notice">{state.notice}</p>}
           <article className="review-card">
-            <CardText value={state.card.context.cardContent.frontMd} />
+            <MarkdownRenderer source={state.card.context.cardContent.frontMd} />
           </article>
           <button
             className="primary-action reveal-action"
@@ -204,10 +206,10 @@ function ReviewContent({
             <p className="notice">{state.notice}</p>
           )}
           <article className="review-card">
-            <CardText value={content.frontMd} />
+            <MarkdownRenderer source={content.frontMd} />
             <div className="answer">
-              <CardText value={content.backMd} />
-              {content.source && <p className="source">Source: {content.source}</p>}
+              <MarkdownRenderer source={content.backMd} />
+              {content.source && <CardSource value={content.source} />}
             </div>
           </article>
           <div className="grade-grid" aria-label="Grade this card">
@@ -262,10 +264,6 @@ function ReviewContent({
         </StatusScreen>
       )
   }
-}
-
-function CardText({ value }: { value: string }) {
-  return <div className="card-text">{value}</div>
 }
 
 function StatusScreen({

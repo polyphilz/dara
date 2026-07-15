@@ -1,23 +1,17 @@
-// tauri-nspanel's event macro requires an explicit `-> ()` callback signature.
-#![allow(clippy::unused_unit)]
+use std::sync::Mutex;
 
-use std::{ptr::NonNull, sync::Mutex};
-
-use block2::RcBlock;
 use objc2::MainThreadMarker as ObjcMainThreadMarker;
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationOptions, NSEvent as AppKitEvent, NSEventMask,
-    NSRunningApplication, NSWorkspace,
+    NSApplication, NSApplicationActivationOptions, NSRunningApplication, NSWindow,
+    NSWindowCollectionBehavior, NSWorkspace,
 };
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuBuilder},
     tray::TrayIconBuilder,
-    App, AppHandle, Emitter, LogicalSize, Manager, PhysicalPosition, Size, State, WebviewUrl,
+    utils::config::BackgroundThrottlingPolicy,
+    App, AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
-};
-use tauri_nspanel::{
-    tauri_panel, CollectionBehavior, ManagerExt, PanelBuilder, PanelLevel, StyleMask,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -26,23 +20,9 @@ const QUICK_ADD_LABEL: &str = "quick-add";
 const QUICK_ADD_SHORTCUT_LABEL: &str = "⌃⌥⌘D";
 const REVIEW_SHORTCUT_LABEL: &str = "⌃⌥⌘R";
 
-tauri_panel! {
-    panel!(QuickAddPanel {
-        config: {
-            can_become_key_window: true,
-            can_become_main_window: false,
-            is_floating_panel: true
-        }
-    })
-
-    panel_event!(QuickAddPanelEventHandler {
-        window_did_resign_key(notification: &NSNotification) -> ()
-    })
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct SpikeStatus {
-    panel_ready: bool,
+    quick_add_ready: bool,
     quick_add_shortcut: String,
     review_shortcut: String,
     shortcut_errors: Vec<String>,
@@ -51,7 +31,7 @@ pub struct SpikeStatus {
 impl Default for SpikeStatus {
     fn default() -> Self {
         Self {
-            panel_ready: false,
+            quick_add_ready: false,
             quick_add_shortcut: QUICK_ADD_SHORTCUT_LABEL.into(),
             review_shortcut: REVIEW_SHORTCUT_LABEL.into(),
             shortcut_errors: Vec::new(),
@@ -63,6 +43,7 @@ impl Default for SpikeStatus {
 struct FocusContext {
     dismissing: bool,
     previous_external_pid: Option<i32>,
+    quick_add_visible: bool,
     restore_main: bool,
 }
 
@@ -89,8 +70,7 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
     app.manage(SpikeState::default());
 
     install_application_menu(app)?;
-    create_quick_add_panel(app.handle())?;
-    install_outside_click_monitor(app.handle());
+    create_quick_add_window(app.handle())?;
     install_tray(app)?;
     register_shortcuts(app.handle());
 
@@ -102,53 +82,43 @@ fn install_application_menu(app: &mut App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn create_quick_add_panel(app: &AppHandle) -> tauri::Result<()> {
-    let panel = PanelBuilder::<_, QuickAddPanel>::new(app, QUICK_ADD_LABEL)
-        .url(WebviewUrl::App("quick-add.html".into()))
-        .title("Quick Add")
-        .size(Size::Logical(LogicalSize::new(640.0, 430.0)))
-        .level(PanelLevel::Floating)
-        .floating(true)
-        .has_shadow(true)
-        .hides_on_deactivate(false)
-        .works_when_modal(true)
-        .released_when_closed(false)
-        .corner_radius(18.0)
-        .transparent(true)
-        .style_mask(StyleMask::empty().nonactivating_panel())
-        .collection_behavior(
-            CollectionBehavior::new()
-                .move_to_active_space()
-                .full_screen_auxiliary(),
-        )
-        .with_window(|window| {
-            window
-                .visible(false)
-                .decorations(false)
-                .resizable(false)
-                .skip_taskbar(true)
-                .transparent(true)
-                .background_throttling(tauri::utils::config::BackgroundThrottlingPolicy::Disabled)
-        })
-        .no_activate(true)
-        .build()?;
+fn create_quick_add_window(app: &AppHandle) -> tauri::Result<()> {
+    let window = WebviewWindowBuilder::new(
+        app,
+        QUICK_ADD_LABEL,
+        WebviewUrl::App("quick-add.html".into()),
+    )
+    .title("Quick Add")
+    .inner_size(920.0, 760.0)
+    .visible(false)
+    .focused(false)
+    .focusable(true)
+    .decorations(false)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(false)
+    .skip_taskbar(true)
+    .always_on_top(true)
+    .shadow(true)
+    .transparent(true)
+    .background_throttling(BackgroundThrottlingPolicy::Disabled)
+    .build()?;
 
-    let handler = QuickAddPanelEventHandler::new();
-    let app_handle = app.clone();
-    handler.window_did_resign_key(move |_notification| {
-        if let Err(error) =
-            dismiss_quick_add_inner(&app_handle, true, DismissFocus::PreserveCurrent)
-        {
-            log::error!("failed to dismiss quick add after resigning key: {error}");
-        }
-    });
-    panel.set_event_handler(Some(handler.as_ref()));
+    window.with_webview(|webview| unsafe {
+        let ns_window: &NSWindow = &*webview.ns_window().cast();
+        ns_window.setCollectionBehavior(
+            NSWindowCollectionBehavior::MoveToActiveSpace
+                | NSWindowCollectionBehavior::FullScreenAuxiliary
+                | NSWindowCollectionBehavior::Transient
+                | NSWindowCollectionBehavior::IgnoresCycle,
+        );
+    })?;
 
     app.state::<SpikeState>()
         .status
         .lock()
         .expect("spike status poisoned")
-        .panel_ready = true;
+        .quick_add_ready = true;
 
     Ok(())
 }
@@ -195,37 +165,6 @@ fn install_tray(app: &App) -> tauri::Result<()> {
 
     tray.build(app)?;
     Ok(())
-}
-
-fn install_outside_click_monitor(app: &AppHandle) {
-    let app_handle = app.clone();
-    let handler = RcBlock::new(move |_event: NonNull<AppKitEvent>| {
-        let panel_is_visible = app_handle
-            .get_webview_panel(QUICK_ADD_LABEL)
-            .map(|panel| panel.is_visible())
-            .unwrap_or(false);
-
-        if panel_is_visible {
-            if let Err(error) = dispatch_to_main_thread(
-                &app_handle,
-                "dismiss quick add after outside click",
-                |app| dismiss_quick_add_inner(app, false, DismissFocus::PreserveCurrent),
-            ) {
-                log::error!("outside-click dismissal failed: {error}");
-            }
-        }
-    });
-    let mask =
-        NSEventMask::LeftMouseDown | NSEventMask::RightMouseDown | NSEventMask::OtherMouseDown;
-
-    if let Some(monitor) =
-        AppKitEvent::addGlobalMonitorForEventsMatchingMask_handler(mask, &handler)
-    {
-        // The monitor is process-lifetime infrastructure and must remain retained until exit.
-        std::mem::forget(monitor);
-    } else {
-        log::error!("failed to install the global mouse monitor for quick-add dismissal");
-    }
 }
 
 fn register_shortcuts(app: &AppHandle) {
@@ -291,17 +230,57 @@ pub fn show_quick_add(app: AppHandle) -> Result<(), String> {
 }
 
 fn show_quick_add_inner(app: &AppHandle) -> Result<(), String> {
-    let panel = app
-        .get_webview_panel(QUICK_ADD_LABEL)
-        .map_err(|error| format!("quick-add panel unavailable: {error:?}"))?;
+    let window = app
+        .get_webview_window(QUICK_ADD_LABEL)
+        .ok_or_else(|| "quick-add window unavailable".to_string())?;
+    let already_visible = app
+        .state::<SpikeState>()
+        .focus
+        .lock()
+        .expect("focus context poisoned")
+        .quick_add_visible;
 
-    capture_focus_context(app);
-    position_panel_on_cursor_monitor(app)?;
-    panel.show_and_make_key();
-    app.emit_to(QUICK_ADD_LABEL, "quick-add-shown", ())
-        .map_err(|error| format!("could not focus quick add: {error}"))?;
+    if !already_visible {
+        capture_focus_context(app);
+    }
+    position_quick_add_on_cursor_monitor(app)?;
+    app.state::<SpikeState>()
+        .focus
+        .lock()
+        .expect("focus context poisoned")
+        .quick_add_visible = true;
+
+    let result = (|| {
+        window
+            .show()
+            .map_err(|error| format!("could not show quick add: {error}"))?;
+        activate_quick_add_window(&window)?;
+        app.emit_to(QUICK_ADD_LABEL, "quick-add-shown", ())
+            .map_err(|error| format!("could not focus quick add editor: {error}"))?;
+        Ok(())
+    })();
+
+    if let Err(error) = result {
+        if let Err(cleanup_error) = dismiss_quick_add_inner(app, DismissFocus::RestorePrevious) {
+            log::error!("failed to clean up Quick Add after show error: {cleanup_error}");
+        }
+        return Err(error);
+    }
 
     Ok(())
+}
+
+fn activate_quick_add_window(window: &tauri::WebviewWindow) -> Result<(), String> {
+    let marker = ObjcMainThreadMarker::new()
+        .ok_or_else(|| "quick-add activation was not dispatched to the main thread".to_string())?;
+    let application = NSApplication::sharedApplication(marker);
+    application.activate();
+    #[allow(deprecated)]
+    application.activateIgnoringOtherApps(true);
+
+    window
+        .set_focus()
+        .map_err(|error| format!("could not focus quick add window: {error}"))
 }
 
 fn capture_focus_context(app: &AppHandle) {
@@ -318,7 +297,7 @@ fn capture_focus_context(app: &AppHandle) {
     context.restore_main = frontmost_pid == Some(current_pid) && main_is_focused;
 }
 
-fn position_panel_on_cursor_monitor(app: &AppHandle) -> Result<(), String> {
+fn position_quick_add_on_cursor_monitor(app: &AppHandle) -> Result<(), String> {
     let cursor = app
         .cursor_position()
         .map_err(|error| format!("could not read cursor position: {error}"))?;
@@ -330,14 +309,14 @@ fn position_panel_on_cursor_monitor(app: &AppHandle) -> Result<(), String> {
     let window = app
         .get_webview_window(QUICK_ADD_LABEL)
         .ok_or_else(|| "quick-add webview unavailable".to_string())?;
-    let panel_size = window
+    let window_size = window
         .outer_size()
         .map_err(|error| format!("could not read quick-add size: {error}"))?;
 
     let monitor_position = monitor.position();
     let monitor_size = monitor.size();
     let centered_x =
-        monitor_position.x + ((monitor_size.width as i32 - panel_size.width as i32) / 2).max(0);
+        monitor_position.x + ((monitor_size.width as i32 - window_size.width as i32) / 2).max(0);
     let top_offset = ((monitor_size.height as f64 * 0.14).round() as i32).clamp(72, 150);
     let y = monitor_position.y + top_offset;
 
@@ -350,22 +329,19 @@ fn position_panel_on_cursor_monitor(app: &AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn dismiss_quick_add(app: AppHandle) -> Result<(), String> {
     dispatch_to_main_thread(&app, "dismiss quick add", |app| {
-        dismiss_quick_add_inner(app, false, DismissFocus::RestorePrevious)
+        dismiss_quick_add_inner(app, DismissFocus::RestorePrevious)
     })
 }
 
-fn dismiss_quick_add_inner(
-    app: &AppHandle,
-    already_resigned: bool,
-    focus: DismissFocus,
-) -> Result<(), String> {
+fn dismiss_quick_add_inner(app: &AppHandle, focus: DismissFocus) -> Result<(), String> {
     let target = {
         let state = app.state::<SpikeState>();
         let mut context = state.focus.lock().expect("focus context poisoned");
-        if context.dismissing {
+        if context.dismissing || !context.quick_add_visible {
             return Ok(());
         }
         context.dismissing = true;
+        context.quick_add_visible = false;
         RestoreTarget {
             external_pid: context.previous_external_pid.take(),
             main: std::mem::take(&mut context.restore_main),
@@ -373,13 +349,12 @@ fn dismiss_quick_add_inner(
     };
 
     let result = (|| {
-        let panel = app
-            .get_webview_panel(QUICK_ADD_LABEL)
-            .map_err(|error| format!("quick-add panel unavailable: {error:?}"))?;
-        if !already_resigned {
-            panel.resign_key_window();
-        }
-        panel.hide();
+        let window = app
+            .get_webview_window(QUICK_ADD_LABEL)
+            .ok_or_else(|| "quick-add window unavailable".to_string())?;
+        window
+            .hide()
+            .map_err(|error| format!("could not hide quick add: {error}"))?;
 
         if matches!(focus, DismissFocus::RestorePrevious) {
             restore_previous_focus(app, target)?;
@@ -407,9 +382,20 @@ fn restore_previous_focus(app: &AppHandle, target: RestoreTarget) -> Result<(), 
             if let Some(application) =
                 NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
             {
-                application.activateWithOptions(NSApplicationActivationOptions::empty());
+                if application.activateWithOptions(NSApplicationActivationOptions::empty()) {
+                    return Ok(());
+                }
             }
         }
+
+        let main_is_visible = app
+            .get_webview_window(MAIN_LABEL)
+            .and_then(|window| window.is_visible().ok())
+            .unwrap_or(false);
+        if main_is_visible {
+            return activate_main_window(app);
+        }
+        enter_resident_mode(app);
     }
 
     Ok(())
@@ -421,7 +407,7 @@ pub fn show_main(app: AppHandle) -> Result<(), String> {
 }
 
 fn show_main_inner(app: &AppHandle) -> Result<(), String> {
-    dismiss_quick_add_inner(app, false, DismissFocus::PreserveCurrent)?;
+    dismiss_quick_add_inner(app, DismissFocus::PreserveCurrent)?;
     activate_main_window(app)
 }
 
@@ -486,8 +472,8 @@ where
 }
 
 pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        match window.label() {
+    match event {
+        WindowEvent::CloseRequested { api, .. } => match window.label() {
             MAIN_LABEL => {
                 api.prevent_close();
                 if let Err(error) = window.hide() {
@@ -497,15 +483,28 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             }
             QUICK_ADD_LABEL => {
                 api.prevent_close();
-                if let Err(error) = dismiss_quick_add_inner(
-                    window.app_handle(),
-                    false,
-                    DismissFocus::RestorePrevious,
-                ) {
+                if let Err(error) =
+                    dismiss_quick_add_inner(window.app_handle(), DismissFocus::RestorePrevious)
+                {
                     log::error!("failed to hide quick add: {error}");
                 }
             }
             _ => {}
+        },
+        WindowEvent::Focused(false) if window.label() == QUICK_ADD_LABEL => {
+            let should_dismiss = {
+                let state = window.app_handle().state::<SpikeState>();
+                let context = state.focus.lock().expect("focus context poisoned");
+                context.quick_add_visible && !context.dismissing
+            };
+            if should_dismiss {
+                if let Err(error) =
+                    dismiss_quick_add_inner(window.app_handle(), DismissFocus::PreserveCurrent)
+                {
+                    log::error!("failed to dismiss Quick Add after focus loss: {error}");
+                }
+            }
         }
+        _ => {}
     }
 }
