@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {
   DEFAULT_SCHEDULER_CONFIG,
+  ReviewCardState,
   SchedulingError,
   captureStudyMoment,
   createNewReviewCardCache,
@@ -61,11 +62,11 @@ test('keeps a ten-minute learning deadline exact across the 4AM boundary', () =>
   })
 
   assert.equal(first.elapsedDays, 0)
-  assert.equal(first.cache.state, 'LEARNING')
+  assert.equal(first.cache.state, ReviewCardState.Learning)
   assert.equal(first.cache.dueAt, firstReview.reviewedAt + 10 * 60_000)
   assert.equal(first.cache.dueStudyDay, null)
   assert.equal(first.cache.reps, 1)
-  assert.equal(first.schedulerLog.stateBefore, 'NEW')
+  assert.equal(first.schedulerLog.stateBefore, ReviewCardState.New)
   assert.equal(first.schedulerLog.stabilityBefore, null)
 
   const secondReview = fact(3, '2026-07-13T08:05:00Z', 'America/New_York')
@@ -81,11 +82,11 @@ test('keeps a ten-minute learning deadline exact across the 4AM boundary', () =>
   })
 
   assert.equal(second.elapsedDays, 1)
-  assert.equal(second.cache.state, 'REVIEW')
+  assert.equal(second.cache.state, ReviewCardState.Review)
   assert.equal(second.cache.dueAt, null)
   assert.ok(second.cache.dueStudyDay !== null)
   assert.ok(second.cache.dueStudyDay > secondReview.studyDay)
-  assert.equal(second.schedulerLog.stateBefore, 'LEARNING')
+  assert.equal(second.schedulerLog.stateBefore, ReviewCardState.Learning)
   assert.doesNotThrow(() => JSON.stringify(second))
 
   const replay = replayReviews(
@@ -112,12 +113,12 @@ test('previews the four grades without mutating the materialized cache', () => {
     config: DEFAULT_SCHEDULER_CONFIG,
   })
 
-  assert.equal(preview[1].cache.state, 'LEARNING')
+  assert.equal(preview[1].cache.state, ReviewCardState.Learning)
   assert.equal(preview[1].cache.dueAt, moment.reviewedAt + 10 * 60_000)
-  assert.equal(preview[2].cache.state, 'LEARNING')
+  assert.equal(preview[2].cache.state, ReviewCardState.Learning)
   assert.equal(preview[2].cache.dueAt, moment.reviewedAt + 15 * 60_000)
-  assert.equal(preview[3].cache.state, 'REVIEW')
-  assert.equal(preview[4].cache.state, 'REVIEW')
+  assert.equal(preview[3].cache.state, ReviewCardState.Review)
+  assert.equal(preview[4].cache.state, ReviewCardState.Review)
   assert.deepEqual(cache, original)
 })
 
@@ -195,7 +196,7 @@ test('uses frozen study days rather than UTC elapsed time', () => {
     review: firstReview,
     config: DEFAULT_SCHEDULER_CONFIG,
   })
-  assert.equal(first.cache.state, 'REVIEW')
+  assert.equal(first.cache.state, ReviewCardState.Review)
 
   const nextStudyDay = requireDueStudyDay(first.cache)
   const secondMoment = momentForUtcStudyDay(nextStudyDay)
@@ -249,7 +250,7 @@ test('turns a failed review into exact relearning and increments lapses', () => 
     config: DEFAULT_SCHEDULER_CONFIG,
   })
 
-  assert.equal(lapsed.cache.state, 'RELEARNING')
+  assert.equal(lapsed.cache.state, ReviewCardState.Relearning)
   assert.equal(lapsed.cache.lapses, 1)
   assert.equal(lapsed.cache.dueStudyDay, null)
   assert.equal(lapsed.cache.dueAt, lapseReview.reviewedAt + 10 * 60_000)
@@ -443,7 +444,7 @@ function requireDueStudyDay(cache: ReviewCardCache): number {
 
 function matureReviewCache(previousStudyDay: number): ReviewCardCache {
   return {
-    state: 'REVIEW',
+    state: ReviewCardState.Review,
     dueAt: null,
     dueStudyDay: previousStudyDay + 100,
     lastReviewAt:

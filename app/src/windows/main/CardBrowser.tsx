@@ -10,6 +10,8 @@ import { DaraInput } from '../../components/DaraInput.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import {
+  CardContentReviewStatus,
+  CardContentType,
   deleteCardContent,
   searchCardContent,
   setCardContentSuspended,
@@ -17,6 +19,7 @@ import {
 } from '../../review/index.ts'
 import { errorMessage } from '../../review/errors.ts'
 import { BasicCardForm } from '../shared/BasicCardForm.tsx'
+import { BasicCardFormVariant } from '../shared/card-form.ts'
 
 const SEARCH_LIMIT = 75
 
@@ -102,7 +105,8 @@ export function CardBrowser({ onQueueChanged, refreshToken = 0 }: CardBrowserPro
       const item = await setCardContentSuspended({
         cardContentId: selected.cardContent.id,
         expectedLifecycleUpdatedAt: selected.lifecycleUpdatedAt,
-        suspended: selected.reviewStatus !== 'SUSPENDED',
+        suspended:
+          selected.reviewStatus !== CardContentReviewStatus.Suspended,
       })
       setResults((current) =>
         current.map((candidate) =>
@@ -186,7 +190,7 @@ export function CardBrowser({ onQueueChanged, refreshToken = 0 }: CardBrowserPro
     }
   }
 
-  if (editing && selected?.cardContent.type === 'BASIC') {
+  if (editing && selected?.cardContent.type === CardContentType.Basic) {
     return (
       <BasicCardForm
         initialContent={selected.cardContent}
@@ -203,7 +207,7 @@ export function CardBrowser({ onQueueChanged, refreshToken = 0 }: CardBrowserPro
           onQueueChanged()
           refresh()
         }}
-        variant="main"
+        variant={BasicCardFormVariant.Main}
       />
     )
   }
@@ -232,7 +236,8 @@ export function CardBrowser({ onQueueChanged, refreshToken = 0 }: CardBrowserPro
         <div className="card-result-list" role="listbox" aria-label="Cards">
           {results.map((item) => {
             const active = item.cardContent.id === selectedId
-            const suspended = item.reviewStatus === 'SUSPENDED'
+            const suspended =
+              item.reviewStatus === CardContentReviewStatus.Suspended
             return (
               <button
                 aria-selected={active}
@@ -270,13 +275,16 @@ export function CardBrowser({ onQueueChanged, refreshToken = 0 }: CardBrowserPro
             <header className="card-detail-toolbar">
               <div>
                 <span className="card-type-label">BASIC</span>
-                {selected.reviewStatus !== 'ACTIVE' && (
+                {selected.reviewStatus !== CardContentReviewStatus.Active && (
                   <span className="detail-status">{statusLabel(selected.reviewStatus)}</span>
                 )}
               </div>
               <div className="card-detail-actions">
                 <button disabled={mutating} onClick={() => void toggleSuspended()} type="button">
-                  {selected.reviewStatus === 'SUSPENDED' ? 'Resume' : 'Pause'} <kbd>⌘J</kbd>
+                  {selected.reviewStatus === CardContentReviewStatus.Suspended
+                    ? 'Resume'
+                    : 'Pause'}{' '}
+                  <kbd>⌘J</kbd>
                 </button>
                 <button disabled={mutating} onClick={() => setEditing(true)} type="button">
                   Edit <kbd>↵</kbd>
@@ -363,7 +371,7 @@ function formatRecency(updatedAt: number): string {
 }
 
 function statusLabel(status: CardContentListItem['reviewStatus']): string {
-  if (status === 'SUSPENDED') return 'Paused'
-  if (status === 'MIXED') return 'Partially paused'
+  if (status === CardContentReviewStatus.Suspended) return 'Paused'
+  if (status === CardContentReviewStatus.Mixed) return 'Partially paused'
   return 'Active'
 }

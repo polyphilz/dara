@@ -1,4 +1,4 @@
-export { ReviewController } from './controller.ts'
+export { ReviewController, ReviewControllerPhase } from './controller.ts'
 export type {
   ReviewControllerOptions,
   ReviewControllerState,
@@ -11,4 +11,12 @@ export {
   tauriReviewGateway,
   updateCardContent,
 } from './gateway.ts'
+export {
+  CardContentReviewStatus,
+  CardContentType,
+  MutationDisposition,
+  ReviewCardStatus,
+  ReviewQueueLane,
+  ReviewQueueSelectionKind,
+} from './contracts.ts'
 export type * from './contracts.ts'

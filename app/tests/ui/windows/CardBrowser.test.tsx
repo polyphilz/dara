@@ -1,6 +1,10 @@
 import { fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
-import type { CardContentListItem } from '../../../src/review/contracts.ts'
+import {
+  CardContentReviewStatus,
+  CardContentType,
+  type CardContentListItem,
+} from '../../../src/review/contracts.ts'
 
 const mocks = vi.hoisted(() => ({
   deleteCardContent: vi.fn(),
@@ -9,7 +13,8 @@ const mocks = vi.hoisted(() => ({
   updateCardContent: vi.fn(),
 }))
 
-vi.mock('../../../src/review/index.ts', () => ({
+vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/review/index.ts')>()),
   createCardContent: vi.fn(),
   deleteCardContent: mocks.deleteCardContent,
   searchCardContent: mocks.searchCardContent,
@@ -24,13 +29,13 @@ const activeItem: CardContentListItem = {
     id: '01980c8e-6c00-7000-8000-000000000101',
     createdAt: 1_000,
     updatedAt: 2_000,
-    type: 'BASIC',
+    type: CardContentType.Basic,
     frontMd: 'Why is **copper** conductive?',
     backMd: 'It has mobile electrons.',
     source: 'EE notes',
   },
   lifecycleUpdatedAt: 3_000,
-  reviewStatus: 'ACTIVE',
+  reviewStatus: CardContentReviewStatus.Active,
 }
 
 beforeEach(() => {
@@ -40,7 +45,7 @@ beforeEach(() => {
   mocks.setCardContentSuspended.mockResolvedValue({
     ...activeItem,
     lifecycleUpdatedAt: 3_001,
-    reviewStatus: 'SUSPENDED',
+    reviewStatus: CardContentReviewStatus.Suspended,
   })
   mocks.updateCardContent.mockResolvedValue(activeItem)
 })

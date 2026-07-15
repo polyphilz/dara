@@ -9,6 +9,7 @@ import {
 } from 'react'
 import {
   ReviewController,
+  ReviewControllerPhase,
   tauriReviewGateway,
   type ReviewControllerState,
 } from '../../review/index.ts'
@@ -16,6 +17,7 @@ import type { ReviewCardCache, ReviewGrade } from '../../scheduling/index.ts'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { BasicCardForm } from '../shared/BasicCardForm.tsx'
+import { BasicCardFormVariant } from '../shared/card-form.ts'
 import { CardBrowser } from './CardBrowser.tsx'
 
 const grades = [
@@ -27,6 +29,15 @@ const grades = [
 
 const MAX_TIMER_DELAY = 2_147_000_000
 
+const MainWindowMode = {
+  Review: 'REVIEW',
+  Browse: 'BROWSE',
+  Create: 'CREATE',
+} as const
+
+type MainWindowMode =
+  (typeof MainWindowMode)[keyof typeof MainWindowMode]
+
 export function MainWindow() {
   const controller = useMemo(
     () => new ReviewController(tauriReviewGateway),
@@ -34,7 +45,7 @@ export function MainWindow() {
   )
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
   const spaceCanSubmit = useRef(true)
-  const [mode, setMode] = useState<'REVIEW' | 'BROWSE' | 'CREATE'>('REVIEW')
+  const [mode, setMode] = useState<MainWindowMode>(MainWindowMode.Review)
   const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
 
   useEffect(() => {
@@ -42,7 +53,10 @@ export function MainWindow() {
   }, [controller])
 
   useEffect(() => {
-    if (state.phase !== 'CAUGHT_UP' || state.nextDueAt === null) {
+    if (
+      state.phase !== ReviewControllerPhase.CaughtUp ||
+      state.nextDueAt === null
+    ) {
       return
     }
     const delay = Math.min(
@@ -101,7 +115,7 @@ export function MainWindow() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (mode !== 'REVIEW') {
+      if (mode !== MainWindowMode.Review) {
         return
       }
       if (
@@ -122,14 +136,18 @@ export function MainWindow() {
         return
       }
 
-      if (state.phase === 'QUESTION' && event.key === ' ' && !event.repeat) {
+      if (
+        state.phase === ReviewControllerPhase.Question &&
+        event.key === ' ' &&
+        !event.repeat
+      ) {
         event.preventDefault()
         spaceCanSubmit.current = false
         controller.reveal()
         return
       }
 
-      if (state.phase !== 'REVEALED') {
+      if (state.phase !== ReviewControllerPhase.Revealed) {
         return
       }
 
@@ -182,17 +200,17 @@ export function MainWindow() {
 
   return (
     <main
-      className={`main-window${mode === 'CREATE' ? ' main-window-creating' : ''}${mode === 'BROWSE' ? ' main-window-browsing' : ''}`}
+      className={`main-window${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}`}
     >
       <header className="main-toolbar">
         <div className="main-toolbar-leading">
           <h1>dara</h1>
-          {mode !== 'CREATE' && (
+          {mode !== MainWindowMode.Create && (
             <nav aria-label="Main sections" className="main-section-tabs">
               <button
-                aria-current={mode === 'REVIEW' ? 'page' : undefined}
+                aria-current={mode === MainWindowMode.Review ? 'page' : undefined}
                 onClick={() => {
-                  setMode('REVIEW')
+                  setMode(MainWindowMode.Review)
                   void controller.refresh()
                 }}
                 type="button"
@@ -200,8 +218,8 @@ export function MainWindow() {
                 Review
               </button>
               <button
-                aria-current={mode === 'BROWSE' ? 'page' : undefined}
-                onClick={() => setMode('BROWSE')}
+                aria-current={mode === MainWindowMode.Browse ? 'page' : undefined}
+                onClick={() => setMode(MainWindowMode.Browse)}
                 type="button"
               >
                 Browse
@@ -210,29 +228,29 @@ export function MainWindow() {
           )}
         </div>
         <div className="toolbar-actions">
-          {mode === 'REVIEW' && canUndo(state) && (
+          {mode === MainWindowMode.Review && canUndo(state) && (
             <button type="button" onClick={() => void controller.undo()}>
               Undo
             </button>
           )}
-          {mode !== 'CREATE' && (
-            <button type="button" onClick={() => setMode('CREATE')}>
+          {mode !== MainWindowMode.Create && (
+            <button type="button" onClick={() => setMode(MainWindowMode.Create)}>
               Add card
             </button>
           )}
         </div>
       </header>
 
-      {mode === 'CREATE' ? (
+      {mode === MainWindowMode.Create ? (
         <BasicCardForm
-          onCancel={() => setMode('REVIEW')}
+          onCancel={() => setMode(MainWindowMode.Review)}
           onSaved={() => {
             controller.notifyCardCreated()
-            setMode('REVIEW')
+            setMode(MainWindowMode.Review)
           }}
-          variant="main"
+          variant={BasicCardFormVariant.Main}
         />
-      ) : mode === 'BROWSE' ? (
+      ) : mode === MainWindowMode.Browse ? (
         <CardBrowser
           onQueueChanged={queueChanged}
           refreshToken={browseRefreshToken}
@@ -252,10 +270,10 @@ function ReviewContent({
   state: ReviewControllerState
 }) {
   switch (state.phase) {
-    case 'IDLE':
-    case 'LOADING':
+    case ReviewControllerPhase.Idle:
+    case ReviewControllerPhase.Loading:
       return <StatusScreen message="Loading…" />
-    case 'QUESTION':
+    case ReviewControllerPhase.Question:
       return (
         <section className="review-stage">
           {state.notice && <p className="notice">{state.notice}</p>}
@@ -272,9 +290,9 @@ function ReviewContent({
           <p className="key-hint">Space to reveal</p>
         </section>
       )
-    case 'REVEALED':
-    case 'SUBMITTING': {
-      const saving = state.phase === 'SUBMITTING'
+    case ReviewControllerPhase.Revealed:
+    case ReviewControllerPhase.Submitting: {
+      const saving = state.phase === ReviewControllerPhase.Submitting
       const content = state.card.context.cardContent
       return (
         <section className="review-stage">
@@ -315,9 +333,9 @@ function ReviewContent({
         </section>
       )
     }
-    case 'UNDOING':
+    case ReviewControllerPhase.Undoing:
       return <StatusScreen message="Undoing…" />
-    case 'CAUGHT_UP':
+    case ReviewControllerPhase.CaughtUp:
       return (
         <StatusScreen
           message="Caught up for now"
@@ -329,7 +347,7 @@ function ReviewContent({
           </button>
         </StatusScreen>
       )
-    case 'ERROR':
+    case ReviewControllerPhase.Error:
       return (
         <StatusScreen message="Something went wrong" detail={state.message} error>
           {state.canRetry && (
@@ -368,9 +386,15 @@ function StatusScreen({
 function canUndo(state: ReviewControllerState): boolean {
   return (
     state.canUndo &&
-    ['QUESTION', 'REVEALED', 'CAUGHT_UP'].includes(state.phase)
+    undoablePhases.has(state.phase)
   )
 }
+
+const undoablePhases = new Set<ReviewControllerState['phase']>([
+  ReviewControllerPhase.Question,
+  ReviewControllerPhase.Revealed,
+  ReviewControllerPhase.CaughtUp,
+])
 
 function isReviewGrade(value: number): value is ReviewGrade {
   return Number.isInteger(value) && value >= 1 && value <= 4

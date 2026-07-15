@@ -7,6 +7,7 @@ use tempfile::TempDir;
 
 use super::{
     connection::{self, DatabaseKind, FileState, MAIN_APPLICATION_ID, MEDIA_APPLICATION_ID},
+    domain::{CardContentType, ReviewCardState, ReviewCardStatus, ReviewEventType},
     embedding_index, initialize, migrations, snapshot, DatabaseError, DatabasePaths,
     InitializationOptions,
 };
@@ -68,8 +69,8 @@ fn insert_basic_content(connection: &Connection) {
         .execute(
             "INSERT INTO card_content (
                 id, created_at, updated_at, deleted_at, type, front_md, back_md, source
-             ) VALUES (?1, 100, 100, NULL, 'BASIC', 'question', 'answer', NULL)",
-            [BASIC_CONTENT_ID],
+             ) VALUES (?1, 100, 100, NULL, ?2, 'question', 'answer', NULL)",
+            params![BASIC_CONTENT_ID, CardContentType::Basic.as_db_str()],
         )
         .expect("basic content");
 }
@@ -362,10 +363,12 @@ fn state_checks_partial_uniqueness_and_append_only_history_are_enforced() {
             "INSERT INTO card_content (
                 id, created_at, updated_at, deleted_at, type, front_md, back_md, source
              ) VALUES (
-                '01980c8e-6c00-7000-8000-00000000010-', 100, 100, NULL,
-                'BASIC', 'question', 'answer', NULL
+                ?1, 100, 100, NULL, ?2, 'question', 'answer', NULL
              )",
-            [],
+            params![
+                "01980c8e-6c00-7000-8000-00000000010-",
+                CardContentType::Basic.as_db_str()
+            ],
         )
         .is_err());
     insert_basic_content(&main);
@@ -376,10 +379,15 @@ fn state_checks_partial_uniqueness_and_append_only_history_are_enforced() {
             variant_key, state, due_at, due_study_day, last_review_at, reps, lapses,
             scheduler_config_id, scheduler_state_schema_version, scheduler_state_json
          ) VALUES (
-            ?1, 100, 100, NULL, ?2, 'ACTIVE', NULL, 'basic', 'NEW', 100, NULL, NULL,
+            ?1, 100, 100, NULL, ?2, ?3, NULL, 'basic', ?4, 100, NULL, NULL,
             0, 0, NULL, NULL, NULL
          )",
-        params![BASIC_CARD_ID, BASIC_CONTENT_ID],
+        params![
+            BASIC_CARD_ID,
+            BASIC_CONTENT_ID,
+            ReviewCardStatus::Active.as_db_str(),
+            ReviewCardState::New.as_db_str()
+        ],
     );
     assert!(invalid_new.is_err());
 
@@ -389,10 +397,16 @@ fn state_checks_partial_uniqueness_and_append_only_history_are_enforced() {
             variant_key, state, due_at, due_study_day, last_review_at, reps, lapses,
             scheduler_config_id, scheduler_state_schema_version, scheduler_state_json
          ) VALUES (
-            ?1, 100, 100, NULL, ?2, 'ACTIVE', NULL, 'basic', 'REVIEW', NULL, 200,
-            100, 1, 0, ?3, 1, '{}'
+            ?1, 100, 100, NULL, ?2, ?3, NULL, 'basic', ?4, NULL, 200,
+            100, 1, 0, ?5, 1, '{}'
          )",
-        params![BASIC_CARD_ID, BASIC_CONTENT_ID, DEFAULT_CONFIG_ID],
+        params![
+            BASIC_CARD_ID,
+            BASIC_CONTENT_ID,
+            ReviewCardStatus::Active.as_db_str(),
+            ReviewCardState::Review.as_db_str(),
+            DEFAULT_CONFIG_ID
+        ],
     )
     .expect("valid review card");
 
@@ -402,10 +416,15 @@ fn state_checks_partial_uniqueness_and_append_only_history_are_enforced() {
             variant_key, state, due_at, due_study_day, last_review_at, reps, lapses,
             scheduler_config_id, scheduler_state_schema_version, scheduler_state_json
          ) VALUES (
-            ?1, 101, 101, NULL, ?2, 'ACTIVE', NULL, 'basic', 'NEW', NULL, NULL, NULL,
+            ?1, 101, 101, NULL, ?2, ?3, NULL, 'basic', ?4, NULL, NULL, NULL,
             0, 0, NULL, NULL, NULL
          )",
-        params![SECOND_CARD_ID, BASIC_CONTENT_ID],
+        params![
+            SECOND_CARD_ID,
+            BASIC_CONTENT_ID,
+            ReviewCardStatus::Active.as_db_str(),
+            ReviewCardState::New.as_db_str()
+        ],
     );
     assert!(duplicate.is_err());
 
@@ -415,10 +434,15 @@ fn state_checks_partial_uniqueness_and_append_only_history_are_enforced() {
             reviewed_at, study_day, timezone_id, utc_offset_minutes, grade,
             scheduler_config_id, scheduler_log_json, target_event_id
          ) VALUES (
-            ?1, 100, 1, 'REVIEW', ?2, 1, 100, 20000, 'America/New_York', -240, 3,
-            ?3, '{}', NULL
+            ?1, 100, 1, ?2, ?3, 1, 100, 20000, 'America/New_York', -240, 3,
+            ?4, '{}', NULL
          )",
-        params![REVIEW_EVENT_ID, BASIC_CARD_ID, DEFAULT_CONFIG_ID],
+        params![
+            REVIEW_EVENT_ID,
+            ReviewEventType::Review.as_db_str(),
+            BASIC_CARD_ID,
+            DEFAULT_CONFIG_ID
+        ],
     )
     .expect("review event");
     assert!(main

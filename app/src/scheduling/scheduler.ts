@@ -22,7 +22,6 @@ import type {
   PreviousReview,
   ReplayResult,
   ReviewCardCache,
-  ReviewCardState,
   ReviewFact,
   ReviewGrade,
   ScheduleResult,
@@ -32,7 +31,7 @@ import type {
   SchedulerStateV1,
   StudyMoment,
 } from './types.ts'
-import { SchedulingError } from './types.ts'
+import { ReviewCardState, SchedulingError } from './types.ts'
 
 const MILLISECONDS_PER_DAY = 86_400_000
 const SYNTHETIC_TIME_OF_DAY = 12 * 60 * 60 * 1_000
@@ -47,7 +46,7 @@ interface SchedulerInternals {
 
 export function createNewReviewCardCache(): ReviewCardCache {
   return {
-    state: 'NEW',
+    state: ReviewCardState.New,
     dueAt: null,
     dueStudyDay: null,
     lastReviewAt: null,
@@ -196,7 +195,7 @@ function toFsrsCard(
   const state = toFsrsState(cache.state)
   const due = syntheticDue(cache, review, syntheticNow)
   const lastReview =
-    cache.state === 'NEW'
+    cache.state === ReviewCardState.New
       ? undefined
       : new Date(syntheticNow.getTime() - elapsedDays * MILLISECONDS_PER_DAY)
 
@@ -221,14 +220,14 @@ function syntheticDue(
   syntheticNow: Date,
 ): Date {
   switch (cache.state) {
-    case 'NEW':
+    case ReviewCardState.New:
       return syntheticNow
-    case 'LEARNING':
-    case 'RELEARNING':
+    case ReviewCardState.Learning:
+    case ReviewCardState.Relearning:
       return new Date(
         syntheticNow.getTime() + (requireValue(cache.dueAt, 'dueAt') - review.reviewedAt),
       )
-    case 'REVIEW':
+    case ReviewCardState.Review:
       return new Date(
         syntheticNow.getTime() +
           (requireValue(cache.dueStudyDay, 'dueStudyDay') - review.studyDay) *
@@ -243,7 +242,7 @@ function fromFsrsResult(
   syntheticNow: Date,
 ): ReviewCardCache {
   const state = fromFsrsState(result.card.state)
-  if (state === 'NEW') {
+  if (state === ReviewCardState.New) {
     throw new SchedulingError('ts-fsrs returned NEW after a grade')
   }
 
@@ -262,7 +261,10 @@ function fromFsrsResult(
 
   let dueAt: number | null = null
   let dueStudyDay: number | null = null
-  if (state === 'LEARNING' || state === 'RELEARNING') {
+  if (
+    state === ReviewCardState.Learning ||
+    state === ReviewCardState.Relearning
+  ) {
     const delay = result.card.due.getTime() - syntheticNow.getTime()
     if (!Number.isSafeInteger(delay) || delay <= 0) {
       throw new SchedulingError('ts-fsrs returned an invalid learning delay')
@@ -304,7 +306,7 @@ function elapsedStudyDays(
   previousReview: PreviousReview | null,
   review: ReviewFact,
 ): number {
-  if (cache.state === 'NEW') {
+  if (cache.state === ReviewCardState.New) {
     if (previousReview !== null) {
       throw new SchedulingError('a NEW card cannot have a previous review')
     }
@@ -341,7 +343,7 @@ function assertCache(cache: ReviewCardCache): void {
     throw new SchedulingError('cache.lapses cannot exceed cache.reps')
   }
 
-  if (cache.state === 'NEW') {
+  if (cache.state === ReviewCardState.New) {
     if (
       cache.dueAt !== null ||
       cache.dueStudyDay !== null ||
@@ -361,7 +363,7 @@ function assertCache(cache: ReviewCardCache): void {
   }
   assertSchedulerState(cache.schedulerState)
 
-  if (cache.state === 'REVIEW') {
+  if (cache.state === ReviewCardState.Review) {
     if (cache.dueAt !== null || cache.dueStudyDay === null) {
       throw new SchedulingError('REVIEW due-value invariants are violated')
     }
@@ -423,13 +425,13 @@ function assertRuntimeVersion(): void {
 
 function toFsrsState(state: ReviewCardState): State {
   switch (state) {
-    case 'NEW':
+    case ReviewCardState.New:
       return State.New
-    case 'LEARNING':
+    case ReviewCardState.Learning:
       return State.Learning
-    case 'REVIEW':
+    case ReviewCardState.Review:
       return State.Review
-    case 'RELEARNING':
+    case ReviewCardState.Relearning:
       return State.Relearning
   }
 }
@@ -437,13 +439,13 @@ function toFsrsState(state: ReviewCardState): State {
 function fromFsrsState(state: State): ReviewCardState {
   switch (state) {
     case State.New:
-      return 'NEW'
+      return ReviewCardState.New
     case State.Learning:
-      return 'LEARNING'
+      return ReviewCardState.Learning
     case State.Review:
-      return 'REVIEW'
+      return ReviewCardState.Review
     case State.Relearning:
-      return 'RELEARNING'
+      return ReviewCardState.Relearning
     default:
       throw new SchedulingError(`unsupported ts-fsrs state ${String(state)}`)
   }

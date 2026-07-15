@@ -7,15 +7,43 @@ import type {
   SchedulerLogV1,
 } from '../scheduling/index.ts'
 
-export type ReviewCardStatus = 'ACTIVE' | 'SUSPENDED'
-export type ReviewQueueLane = 'INTRADAY' | 'REVIEW' | 'NEW'
-export type MutationDisposition = 'APPLIED' | 'ALREADY_APPLIED'
+export const ReviewCardStatus = {
+  Active: 'ACTIVE',
+  Suspended: 'SUSPENDED',
+} as const
+
+export type ReviewCardStatus =
+  (typeof ReviewCardStatus)[keyof typeof ReviewCardStatus]
+
+export const ReviewQueueLane = {
+  Intraday: 'INTRADAY',
+  Review: 'REVIEW',
+  New: 'NEW',
+} as const
+
+export type ReviewQueueLane =
+  (typeof ReviewQueueLane)[keyof typeof ReviewQueueLane]
+
+export const MutationDisposition = {
+  Applied: 'APPLIED',
+  AlreadyApplied: 'ALREADY_APPLIED',
+} as const
+
+export type MutationDisposition =
+  (typeof MutationDisposition)[keyof typeof MutationDisposition]
+
+export const CardContentType = {
+  Basic: 'BASIC',
+} as const
+
+export type CardContentType =
+  (typeof CardContentType)[keyof typeof CardContentType]
 
 export interface BasicCardContent {
   id: string
   createdAt: number
   updatedAt: number
-  type: 'BASIC'
+  type: typeof CardContentType.Basic
   frontMd: string
   backMd: string
   source: string | null
@@ -28,7 +56,22 @@ export type CardContentDraft = Pick<
   'type' | 'frontMd' | 'backMd' | 'source'
 >
 
-export type CardContentReviewStatus = 'ACTIVE' | 'SUSPENDED' | 'MIXED'
+export const CardContentReviewStatus = {
+  Active: 'ACTIVE',
+  Suspended: 'SUSPENDED',
+  Mixed: 'MIXED',
+} as const
+
+export type CardContentReviewStatus =
+  (typeof CardContentReviewStatus)[keyof typeof CardContentReviewStatus]
+
+export const ReviewQueueSelectionKind = {
+  Card: 'CARD',
+  CaughtUp: 'CAUGHT_UP',
+} as const
+
+export type ReviewQueueSelectionKind =
+  (typeof ReviewQueueSelectionKind)[keyof typeof ReviewQueueSelectionKind]
 
 export interface CardContentListItem {
   cardContent: CardContent
@@ -73,13 +116,13 @@ export interface SelectNextReviewCardInput {
 
 export type ReviewQueueSelection =
   | {
-      kind: 'CARD'
+      kind: typeof ReviewQueueSelectionKind.Card
       lane: ReviewQueueLane
       nextNormalLaneCursor: number
       context: ReviewContext
     }
   | {
-      kind: 'CAUGHT_UP'
+      kind: typeof ReviewQueueSelectionKind.CaughtUp
       nextDueAt: number | null
       nextNormalLaneCursor: number
     }

@@ -19,6 +19,36 @@ const MAIN_LABEL: &str = "main";
 const QUICK_ADD_LABEL: &str = "quick-add";
 const QUICK_ADD_SHORTCUT_LABEL: &str = "⌃⌥⌘D";
 const REVIEW_SHORTCUT_LABEL: &str = "⌃⌥⌘R";
+const TRAY_ID: &str = "dara-tray";
+
+#[derive(Clone, Copy)]
+enum TrayMenuAction {
+    ShowMain,
+    ShowQuickAdd,
+    Quit,
+}
+
+impl TrayMenuAction {
+    const fn id(self) -> &'static str {
+        match self {
+            Self::ShowMain => "show-main",
+            Self::ShowQuickAdd => "show-quick-add",
+            Self::Quit => "quit",
+        }
+    }
+
+    fn from_id(id: &str) -> Option<Self> {
+        if id == Self::ShowMain.id() {
+            Some(Self::ShowMain)
+        } else if id == Self::ShowQuickAdd.id() {
+            Some(Self::ShowQuickAdd)
+        } else if id == Self::Quit.id() {
+            Some(Self::Quit)
+        } else {
+            None
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SpikeStatus {
@@ -125,39 +155,41 @@ fn create_quick_add_window(app: &AppHandle) -> tauri::Result<()> {
 
 fn install_tray(app: &App) -> tauri::Result<()> {
     let menu = MenuBuilder::new(app)
-        .text("show-main", "Open Dara")
+        .text(TrayMenuAction::ShowMain.id(), "Open Dara")
         .text(
-            "show-quick-add",
+            TrayMenuAction::ShowQuickAdd.id(),
             format!("Quick Add  {QUICK_ADD_SHORTCUT_LABEL}"),
         )
         .separator()
-        .text("quit", "Quit Dara")
+        .text(TrayMenuAction::Quit.id(), "Quit Dara")
         .build()?;
 
-    let mut tray = TrayIconBuilder::with_id("dara-tray")
+    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(true)
         .title("d")
         .tooltip("Dara")
         .icon_as_template(true)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "show-main" => {
-                if let Err(error) =
-                    dispatch_to_main_thread(app, "show main window", show_main_inner)
-                {
-                    log::error!("failed to show main window: {error}");
+        .on_menu_event(
+            |app, event| match TrayMenuAction::from_id(event.id().as_ref()) {
+                Some(TrayMenuAction::ShowMain) => {
+                    if let Err(error) =
+                        dispatch_to_main_thread(app, "show main window", show_main_inner)
+                    {
+                        log::error!("failed to show main window: {error}");
+                    }
                 }
-            }
-            "show-quick-add" => {
-                if let Err(error) =
-                    dispatch_to_main_thread(app, "show quick add", show_quick_add_inner)
-                {
-                    log::error!("failed to show quick add: {error}");
+                Some(TrayMenuAction::ShowQuickAdd) => {
+                    if let Err(error) =
+                        dispatch_to_main_thread(app, "show quick add", show_quick_add_inner)
+                    {
+                        log::error!("failed to show quick add: {error}");
+                    }
                 }
-            }
-            "quit" => app.exit(0),
-            _ => {}
-        });
+                Some(TrayMenuAction::Quit) => app.exit(0),
+                None => {}
+            },
+        );
 
     if let Some(icon) = app.default_window_icon() {
         tray = tray.icon(icon.clone());

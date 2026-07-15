@@ -5,6 +5,7 @@ import {
   BasicCardForm,
   type BasicCardFormHandle,
 } from '../shared/BasicCardForm.tsx'
+import { BasicCardFormVariant } from '../shared/card-form.ts'
 
 export function QuickAddWindow() {
   const formRef = useRef<BasicCardFormHandle>(null)
@@ -65,7 +66,7 @@ export function QuickAddWindow() {
             await native.dismissQuickAdd()
           }}
           ref={formRef}
-          variant="quick"
+          variant={BasicCardFormVariant.Quick}
         />
       </div>
     </main>

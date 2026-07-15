@@ -4,7 +4,11 @@ import type {
   SchedulerConfigV1,
   SchedulerStep,
 } from './types.ts'
-import { SchedulingError } from './types.ts'
+import {
+  SchedulerAlgorithm,
+  SchedulerLibrary,
+  SchedulingError,
+} from './types.ts'
 
 export const TS_FSRS_LIBRARY_VERSION = '5.4.1' as const
 export const TS_FSRS_RUNTIME_VERSION = 'v5.4.1 using FSRS-6.0' as const
@@ -37,9 +41,9 @@ const DEFAULT_LEARNING_STEPS = Object.freeze(['10m'] as const)
 const DEFAULT_RELEARNING_STEPS = Object.freeze(['10m'] as const)
 
 export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfigV1 = Object.freeze({
-  algorithm: 'FSRS',
+  algorithm: SchedulerAlgorithm.Fsrs,
   algorithmVersion: 6,
-  schedulerLibrary: 'ts-fsrs',
+  schedulerLibrary: SchedulerLibrary.TsFsrs,
   libraryVersion: TS_FSRS_LIBRARY_VERSION,
   configSchemaVersion: 1,
   config: Object.freeze({
@@ -56,9 +60,13 @@ export const DEFAULT_SCHEDULER_CONFIG: SchedulerConfigV1 = Object.freeze({
 export function parseSchedulerConfig(value: unknown): SchedulerConfigV1 {
   const record = requireRecord(value, 'scheduler config')
 
-  requireEqual(record.algorithm, 'FSRS', 'algorithm')
+  requireEqual(record.algorithm, SchedulerAlgorithm.Fsrs, 'algorithm')
   requireEqual(record.algorithmVersion, 6, 'algorithmVersion')
-  requireEqual(record.schedulerLibrary, 'ts-fsrs', 'schedulerLibrary')
+  requireEqual(
+    record.schedulerLibrary,
+    SchedulerLibrary.TsFsrs,
+    'schedulerLibrary',
+  )
   requireEqual(
     record.libraryVersion,
     TS_FSRS_LIBRARY_VERSION,
@@ -68,9 +76,9 @@ export function parseSchedulerConfig(value: unknown): SchedulerConfigV1 {
 
   const config = parseConfigJson(record.config)
   return {
-    algorithm: 'FSRS',
+    algorithm: SchedulerAlgorithm.Fsrs,
     algorithmVersion: 6,
-    schedulerLibrary: 'ts-fsrs',
+    schedulerLibrary: SchedulerLibrary.TsFsrs,
     libraryVersion: TS_FSRS_LIBRARY_VERSION,
     configSchemaVersion: 1,
     config,

@@ -11,22 +11,38 @@ use super::{
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandError {
-    code: &'static str,
+    code: CommandErrorCode,
     message: String,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum CommandErrorCode {
+    InvalidInput,
+    NotFound,
+    StaleReviewContext,
+    StaleCardContent,
+    IdempotencyConflict,
+    DatabaseUnavailable,
+    CorruptReviewData,
+    UnsupportedSchedulerConfig,
+    DatabaseError,
 }
 
 impl From<DatabaseError> for CommandError {
     fn from(error: DatabaseError) -> Self {
         let code = match &error {
-            DatabaseError::InvalidInput(_) => "invalidInput",
-            DatabaseError::NotFound { .. } => "notFound",
-            DatabaseError::StaleReviewContext(_) => "staleReviewContext",
-            DatabaseError::StaleCardContent(_) => "staleCardContent",
-            DatabaseError::IdempotencyConflict { .. } => "idempotencyConflict",
-            DatabaseError::WriterUnavailable => "databaseUnavailable",
-            DatabaseError::CorruptReviewData(_) => "corruptReviewData",
-            DatabaseError::UnsupportedSchedulerConfig(_) => "unsupportedSchedulerConfig",
-            _ => "databaseError",
+            DatabaseError::InvalidInput(_) => CommandErrorCode::InvalidInput,
+            DatabaseError::NotFound { .. } => CommandErrorCode::NotFound,
+            DatabaseError::StaleReviewContext(_) => CommandErrorCode::StaleReviewContext,
+            DatabaseError::StaleCardContent(_) => CommandErrorCode::StaleCardContent,
+            DatabaseError::IdempotencyConflict { .. } => CommandErrorCode::IdempotencyConflict,
+            DatabaseError::WriterUnavailable => CommandErrorCode::DatabaseUnavailable,
+            DatabaseError::CorruptReviewData(_) => CommandErrorCode::CorruptReviewData,
+            DatabaseError::UnsupportedSchedulerConfig(_) => {
+                CommandErrorCode::UnsupportedSchedulerConfig
+            }
+            _ => CommandErrorCode::DatabaseError,
         };
         Self {
             code,
@@ -126,7 +142,7 @@ where
     tauri::async_runtime::spawn_blocking(operation)
         .await
         .map_err(|error| CommandError {
-            code: "databaseUnavailable",
+            code: CommandErrorCode::DatabaseUnavailable,
             message: format!("database command worker failed: {error}"),
         })?
         .map_err(Into::into)

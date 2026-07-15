@@ -17,17 +17,17 @@ use super::{DatabaseError, Result};
 const EVENT_SCHEMA_VERSION: i64 = 1;
 const SCHEDULER_STATE_SCHEMA_VERSION: i64 = 1;
 const MAX_JSON_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
+const SUPPORTED_SCHEDULER_ALGORITHM_VERSION: i64 = 6;
+const SUPPORTED_SCHEDULER_LIBRARY_VERSION: &str = "5.4.1";
+const SUPPORTED_SCHEDULER_CONFIG_SCHEMA_VERSION: i64 = 1;
 // An explicit, non-token field boundary keeps the aggregate deterministic.
 const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
 const CARD_CONTENT_LIST_SELECT: &str = "
     WITH lifecycle AS (
         SELECT
             card_content_id,
-            CASE
-                WHEN count(*) FILTER (WHERE status = 'SUSPENDED') = count(*) THEN 'SUSPENDED'
-                WHEN count(*) FILTER (WHERE status = 'ACTIVE') = count(*) THEN 'ACTIVE'
-                ELSE 'MIXED'
-            END AS review_status,
+            min(status) AS review_status,
+            count(DISTINCT status) AS review_status_count,
             max(updated_at) AS lifecycle_updated_at
         FROM review_card
         WHERE deleted_at IS NULL
@@ -36,7 +36,8 @@ const CARD_CONTENT_LIST_SELECT: &str = "
     SELECT
         content.id, content.created_at, content.updated_at, content.type,
         content.front_md, content.back_md, content.source,
-        lifecycle.review_status, lifecycle.lifecycle_updated_at
+        lifecycle.review_status, lifecycle.review_status_count,
+        lifecycle.lifecycle_updated_at
     FROM card_content AS content
     JOIN lifecycle ON lifecycle.card_content_id = content.id";
 
@@ -99,6 +100,29 @@ pub enum CardContentReviewStatus {
     Mixed,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum CardContentType {
+    Basic,
+}
+
+impl CardContentType {
+    pub(super) const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Basic => "BASIC",
+        }
+    }
+
+    fn from_db(value: &str) -> Result<Self> {
+        if value == Self::Basic.as_db_str() {
+            Ok(Self::Basic)
+        } else {
+            Err(DatabaseError::CorruptReviewData(format!(
+                "unsupported active card content type {value}"
+            )))
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CardContentListItem {
@@ -137,6 +161,27 @@ pub enum ReviewCardStatus {
     Suspended,
 }
 
+impl ReviewCardStatus {
+    pub(super) const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Active => "ACTIVE",
+            Self::Suspended => "SUSPENDED",
+        }
+    }
+
+    fn from_db(value: &str) -> Result<Self> {
+        if value == Self::Active.as_db_str() {
+            Ok(Self::Active)
+        } else if value == Self::Suspended.as_db_str() {
+            Ok(Self::Suspended)
+        } else {
+            Err(DatabaseError::CorruptReviewData(format!(
+                "unknown review card status {value}"
+            )))
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ReviewCardState {
@@ -144,6 +189,33 @@ pub enum ReviewCardState {
     Learning,
     Review,
     Relearning,
+}
+
+impl ReviewCardState {
+    pub(super) const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::New => "NEW",
+            Self::Learning => "LEARNING",
+            Self::Review => "REVIEW",
+            Self::Relearning => "RELEARNING",
+        }
+    }
+
+    fn from_db(value: &str) -> Result<Self> {
+        if value == Self::New.as_db_str() {
+            Ok(Self::New)
+        } else if value == Self::Learning.as_db_str() {
+            Ok(Self::Learning)
+        } else if value == Self::Review.as_db_str() {
+            Ok(Self::Review)
+        } else if value == Self::Relearning.as_db_str() {
+            Ok(Self::Relearning)
+        } else {
+            Err(DatabaseError::CorruptReviewData(format!(
+                "unknown review card state {value}"
+            )))
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -207,12 +279,56 @@ pub struct SchedulerLogV1 {
 #[serde(rename_all = "camelCase")]
 pub struct SchedulerConfigRecord {
     pub id: String,
-    pub algorithm: String,
+    pub algorithm: SchedulerAlgorithm,
     pub algorithm_version: i64,
-    pub scheduler_library: String,
+    pub scheduler_library: SchedulerLibrary,
     pub library_version: String,
     pub config_schema_version: i64,
     pub config: Value,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SchedulerAlgorithm {
+    Fsrs,
+}
+
+impl SchedulerAlgorithm {
+    const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Fsrs => "FSRS",
+        }
+    }
+
+    fn from_db(value: &str) -> Option<Self> {
+        if value == Self::Fsrs.as_db_str() {
+            Some(Self::Fsrs)
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum SchedulerLibrary {
+    #[serde(rename = "ts-fsrs")]
+    TsFsrs,
+}
+
+impl SchedulerLibrary {
+    const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::TsFsrs => "ts-fsrs",
+        }
+    }
+
+    fn from_db(value: &str) -> Option<Self> {
+        if value == Self::TsFsrs.as_db_str() {
+            Some(Self::TsFsrs)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -292,15 +408,15 @@ struct StoredCard {
     content_id: String,
     content_created_at: i64,
     content_updated_at: i64,
-    content_type: String,
+    content_type: CardContentType,
     front_md: String,
     back_md: String,
     source: Option<String>,
     card_id: String,
-    status: String,
+    status: ReviewCardStatus,
     variant_key: String,
     updated_at: i64,
-    state: String,
+    state: ReviewCardState,
     due_at: Option<i64>,
     due_study_day: Option<i64>,
     last_review_at: Option<i64>,
@@ -313,7 +429,7 @@ struct StoredCard {
 
 struct StoredEvent {
     event_schema_version: i64,
-    event_type: String,
+    event_type: ReviewEventType,
     review_card_id: String,
     card_sequence: i64,
     reviewed_at: Option<i64>,
@@ -324,6 +440,33 @@ struct StoredEvent {
     scheduler_config_id: String,
     scheduler_log_json: Option<String>,
     target_event_id: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum ReviewEventType {
+    Review,
+    Revoke,
+}
+
+impl ReviewEventType {
+    pub(super) const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::Review => "REVIEW",
+            Self::Revoke => "REVOKE",
+        }
+    }
+
+    fn from_db(value: &str) -> Result<Self> {
+        if value == Self::Review.as_db_str() {
+            Ok(Self::Review)
+        } else if value == Self::Revoke.as_db_str() {
+            Ok(Self::Revoke)
+        } else {
+            Err(DatabaseError::CorruptReviewData(format!(
+                "unknown review event type {value}"
+            )))
+        }
+    }
 }
 
 pub(super) fn create_card_content(
@@ -343,7 +486,14 @@ pub(super) fn create_card_content(
         "INSERT INTO card_content (
             id, created_at, updated_at, deleted_at, type, front_md, back_md, source
          ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5, ?6)",
-        params![content_id, now, content_type, front_md, back_md, source],
+        params![
+            content_id,
+            now,
+            content_type.as_db_str(),
+            front_md,
+            back_md,
+            source
+        ],
     )?;
     transaction.execute(
         "INSERT INTO review_card (
@@ -352,10 +502,16 @@ pub(super) fn create_card_content(
             last_review_at, reps, lapses, scheduler_config_id,
             scheduler_state_schema_version, scheduler_state_json
          ) VALUES (
-            ?1, ?2, ?2, NULL, ?3, 'ACTIVE', NULL, 'basic', 'NEW', NULL, NULL,
+            ?1, ?2, ?2, NULL, ?3, ?4, NULL, 'basic', ?5, NULL, NULL,
             NULL, 0, 0, NULL, NULL, NULL
          )",
-        params![review_card_id, now, content_id],
+        params![
+            review_card_id,
+            now,
+            content_id,
+            ReviewCardStatus::Active.as_db_str(),
+            ReviewCardState::New.as_db_str()
+        ],
     )?;
     transaction.execute(
         "INSERT INTO search_document (card_content_id, body, content_hash, updated_at)
@@ -394,7 +550,7 @@ pub(super) fn update_card_content(
          WHERE id = ?6 AND updated_at = ?7 AND deleted_at IS NULL",
         params![
             updated_at,
-            content_type,
+            content_type.as_db_str(),
             front_md,
             back_md,
             source,
@@ -507,15 +663,20 @@ pub(super) fn set_card_content_suspended(
     let now = now_millis()?;
     let updated_at = next_updated_at(current.lifecycle_updated_at, now)?;
     let (status, suspended_at) = if input.suspended {
-        ("SUSPENDED", Some(now))
+        (ReviewCardStatus::Suspended, Some(now))
     } else {
-        ("ACTIVE", None)
+        (ReviewCardStatus::Active, None)
     };
     let changed = transaction.execute(
         "UPDATE review_card
          SET status = ?1, suspended_at = ?2, updated_at = ?3
          WHERE card_content_id = ?4 AND deleted_at IS NULL",
-        params![status, suspended_at, updated_at, input.card_content_id],
+        params![
+            status.as_db_str(),
+            suspended_at,
+            updated_at,
+            input.card_content_id
+        ],
     )?;
     if changed == 0 {
         return Err(DatabaseError::NotFound {
@@ -583,7 +744,6 @@ pub(super) fn load_review_context(
 ) -> Result<ReviewContext> {
     validate_uuid_v7(review_card_id, "reviewCardId")?;
     let stored = load_stored_card(connection, review_card_id)?;
-    let status = parse_status(&stored.status)?;
     let cache = cache_from_stored(&stored)?;
     validate_cache(&cache).map_err(DatabaseError::CorruptReviewData)?;
     let scheduler_config = load_active_scheduler_config(connection)?;
@@ -612,14 +772,14 @@ pub(super) fn load_review_context(
             stored.content_id,
             stored.content_created_at,
             stored.content_updated_at,
-            &stored.content_type,
+            stored.content_type,
             stored.front_md,
             stored.back_md,
             stored.source,
-        )?,
+        ),
         review_card: ReviewCardSummary {
             id: stored.card_id,
-            status,
+            status: stored.status,
             variant_key: stored.variant_key,
             updated_at: stored.updated_at,
         },
@@ -680,12 +840,13 @@ pub(super) fn record_grade(
             utc_offset_minutes, grade, scheduler_config_id, scheduler_log_json,
             target_event_id
          ) VALUES (
-            ?1, ?2, ?3, 'REVIEW', ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, NULL
+            ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, NULL
          )",
         params![
             input.event_id,
             now,
             EVENT_SCHEMA_VERSION,
+            ReviewEventType::Review.as_db_str(),
             input.review_card_id,
             card_sequence,
             input.review.reviewed_at,
@@ -769,12 +930,13 @@ pub(super) fn undo_last_grade(
             utc_offset_minutes, grade, scheduler_config_id, scheduler_log_json,
             target_event_id
          ) VALUES (
-            ?1, ?2, ?3, 'REVOKE', ?4, ?5, NULL, NULL, NULL, NULL, NULL, ?6, NULL, ?7
+            ?1, ?2, ?3, ?4, ?5, ?6, NULL, NULL, NULL, NULL, NULL, ?7, NULL, ?8
          )",
         params![
             input.event_id,
             now,
             EVENT_SCHEMA_VERSION,
+            ReviewEventType::Revoke.as_db_str(),
             input.review_card_id,
             card_sequence,
             input.expected_scheduler_config_id,
@@ -821,13 +983,13 @@ fn validate_card_content(input: &CardContentDraft) -> Result<()> {
     Ok(())
 }
 
-fn draft_fields(input: &CardContentDraft) -> (&'static str, &str, &str, Option<&str>) {
+fn draft_fields(input: &CardContentDraft) -> (CardContentType, &str, &str, Option<&str>) {
     match input {
         CardContentDraft::Basic {
             front_md,
             back_md,
             source,
-        } => ("BASIC", front_md, back_md, source.as_deref()),
+        } => (CardContentType::Basic, front_md, back_md, source.as_deref()),
     }
 }
 
@@ -960,44 +1122,42 @@ fn card_content_row(row: &Row<'_>) -> rusqlite::Result<CardContent> {
     let id = row.get(0)?;
     let created_at = row.get(1)?;
     let updated_at = row.get(2)?;
-    let content_type: String = row.get(3)?;
+    let content_type = enum_column(row, 3, CardContentType::from_db)?;
     let front_md = row.get(4)?;
     let back_md = row.get(5)?;
     let source = row.get(6)?;
-    card_content_from_fields(
+    Ok(card_content_from_fields(
         id,
         created_at,
         updated_at,
-        &content_type,
+        content_type,
         front_md,
         back_md,
         source,
-    )
-    .map_err(|error| {
-        rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(error))
-    })
+    ))
 }
 
 fn card_content_list_row(row: &Row<'_>) -> rusqlite::Result<CardContentListItem> {
     let card_content = card_content_row(row)?;
-    let review_status = match row.get::<_, String>(7)?.as_str() {
-        "ACTIVE" => CardContentReviewStatus::Active,
-        "SUSPENDED" => CardContentReviewStatus::Suspended,
-        "MIXED" => CardContentReviewStatus::Mixed,
-        value => {
+    let review_card_status = enum_column(row, 7, ReviewCardStatus::from_db)?;
+    let review_status = match (review_card_status, row.get::<_, i64>(8)?) {
+        (ReviewCardStatus::Active, 1) => CardContentReviewStatus::Active,
+        (ReviewCardStatus::Suspended, 1) => CardContentReviewStatus::Suspended,
+        (_, 2) => CardContentReviewStatus::Mixed,
+        (_, count) => {
             return Err(rusqlite::Error::FromSqlConversionFailure(
-                7,
-                rusqlite::types::Type::Text,
+                8,
+                rusqlite::types::Type::Integer,
                 Box::new(std::io::Error::other(format!(
-                    "unknown card content review status {value}"
+                    "card content has {count} distinct review statuses"
                 ))),
-            ))
+            ));
         }
     };
     Ok(CardContentListItem {
         card_content,
         review_status,
-        lifecycle_updated_at: row.get(8)?,
+        lifecycle_updated_at: row.get(9)?,
     })
 }
 
@@ -1005,23 +1165,20 @@ fn card_content_from_fields(
     id: String,
     created_at: i64,
     updated_at: i64,
-    content_type: &str,
+    content_type: CardContentType,
     front_md: String,
     back_md: String,
     source: Option<String>,
-) -> Result<CardContent> {
+) -> CardContent {
     match content_type {
-        "BASIC" => Ok(CardContent::Basic {
+        CardContentType::Basic => CardContent::Basic {
             id,
             created_at,
             updated_at,
             front_md,
             back_md,
             source,
-        }),
-        value => Err(DatabaseError::CorruptReviewData(format!(
-            "unsupported active card content type {value}"
-        ))),
+        },
     }
 }
 
@@ -1046,15 +1203,15 @@ fn load_stored_card(connection: &Connection, review_card_id: &str) -> Result<Sto
                     content_id: row.get(0)?,
                     content_created_at: row.get(1)?,
                     content_updated_at: row.get(2)?,
-                    content_type: row.get(3)?,
+                    content_type: enum_column(row, 3, CardContentType::from_db)?,
                     front_md: row.get(4)?,
                     back_md: row.get(5)?,
                     source: row.get(6)?,
                     card_id: row.get(7)?,
-                    status: row.get(8)?,
+                    status: enum_column(row, 8, ReviewCardStatus::from_db)?,
                     variant_key: row.get(9)?,
                     updated_at: row.get(10)?,
-                    state: row.get(11)?,
+                    state: enum_column(row, 11, ReviewCardState::from_db)?,
                     due_at: row.get(12)?,
                     due_study_day: row.get(13)?,
                     last_review_at: row.get(14)?,
@@ -1096,11 +1253,13 @@ fn load_active_scheduler_config(connection: &Connection) -> Result<SchedulerConf
             ))
         },
     )?;
-    if tuple.1 != "FSRS"
-        || tuple.2 != 6
-        || tuple.3 != "ts-fsrs"
-        || tuple.4 != "5.4.1"
-        || tuple.5 != 1
+    let algorithm = SchedulerAlgorithm::from_db(&tuple.1);
+    let scheduler_library = SchedulerLibrary::from_db(&tuple.3);
+    if algorithm.is_none()
+        || tuple.2 != SUPPORTED_SCHEDULER_ALGORITHM_VERSION
+        || scheduler_library.is_none()
+        || tuple.4 != SUPPORTED_SCHEDULER_LIBRARY_VERSION
+        || tuple.5 != SUPPORTED_SCHEDULER_CONFIG_SCHEMA_VERSION
     {
         return Err(DatabaseError::UnsupportedSchedulerConfig(format!(
             "{} is {}/{} via {} {} with config schema {}",
@@ -1112,9 +1271,9 @@ fn load_active_scheduler_config(connection: &Connection) -> Result<SchedulerConf
     })?;
     Ok(SchedulerConfigRecord {
         id: tuple.0,
-        algorithm: tuple.1,
+        algorithm: algorithm.expect("validated scheduler algorithm"),
         algorithm_version: tuple.2,
-        scheduler_library: tuple.3,
+        scheduler_library: scheduler_library.expect("validated scheduler library"),
         library_version: tuple.4,
         config_schema_version: tuple.5,
         config,
@@ -1132,28 +1291,35 @@ fn load_review_history(
             event.utc_offset_minutes, event.grade, event.scheduler_log_json
          FROM review_event AS event
          WHERE event.review_card_id = ?1
-           AND event.event_type = 'REVIEW'
+           AND event.event_type = ?2
            AND NOT EXISTS (
                SELECT 1
                FROM review_event AS revoke
-               WHERE revoke.event_type = 'REVOKE'
+               WHERE revoke.event_type = ?3
                  AND revoke.target_event_id = event.id
            )
          ORDER BY event.card_sequence",
     )?;
-    let rows = statement.query_map([review_card_id], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, i64>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, i64>(3)?,
-            row.get::<_, i64>(4)?,
-            row.get::<_, String>(5)?,
-            row.get::<_, i16>(6)?,
-            row.get::<_, u8>(7)?,
-            row.get::<_, String>(8)?,
-        ))
-    })?;
+    let rows = statement.query_map(
+        params![
+            review_card_id,
+            ReviewEventType::Review.as_db_str(),
+            ReviewEventType::Revoke.as_db_str()
+        ],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, i16>(6)?,
+                row.get::<_, u8>(7)?,
+                row.get::<_, String>(8)?,
+            ))
+        },
+    )?;
 
     let mut history = Vec::new();
     for row in rows {
@@ -1194,7 +1360,7 @@ fn load_event(connection: &Connection, event_id: &str) -> Result<Option<StoredEv
             |row| {
                 Ok(StoredEvent {
                     event_schema_version: row.get(0)?,
-                    event_type: row.get(1)?,
+                    event_type: enum_column(row, 1, ReviewEventType::from_db)?,
                     review_card_id: row.get(2)?,
                     card_sequence: row.get(3)?,
                     reviewed_at: row.get(4)?,
@@ -1213,7 +1379,6 @@ fn load_event(connection: &Connection, event_id: &str) -> Result<Option<StoredEv
 }
 
 fn cache_from_stored(stored: &StoredCard) -> Result<ReviewCardCache> {
-    let state = parse_state(&stored.state)?;
     let scheduler_state = match (
         stored.scheduler_state_schema_version,
         stored.scheduler_state_json.as_deref(),
@@ -1236,7 +1401,7 @@ fn cache_from_stored(stored: &StoredCard) -> Result<ReviewCardCache> {
         }
     };
     Ok(ReviewCardCache {
-        state,
+        state: stored.state,
         due_at: stored.due_at,
         due_study_day: stored.due_study_day,
         last_review_at: stored.last_review_at,
@@ -1276,7 +1441,7 @@ fn update_card_cache(
          WHERE id = ?11 AND updated_at = ?12 AND deleted_at IS NULL",
         params![
             updated_at,
-            state_name(cache.state),
+            cache.state.as_db_str(),
             cache.due_at,
             cache.due_study_day,
             cache.last_review_at,
@@ -1548,7 +1713,7 @@ fn validate_cache(cache: &ReviewCardCache) -> std::result::Result<(), String> {
     if !structurally_valid {
         return Err(format!(
             "cache fields do not match its {} state",
-            state_name(cache.state)
+            cache.state.as_db_str()
         ));
     }
     Ok(())
@@ -1625,7 +1790,7 @@ fn review_event_matches(
     scheduler_log_json: &str,
 ) -> bool {
     event.event_schema_version == EVENT_SCHEMA_VERSION
-        && event.event_type == "REVIEW"
+        && event.event_type == ReviewEventType::Review
         && event.review_card_id == input.review_card_id
         && event.reviewed_at == Some(input.review.reviewed_at)
         && event.study_day == Some(input.review.study_day)
@@ -1639,7 +1804,7 @@ fn review_event_matches(
 
 fn revoke_event_matches(event: &StoredEvent, input: &UndoLastGradeInput) -> bool {
     event.event_schema_version == EVENT_SCHEMA_VERSION
-        && event.event_type == "REVOKE"
+        && event.event_type == ReviewEventType::Revoke
         && event.review_card_id == input.review_card_id
         && event.scheduler_config_id == input.expected_scheduler_config_id
         && event.target_event_id.as_deref() == Some(input.target_event_id.as_str())
@@ -1651,35 +1816,19 @@ fn revoke_event_matches(event: &StoredEvent, input: &UndoLastGradeInput) -> bool
         && event.scheduler_log_json.is_none()
 }
 
-fn parse_status(value: &str) -> Result<ReviewCardStatus> {
-    match value {
-        "ACTIVE" => Ok(ReviewCardStatus::Active),
-        "SUSPENDED" => Ok(ReviewCardStatus::Suspended),
-        other => Err(DatabaseError::CorruptReviewData(format!(
-            "unknown review card status {other}"
-        ))),
-    }
-}
-
-fn parse_state(value: &str) -> Result<ReviewCardState> {
-    match value {
-        "NEW" => Ok(ReviewCardState::New),
-        "LEARNING" => Ok(ReviewCardState::Learning),
-        "REVIEW" => Ok(ReviewCardState::Review),
-        "RELEARNING" => Ok(ReviewCardState::Relearning),
-        other => Err(DatabaseError::CorruptReviewData(format!(
-            "unknown review card state {other}"
-        ))),
-    }
-}
-
-fn state_name(state: ReviewCardState) -> &'static str {
-    match state {
-        ReviewCardState::New => "NEW",
-        ReviewCardState::Learning => "LEARNING",
-        ReviewCardState::Review => "REVIEW",
-        ReviewCardState::Relearning => "RELEARNING",
-    }
+fn enum_column<T>(
+    row: &Row<'_>,
+    index: usize,
+    parse: fn(&str) -> Result<T>,
+) -> rusqlite::Result<T> {
+    let value = row.get::<_, String>(index)?;
+    parse(&value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Text,
+            Box::new(std::io::Error::other(error.to_string())),
+        )
+    })
 }
 
 fn validate_uuid_v7(value: &str, name: &str) -> Result<()> {

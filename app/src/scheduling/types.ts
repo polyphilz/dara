@@ -1,6 +1,28 @@
 export type ReviewGrade = 1 | 2 | 3 | 4
 
-export type ReviewCardState = 'NEW' | 'LEARNING' | 'REVIEW' | 'RELEARNING'
+export const ReviewCardState = {
+  New: 'NEW',
+  Learning: 'LEARNING',
+  Review: 'REVIEW',
+  Relearning: 'RELEARNING',
+} as const
+
+export type ReviewCardState =
+  (typeof ReviewCardState)[keyof typeof ReviewCardState]
+
+export const SchedulerAlgorithm = {
+  Fsrs: 'FSRS',
+} as const
+
+export type SchedulerAlgorithm =
+  (typeof SchedulerAlgorithm)[keyof typeof SchedulerAlgorithm]
+
+export const SchedulerLibrary = {
+  TsFsrs: 'ts-fsrs',
+} as const
+
+export type SchedulerLibrary =
+  (typeof SchedulerLibrary)[keyof typeof SchedulerLibrary]
 
 export type SchedulerStep = `${number}${'m' | 'h' | 'd'}`
 
@@ -43,9 +65,9 @@ export interface SchedulerConfigJsonV1 {
 }
 
 export interface SchedulerConfigV1 {
-  algorithm: 'FSRS'
+  algorithm: SchedulerAlgorithm
   algorithmVersion: 6
-  schedulerLibrary: 'ts-fsrs'
+  schedulerLibrary: SchedulerLibrary
   libraryVersion: '5.4.1'
   configSchemaVersion: 1
   config: SchedulerConfigJsonV1

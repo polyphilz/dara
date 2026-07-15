@@ -5,6 +5,7 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
 import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
 import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
+import { CardContentType } from '../../../src/review/contracts.ts'
 
 const mocks = vi.hoisted(() => ({
   createCardContent: vi.fn(),
@@ -24,7 +25,8 @@ vi.mock('../../../src/lib/native.ts', () => ({
   },
 }))
 
-vi.mock('../../../src/review/index.ts', () => ({
+vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/review/index.ts')>()),
   createCardContent: mocks.createCardContent,
   updateCardContent: vi.fn(),
 }))
@@ -78,7 +80,7 @@ test('persists canonical Markdown, trims source, and clears all values after suc
       backMd: 'answer\nwith a break',
       frontMd: '**question**',
       source: 'Chapter 4',
-      type: 'BASIC',
+      type: CardContentType.Basic,
     })
   })
   await waitFor(() => {
@@ -106,7 +108,7 @@ test('normalizes whitespace-only source to null and Mod-Enter saves from Source'
       backMd: 'back',
       frontMd: 'front',
       source: null,
-      type: 'BASIC',
+      type: CardContentType.Basic,
     })
   })
 })

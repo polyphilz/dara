@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { ReviewController } from '../../src/review/controller.ts'
+import {
+  ReviewController,
+  ReviewControllerPhase,
+} from '../../src/review/controller.ts'
+import {
+  CardContentType,
+  MutationDisposition,
+  ReviewCardStatus,
+  ReviewQueueLane,
+  ReviewQueueSelectionKind,
+} from '../../src/review/contracts.ts'
+import { CommandErrorCode } from '../../src/review/errors.ts'
 import type {
   RecordGradeInput,
   ReviewContext,
@@ -13,6 +24,7 @@ import type {
 } from '../../src/review/contracts.ts'
 import {
   DEFAULT_SCHEDULER_CONFIG,
+  ReviewCardState,
   createNewReviewCardCache,
 } from '../../src/scheduling/index.ts'
 import type {
@@ -117,11 +129,14 @@ test('drives queue, preview, grade, caught-up, and undo as one loop', async () =
   })
 
   await controller.start()
-  assert.equal(controller.getSnapshot().phase, 'QUESTION')
+  assert.equal(
+    controller.getSnapshot().phase,
+    ReviewControllerPhase.Question,
+  )
   controller.reveal()
   const revealed = controller.getSnapshot()
-  assert.equal(revealed.phase, 'REVEALED')
-  if (revealed.phase !== 'REVEALED') {
+  assert.equal(revealed.phase, ReviewControllerPhase.Revealed)
+  if (revealed.phase !== ReviewControllerPhase.Revealed) {
     assert.fail('expected revealed state')
   }
   assert.equal(revealed.focusedGrade, 3)
@@ -129,7 +144,7 @@ test('drives queue, preview, grade, caught-up, and undo as one loop', async () =
 
   await controller.submitGrade(1)
   const caughtUp = controller.getSnapshot()
-  assert.equal(caughtUp.phase, 'CAUGHT_UP')
+  assert.equal(caughtUp.phase, ReviewControllerPhase.CaughtUp)
   assert.equal(caughtUp.canUndo, true)
   assert.equal(gateway.recordInputs.length, 1)
   assert.deepEqual(gateway.recordInputs[0]!.nextCache, firstStep.expectedCache)
@@ -140,11 +155,11 @@ test('drives queue, preview, grade, caught-up, and undo as one loop', async () =
 
   await controller.undo()
   const undone = controller.getSnapshot()
-  assert.equal(undone.phase, 'QUESTION')
-  if (undone.phase !== 'QUESTION') {
+  assert.equal(undone.phase, ReviewControllerPhase.Question)
+  if (undone.phase !== ReviewControllerPhase.Question) {
     assert.fail('expected restored question state')
   }
-  assert.equal(undone.card.context.cache.state, 'NEW')
+  assert.equal(undone.card.context.cache.state, ReviewCardState.New)
   assert.equal(undone.notice, 'Last grade undone.')
   assert.equal(undone.canUndo, false)
   assert.equal(gateway.undoInputs[0]!.targetEventId, gateway.recordInputs[0]!.eventId)
@@ -157,7 +172,10 @@ test('retries an uncertain grade with the same event id', async () => {
     [cardSelection(initial), caughtUpSelection(1)],
     async (input, call) => {
       if (call === 1) {
-        throw { code: 'databaseUnavailable', message: 'writer unavailable' }
+        throw {
+          code: CommandErrorCode.DatabaseUnavailable,
+          message: 'writer unavailable',
+        }
       }
       return mutation(input.eventId, 1, gradedContext(input))
     },
@@ -177,14 +195,17 @@ test('retries an uncertain grade with the same event id', async () => {
   controller.reveal()
   await controller.submitGrade(1)
   const failed = controller.getSnapshot()
-  assert.equal(failed.phase, 'ERROR')
-  if (failed.phase !== 'ERROR') {
+  assert.equal(failed.phase, ReviewControllerPhase.Error)
+  if (failed.phase !== ReviewControllerPhase.Error) {
     assert.fail('expected retryable error')
   }
   assert.equal(failed.canRetry, true)
 
   await controller.retry()
-  assert.equal(controller.getSnapshot().phase, 'CAUGHT_UP')
+  assert.equal(
+    controller.getSnapshot().phase,
+    ReviewControllerPhase.CaughtUp,
+  )
   assert.equal(gateway.recordInputs.length, 2)
   assert.equal(gateway.recordInputs[0]!.eventId, eventId)
   assert.equal(gateway.recordInputs[1]!.eventId, eventId)
@@ -200,7 +221,10 @@ test('reselects stale data without silently resubmitting the grade', async () =>
   const gateway = new FakeGateway(
     [cardSelection(initial), cardSelection(refreshed)],
     async () => {
-      throw { code: 'staleReviewContext', message: 'stale context' }
+      throw {
+        code: CommandErrorCode.StaleReviewContext,
+        message: 'stale context',
+      }
     },
     async (input) => mutation(input.eventId, 2, undoneContext(input.eventId)),
   )
@@ -215,8 +239,8 @@ test('reselects stale data without silently resubmitting the grade', async () =>
   await controller.submitGrade(1)
 
   const state = controller.getSnapshot()
-  assert.equal(state.phase, 'QUESTION')
-  if (state.phase !== 'QUESTION') {
+  assert.equal(state.phase, ReviewControllerPhase.Question)
+  if (state.phase !== ReviewControllerPhase.Question) {
     assert.fail('expected refreshed question')
   }
   assert.equal(state.card.context.reviewCard.updatedAt, 2_000)
@@ -240,9 +264,15 @@ test('rechecks a caught-up queue when the clock advances after a timer or wake',
   })
 
   await controller.start()
-  assert.equal(controller.getSnapshot().phase, 'CAUGHT_UP')
+  assert.equal(
+    controller.getSnapshot().phase,
+    ReviewControllerPhase.CaughtUp,
+  )
   await controller.notifyClockChanged()
-  assert.equal(controller.getSnapshot().phase, 'QUESTION')
+  assert.equal(
+    controller.getSnapshot().phase,
+    ReviewControllerPhase.Question,
+  )
   assert.equal(gateway.selectionInputs.length, 2)
 })
 
@@ -252,14 +282,14 @@ function initialContext(): ReviewContext {
       id: '01980c8e-6c00-7000-8000-000000000101',
       createdAt: 900,
       updatedAt: 1_000,
-      type: 'BASIC',
+      type: CardContentType.Basic,
       frontMd: 'fixture front',
       backMd: 'fixture back',
       source: null,
     },
     reviewCard: {
       id: fixture.cardId,
-      status: 'ACTIVE',
+      status: ReviewCardStatus.Active,
       variantKey: 'basic',
       updatedAt: 1_000,
     },
@@ -305,8 +335,8 @@ function undoneContext(_undoEventId: string): ReviewContext {
 
 function cardSelection(context: ReviewContext): ReviewQueueSelection {
   return {
-    kind: 'CARD',
-    lane: 'NEW',
+    kind: ReviewQueueSelectionKind.Card,
+    lane: ReviewQueueLane.New,
     nextNormalLaneCursor: 1,
     context,
   }
@@ -317,7 +347,7 @@ function caughtUpSelection(
   nextDueAt: number | null = null,
 ): ReviewQueueSelection {
   return {
-    kind: 'CAUGHT_UP',
+    kind: ReviewQueueSelectionKind.CaughtUp,
     nextDueAt,
     nextNormalLaneCursor: cursor,
   }
@@ -329,7 +359,7 @@ function mutation(
   context: ReviewContext,
 ): ReviewMutationResult {
   return {
-    disposition: 'APPLIED',
+    disposition: MutationDisposition.Applied,
     eventId,
     cardSequence,
     context,

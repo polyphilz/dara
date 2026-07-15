@@ -2,7 +2,12 @@ import {
   captureStudyMoment,
   previewReview,
   replayReviews,
+  ReviewCardState,
 } from '../scheduling/index.ts'
+import {
+  ReviewQueueLane,
+  ReviewQueueSelectionKind,
+} from './contracts.ts'
 import type {
   GradePreview,
   ReviewGrade,
@@ -13,26 +18,46 @@ import type {
   ReviewCardView,
   ReviewContext,
   ReviewGateway,
-  ReviewQueueLane,
   UndoLastGradeInput,
 } from './contracts.ts'
-import { commandErrorCode, errorMessage } from './errors.ts'
+import {
+  CommandErrorCode,
+  commandErrorCode,
+  errorMessage,
+} from './errors.ts'
 import { createUuidV7 } from './uuid-v7.ts'
 
 interface StateBase {
   canUndo: boolean
 }
 
+export const ReviewControllerPhase = {
+  Idle: 'IDLE',
+  Loading: 'LOADING',
+  Question: 'QUESTION',
+  Revealed: 'REVEALED',
+  Submitting: 'SUBMITTING',
+  Undoing: 'UNDOING',
+  CaughtUp: 'CAUGHT_UP',
+  Error: 'ERROR',
+} as const
+
+export type ReviewControllerPhase =
+  (typeof ReviewControllerPhase)[keyof typeof ReviewControllerPhase]
+
 export type ReviewControllerState =
-  | (StateBase & { phase: 'IDLE' })
-  | (StateBase & { phase: 'LOADING'; notice: string | null })
+  | (StateBase & { phase: typeof ReviewControllerPhase.Idle })
   | (StateBase & {
-      phase: 'QUESTION'
+      phase: typeof ReviewControllerPhase.Loading
+      notice: string | null
+    })
+  | (StateBase & {
+      phase: typeof ReviewControllerPhase.Question
       card: ReviewCardView
       notice: string | null
     })
   | (StateBase & {
-      phase: 'REVEALED'
+      phase: typeof ReviewControllerPhase.Revealed
       card: ReviewCardView
       previews: GradePreview
       previewedAt: number
@@ -40,20 +65,20 @@ export type ReviewControllerState =
       notice: string | null
     })
   | (StateBase & {
-      phase: 'SUBMITTING'
+      phase: typeof ReviewControllerPhase.Submitting
       card: ReviewCardView
       previews: GradePreview
       previewedAt: number
       focusedGrade: ReviewGrade
     })
-  | (StateBase & { phase: 'UNDOING' })
+  | (StateBase & { phase: typeof ReviewControllerPhase.Undoing })
   | (StateBase & {
-      phase: 'CAUGHT_UP'
+      phase: typeof ReviewControllerPhase.CaughtUp
       nextDueAt: number | null
       notice: string | null
     })
   | (StateBase & {
-      phase: 'ERROR'
+      phase: typeof ReviewControllerPhase.Error
       message: string
       canRetry: boolean
     })
@@ -75,7 +100,10 @@ export interface ReviewControllerOptions {
 
 export class ReviewController {
   private readonly gateway: ReviewGateway
-  private state: ReviewControllerState = { phase: 'IDLE', canUndo: false }
+  private state: ReviewControllerState = {
+    phase: ReviewControllerPhase.Idle,
+    canUndo: false,
+  }
   private readonly listeners = new Set<Listener>()
   private readonly captureMoment: () => StudyMoment
   private readonly createEventId: () => string
@@ -102,7 +130,7 @@ export class ReviewController {
   }
 
   async start(): Promise<void> {
-    if (this.state.phase !== 'IDLE') {
+    if (this.state.phase !== ReviewControllerPhase.Idle) {
       return
     }
     await this.loadNext(this.normalLaneCursor, null)
@@ -113,19 +141,19 @@ export class ReviewController {
   }
 
   notifyCardCreated(): void {
-    if (this.state.phase === 'CAUGHT_UP') {
+    if (this.state.phase === ReviewControllerPhase.CaughtUp) {
       void this.loadNext(this.normalLaneCursor, null)
     }
   }
 
   async notifyClockChanged(): Promise<void> {
-    if (this.state.phase === 'CAUGHT_UP') {
+    if (this.state.phase === ReviewControllerPhase.CaughtUp) {
       await this.loadNext(this.normalLaneCursor, null)
     }
   }
 
   reveal(): void {
-    if (this.state.phase !== 'QUESTION') {
+    if (this.state.phase !== ReviewControllerPhase.Question) {
       return
     }
     const { card, notice } = this.state
@@ -133,7 +161,7 @@ export class ReviewController {
       const moment = this.captureMoment()
       const previews = calculatePreviews(card.context, moment)
       this.publish({
-        phase: 'REVEALED',
+        phase: ReviewControllerPhase.Revealed,
         card,
         previews,
         previewedAt: moment.reviewedAt,
@@ -144,7 +172,7 @@ export class ReviewController {
     } catch (error) {
       this.fail(error, async () => {
         this.publish({
-          phase: 'QUESTION',
+          phase: ReviewControllerPhase.Question,
           card,
           notice,
           canUndo: this.lastGrade !== null,
@@ -155,7 +183,7 @@ export class ReviewController {
   }
 
   moveGradeFocus(direction: -1 | 1): void {
-    if (this.state.phase !== 'REVEALED') {
+    if (this.state.phase !== ReviewControllerPhase.Revealed) {
       return
     }
     const focusedGrade = Math.min(
@@ -168,14 +196,14 @@ export class ReviewController {
   }
 
   async submitFocusedGrade(): Promise<void> {
-    if (this.state.phase !== 'REVEALED') {
+    if (this.state.phase !== ReviewControllerPhase.Revealed) {
       return
     }
     await this.submitGrade(this.state.focusedGrade)
   }
 
   async submitGrade(grade: ReviewGrade): Promise<void> {
-    if (this.state.phase !== 'REVEALED') {
+    if (this.state.phase !== ReviewControllerPhase.Revealed) {
       return
     }
     const revealed = this.state
@@ -202,7 +230,7 @@ export class ReviewController {
   async undo(): Promise<void> {
     if (
       this.lastGrade === null ||
-      !['QUESTION', 'REVEALED', 'CAUGHT_UP'].includes(this.state.phase)
+      !undoablePhases.has(this.state.phase)
     ) {
       return
     }
@@ -236,7 +264,7 @@ export class ReviewController {
 
   async retry(): Promise<void> {
     const retry = this.retryOperation
-    if (this.state.phase !== 'ERROR' || retry === null) {
+    if (this.state.phase !== ReviewControllerPhase.Error || retry === null) {
       return
     }
     this.retryOperation = null
@@ -252,7 +280,7 @@ export class ReviewController {
   ): Promise<void> {
     const operationId = ++this.operationId
     this.publish({
-      phase: 'SUBMITTING',
+      phase: ReviewControllerPhase.Submitting,
       card,
       previews,
       previewedAt,
@@ -276,7 +304,7 @@ export class ReviewController {
       if (operationId !== this.operationId) {
         return
       }
-      if (commandErrorCode(error) === 'staleReviewContext') {
+      if (commandErrorCode(error) === CommandErrorCode.StaleReviewContext) {
         this.normalLaneCursor = card.selectionCursor
         await this.loadNext(
           card.selectionCursor,
@@ -295,7 +323,7 @@ export class ReviewController {
     input: UndoLastGradeInput,
   ): Promise<void> {
     const operationId = ++this.operationId
-    this.publish({ phase: 'UNDOING', canUndo: true })
+    this.publish({ phase: ReviewControllerPhase.Undoing, canUndo: true })
     try {
       const result = await this.gateway.undoLastGrade(input)
       if (operationId !== this.operationId) {
@@ -304,7 +332,7 @@ export class ReviewController {
       this.lastGrade = null
       this.normalLaneCursor = undoRecord.nextNormalLaneCursor
       this.publish({
-        phase: 'QUESTION',
+        phase: ReviewControllerPhase.Question,
         card: {
           lane: laneForContext(result.context),
           context: result.context,
@@ -318,7 +346,7 @@ export class ReviewController {
       if (operationId !== this.operationId) {
         return
       }
-      if (commandErrorCode(error) === 'staleReviewContext') {
+      if (commandErrorCode(error) === CommandErrorCode.StaleReviewContext) {
         this.lastGrade = null
         await this.loadNext(
           this.normalLaneCursor,
@@ -334,7 +362,7 @@ export class ReviewController {
     const operationId = ++this.operationId
     this.retryOperation = null
     this.publish({
-      phase: 'LOADING',
+      phase: ReviewControllerPhase.Loading,
       notice,
       canUndo: this.lastGrade !== null,
     })
@@ -349,9 +377,9 @@ export class ReviewController {
         return
       }
       this.normalLaneCursor = result.nextNormalLaneCursor
-      if (result.kind === 'CAUGHT_UP') {
+      if (result.kind === ReviewQueueSelectionKind.CaughtUp) {
         this.publish({
-          phase: 'CAUGHT_UP',
+          phase: ReviewControllerPhase.CaughtUp,
           nextDueAt: result.nextDueAt,
           notice,
           canUndo: this.lastGrade !== null,
@@ -359,7 +387,7 @@ export class ReviewController {
         return
       }
       this.publish({
-        phase: 'QUESTION',
+        phase: ReviewControllerPhase.Question,
         card: {
           lane: result.lane,
           context: result.context,
@@ -380,7 +408,7 @@ export class ReviewController {
   private fail(error: unknown, retry: RetryOperation | null): void {
     this.retryOperation = retry
     this.publish({
-      phase: 'ERROR',
+      phase: ReviewControllerPhase.Error,
       message: errorMessage(error),
       canRetry: retry !== null,
       canUndo: this.lastGrade !== null,
@@ -434,12 +462,18 @@ function recordGradeInput(
 
 function laneForContext(context: ReviewContext): ReviewQueueLane {
   switch (context.cache.state) {
-    case 'NEW':
-      return 'NEW'
-    case 'LEARNING':
-    case 'RELEARNING':
-      return 'INTRADAY'
-    case 'REVIEW':
-      return 'REVIEW'
+    case ReviewCardState.New:
+      return ReviewQueueLane.New
+    case ReviewCardState.Learning:
+    case ReviewCardState.Relearning:
+      return ReviewQueueLane.Intraday
+    case ReviewCardState.Review:
+      return ReviewQueueLane.Review
   }
 }
+
+const undoablePhases = new Set<ReviewControllerPhase>([
+  ReviewControllerPhase.Question,
+  ReviewControllerPhase.Revealed,
+  ReviewControllerPhase.CaughtUp,
+])

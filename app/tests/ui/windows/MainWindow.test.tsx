@@ -3,6 +3,8 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
 import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
+import { CardContentType } from '../../../src/review/contracts.ts'
+import { ReviewControllerPhase } from '../../../src/review/controller.ts'
 
 const mocks = vi.hoisted(() => ({
   createCardContent: vi.fn(),
@@ -18,12 +20,12 @@ const caughtUpState: {
   canUndo: boolean
   nextDueAt: number | null
   notice: string | null
-  phase: 'CAUGHT_UP'
+  phase: typeof ReviewControllerPhase.CaughtUp
 } = {
   canUndo: false,
   nextDueAt: null,
   notice: null,
-  phase: 'CAUGHT_UP' as const,
+  phase: ReviewControllerPhase.CaughtUp,
 }
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -34,7 +36,8 @@ vi.mock('../../../src/lib/native.ts', () => ({
   native: { showQuickAdd: mocks.showQuickAdd },
 }))
 
-vi.mock('../../../src/review/index.ts', () => ({
+vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../../src/review/index.ts')>()),
   createCardContent: mocks.createCardContent,
   deleteCardContent: vi.fn(),
   searchCardContent: vi.fn().mockResolvedValue([]),
@@ -94,7 +97,7 @@ test('saving in the main editor creates the card and returns to review', async (
       backMd: 'back',
       frontMd: '**front**',
       source: 'source',
-      type: 'BASIC',
+      type: CardContentType.Basic,
     })
   })
   expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(1)

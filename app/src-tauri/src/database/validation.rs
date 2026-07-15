@@ -10,6 +10,8 @@ use super::{
     migrations,
 };
 
+const SUPPORTED_SQLITE_VEC_VERSION: &str = "v0.1.9";
+
 pub fn validate_migrated_pair(
     main: &mut Connection,
     media: &mut Connection,
@@ -132,10 +134,10 @@ fn validate_required_sqlite_features(connection: &Connection) -> Result<()> {
     }
 
     let vec_version: String = connection.query_row("SELECT vec_version()", [], |row| row.get(0))?;
-    if vec_version != "v0.1.9" {
+    if vec_version != SUPPORTED_SQLITE_VEC_VERSION {
         return invalid(
             DatabaseKind::Main,
-            format!("sqlite-vec version is {vec_version}, expected v0.1.9"),
+            format!("sqlite-vec version is {vec_version}, expected {SUPPORTED_SQLITE_VEC_VERSION}"),
         );
     }
     Ok(())

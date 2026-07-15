@@ -4,6 +4,7 @@ use tempfile::TempDir;
 
 use super::{
     connection::{self, DatabaseKind, FileState},
+    domain::{CardContentType, ReviewCardState, ReviewCardStatus, ReviewEventType},
     initialize,
     queue::ReviewQueueLane,
     Database, DatabaseError, DatabasePaths, InitializationOptions, ReviewQueueSelection,
@@ -122,16 +123,22 @@ fn insert_seed_card(connection: &Connection, seed: SeedCard) {
     let search_body = format!("{front}\n\u{1e}\n{back}");
     let content_hash = Sha256::digest(search_body.as_bytes());
     let (status, suspended_at) = match seed.status {
-        SeedStatus::Active => ("ACTIVE", None),
-        SeedStatus::Suspended => ("SUSPENDED", Some(seed.created_at)),
+        SeedStatus::Active => (ReviewCardStatus::Active, None),
+        SeedStatus::Suspended => (ReviewCardStatus::Suspended, Some(seed.created_at)),
     };
 
     connection
         .execute(
             "INSERT INTO card_content (
                 id, created_at, updated_at, deleted_at, type, front_md, back_md, source
-             ) VALUES (?1, ?2, ?2, NULL, 'BASIC', ?3, ?4, NULL)",
-            params![content_id, seed.created_at, front, back],
+             ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5, NULL)",
+            params![
+                content_id,
+                seed.created_at,
+                CardContentType::Basic.as_db_str(),
+                front,
+                back
+            ],
         )
         .expect("seed content");
 
@@ -146,15 +153,16 @@ fn insert_seed_card(connection: &Connection, seed: SeedCard) {
                     scheduler_config_id, scheduler_state_schema_version,
                     scheduler_state_json
                  ) VALUES (
-                    ?1, ?2, ?2, NULL, ?3, ?4, ?5, 'basic', 'NEW', NULL,
+                    ?1, ?2, ?2, NULL, ?3, ?4, ?5, 'basic', ?6, NULL,
                     NULL, NULL, 0, 0, NULL, NULL, NULL
                  )",
                     params![
                         review_card_id,
                         seed.created_at,
                         content_id,
-                        status,
-                        suspended_at
+                        status.as_db_str(),
+                        suspended_at,
+                        ReviewCardState::New.as_db_str()
                     ],
                 )
                 .expect("seed new card");
@@ -168,7 +176,7 @@ fn insert_seed_card(connection: &Connection, seed: SeedCard) {
                 &event_id,
                 status,
                 suspended_at,
-                "LEARNING",
+                ReviewCardState::Learning,
                 Some(due_at),
                 None,
                 0,
@@ -184,7 +192,7 @@ fn insert_seed_card(connection: &Connection, seed: SeedCard) {
                 &event_id,
                 status,
                 suspended_at,
-                "RELEARNING",
+                ReviewCardState::Relearning,
                 Some(due_at),
                 None,
                 1,
@@ -200,7 +208,7 @@ fn insert_seed_card(connection: &Connection, seed: SeedCard) {
                 &event_id,
                 status,
                 suspended_at,
-                "REVIEW",
+                ReviewCardState::Review,
                 None,
                 Some(due_study_day),
                 0,
@@ -230,9 +238,9 @@ fn insert_scheduled_card(
     content_id: &str,
     review_card_id: &str,
     event_id: &str,
-    status: &str,
+    status: ReviewCardStatus,
     suspended_at: Option<i64>,
-    state: &str,
+    state: ReviewCardState,
     due_at: Option<i64>,
     due_study_day: Option<i64>,
     lapses: i64,
@@ -258,9 +266,9 @@ fn insert_scheduled_card(
                 seed.created_at,
                 last_review_at,
                 content_id,
-                status,
+                status.as_db_str(),
                 suspended_at,
-                state,
+                state.as_db_str(),
                 due_at,
                 due_study_day,
                 lapses,
@@ -276,13 +284,14 @@ fn insert_scheduled_card(
                 timezone_id, utc_offset_minutes, grade, scheduler_config_id,
                 scheduler_log_json, target_event_id
              ) VALUES (
-                ?1, ?2, 1, 'REVIEW', ?3, 1, ?2, ?4, 'UTC', 0, ?5, ?6,
+                ?1, ?2, 1, ?3, ?4, 1, ?2, ?5, 'UTC', 0, ?6, ?7,
                 '{"stateBefore":"NEW","dueAtBefore":null,"dueStudyDayBefore":null,"stabilityBefore":null,"difficultyBefore":null,"scheduledDaysBefore":null,"learningStepsBefore":null}',
                 NULL
              )"#,
             params![
                 event_id,
                 last_review_at,
+                ReviewEventType::Review.as_db_str(),
                 review_card_id,
                 review_study_day,
                 grade,
@@ -317,9 +326,14 @@ fn suspend(connection: &Connection, review_card_id: &str) {
     let changed = connection
         .execute(
             "UPDATE review_card
-             SET status = 'SUSPENDED', suspended_at = ?1, updated_at = updated_at + 1
-             WHERE id = ?2 AND status = 'ACTIVE'",
-            params![NOW, review_card_id],
+             SET status = ?1, suspended_at = ?2, updated_at = updated_at + 1
+             WHERE id = ?3 AND status = ?4",
+            params![
+                ReviewCardStatus::Suspended.as_db_str(),
+                NOW,
+                review_card_id,
+                ReviewCardStatus::Active.as_db_str()
+            ],
         )
         .expect("suspend selected card");
     assert_eq!(changed, 1);
@@ -329,9 +343,13 @@ fn unsuspend(connection: &Connection, review_card_id: &str) {
     let changed = connection
         .execute(
             "UPDATE review_card
-             SET status = 'ACTIVE', suspended_at = NULL, updated_at = updated_at + 1
-             WHERE id = ?1 AND status = 'SUSPENDED'",
-            [review_card_id],
+             SET status = ?1, suspended_at = NULL, updated_at = updated_at + 1
+             WHERE id = ?2 AND status = ?3",
+            params![
+                ReviewCardStatus::Active.as_db_str(),
+                review_card_id,
+                ReviewCardStatus::Suspended.as_db_str()
+            ],
         )
         .expect("unsuspend card");
     assert_eq!(changed, 1);

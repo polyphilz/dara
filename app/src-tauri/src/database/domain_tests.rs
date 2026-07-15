@@ -6,9 +6,10 @@ use tempfile::TempDir;
 use super::{
     connection::{self, DatabaseKind, FileState},
     domain::{
-        CardContent, CardContentDraft, CardContentReviewStatus, DeleteCardContentInput,
-        MutationDisposition, ReviewCardCache, ReviewCardState, ReviewFact, SchedulerLogV1,
-        SearchCardContentInput, SetCardContentSuspendedInput, UpdateCardContentInput,
+        CardContent, CardContentDraft, CardContentReviewStatus, CardContentType,
+        DeleteCardContentInput, MutationDisposition, ReviewCardCache, ReviewCardState,
+        ReviewCardStatus, ReviewEventType, ReviewFact, SchedulerLogV1, SearchCardContentInput,
+        SetCardContentSuspendedInput, UpdateCardContentInput,
     },
     initialize, Database, DatabaseError, DatabasePaths, InitializationOptions, RecordGradeInput,
     ReviewContext, UndoLastGradeInput,
@@ -83,8 +84,12 @@ fn seed_fixture_card(paths: &DatabasePaths, fixture: &PersistenceFixture) {
         .execute(
             "INSERT INTO card_content (
                 id, created_at, updated_at, deleted_at, type, front_md, back_md, source
-             ) VALUES (?1, ?2, ?2, NULL, 'BASIC', 'fixture front', 'fixture back', NULL)",
-            params![FIXTURE_CONTENT_ID, created_at],
+             ) VALUES (?1, ?2, ?2, NULL, ?3, 'fixture front', 'fixture back', NULL)",
+            params![
+                FIXTURE_CONTENT_ID,
+                created_at,
+                CardContentType::Basic.as_db_str()
+            ],
         )
         .expect("fixture content");
     connection
@@ -95,10 +100,16 @@ fn seed_fixture_card(paths: &DatabasePaths, fixture: &PersistenceFixture) {
                 last_review_at, reps, lapses, scheduler_config_id,
                 scheduler_state_schema_version, scheduler_state_json
              ) VALUES (
-                ?1, ?2, ?2, NULL, ?3, 'ACTIVE', NULL, 'basic', 'NEW', NULL,
+                ?1, ?2, ?2, NULL, ?3, ?4, NULL, 'basic', ?5, NULL,
                 NULL, NULL, 0, 0, NULL, NULL, NULL
              )",
-            params![fixture.card_id, created_at, FIXTURE_CONTENT_ID],
+            params![
+                fixture.card_id,
+                created_at,
+                FIXTURE_CONTENT_ID,
+                ReviewCardStatus::Active.as_db_str(),
+                ReviewCardState::New.as_db_str()
+            ],
         )
         .expect("fixture review card");
     connection
@@ -322,7 +333,7 @@ fn suspend_unsuspend_and_tombstone_delete_preserve_scheduler_history() {
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("suspended row");
-    assert_eq!(suspended_row.0, "SUSPENDED");
+    assert_eq!(suspended_row.0, ReviewCardStatus::Suspended.as_db_str());
     assert!(suspended_row.1.is_some());
     drop(connection);
 
@@ -459,11 +470,15 @@ fn shared_fixture_round_trips_through_the_event_log_and_undo() {
     let counts: (i64, i64) = connection
         .query_row(
             "SELECT
-                count(*) FILTER (WHERE event_type = 'REVIEW'),
-                count(*) FILTER (WHERE event_type = 'REVOKE')
+                count(*) FILTER (WHERE event_type = ?1),
+                count(*) FILTER (WHERE event_type = ?2)
              FROM review_event
-             WHERE review_card_id = ?1",
-            [&fixture.card_id],
+             WHERE review_card_id = ?3",
+            params![
+                ReviewEventType::Review.as_db_str(),
+                ReviewEventType::Revoke.as_db_str(),
+                fixture.card_id
+            ],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .expect("event counts");
@@ -515,7 +530,7 @@ fn grade_is_atomic_and_an_idempotent_retry_writes_one_event() {
         )
         .expect("card state after rollback");
     assert_eq!(event_count, 0);
-    assert_eq!(state, "NEW");
+    assert_eq!(state, ReviewCardState::New.as_db_str());
     drop(read_only);
 
     let applied = database

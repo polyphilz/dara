@@ -13,11 +13,16 @@ import {
   type RichTextEditorHandle,
 } from '../../markdown/RichTextEditor.tsx'
 import {
+  CardContentType,
   createCardContent,
   updateCardContent,
   type BasicCardContent,
   type CardContentListItem,
 } from '../../review/index.ts'
+import {
+  BasicCardFormVariant,
+  type BasicCardFormVariant as BasicCardFormVariantType,
+} from './card-form.ts'
 import { errorMessage } from '../../review/errors.ts'
 
 export interface BasicCardFormHandle {
@@ -29,7 +34,7 @@ interface BasicCardFormProps {
   initialContent?: BasicCardContent
   onCancel: () => void | Promise<void>
   onSaved: (item?: CardContentListItem) => void | Promise<void>
-  variant: 'main' | 'quick'
+  variant: BasicCardFormVariantType
 }
 
 export const BasicCardForm = forwardRef<
@@ -93,7 +98,7 @@ export const BasicCardForm = forwardRef<
     setSaving(true)
     try {
       const content = {
-        type: 'BASIC' as const,
+        type: CardContentType.Basic,
         frontMd: front,
         backMd: back,
         source: source.trim() || null,
@@ -142,7 +147,7 @@ export const BasicCardForm = forwardRef<
   const editing = initialContent !== undefined
   const title = editing
     ? 'Edit card'
-    : variant === 'quick'
+    : variant === BasicCardFormVariant.Quick
       ? 'Quick add'
       : 'Add a card'
   return (
@@ -156,7 +161,11 @@ export const BasicCardForm = forwardRef<
           <p>{editing ? 'BASIC card' : 'New BASIC card'}</p>
           <h1 id={`${variant}-card-editor-title`}>{title}</h1>
         </div>
-        <span>{variant === 'quick' ? 'Esc to cancel' : 'Rich text · Markdown saved automatically'}</span>
+        <span>
+          {variant === BasicCardFormVariant.Quick
+            ? 'Esc to cancel'
+            : 'Rich text · Markdown saved automatically'}
+        </span>
       </header>
 
       <div className="card-editor-field">

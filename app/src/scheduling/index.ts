@@ -21,7 +21,6 @@ export type {
   PreviousReview,
   ReplayResult,
   ReviewCardCache,
-  ReviewCardState,
   ReviewFact,
   ReviewGrade,
   ScheduleResult,
@@ -34,3 +33,8 @@ export type {
   StudyMoment,
 } from './types.ts'
 export { SchedulingError } from './types.ts'
+export {
+  ReviewCardState,
+  SchedulerAlgorithm,
+  SchedulerLibrary,
+} from './types.ts'

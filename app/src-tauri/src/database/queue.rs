@@ -1,4 +1,4 @@
-use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -119,12 +119,17 @@ fn select_intraday(connection: &Connection, now: i64) -> Result<Option<String>> 
             "SELECT id
              FROM review_card
              WHERE deleted_at IS NULL
-               AND status = 'ACTIVE'
-               AND state IN ('LEARNING', 'RELEARNING')
+               AND status = ?2
+               AND state IN (?3, ?4)
                AND due_at <= ?1
              ORDER BY due_at, id
              LIMIT 1",
-            [now],
+            params![
+                now,
+                domain::ReviewCardStatus::Active.as_db_str(),
+                domain::ReviewCardState::Learning.as_db_str(),
+                domain::ReviewCardState::Relearning.as_db_str()
+            ],
             |row| row.get(0),
         )
         .optional()
@@ -136,10 +141,14 @@ fn select_review(connection: &Connection, study_day: i64) -> Result<Option<Strin
         "SELECT min(due_study_day)
          FROM review_card
          WHERE deleted_at IS NULL
-           AND status = 'ACTIVE'
-           AND state = 'REVIEW'
+           AND status = ?2
+           AND state = ?3
            AND due_study_day <= ?1",
-        [study_day],
+        params![
+            study_day,
+            domain::ReviewCardStatus::Active.as_db_str(),
+            domain::ReviewCardState::Review.as_db_str()
+        ],
         |row| row.get(0),
     )?;
     let Some(oldest_due_day) = oldest_due_day else {
@@ -150,11 +159,18 @@ fn select_review(connection: &Connection, study_day: i64) -> Result<Option<Strin
         "SELECT id
          FROM review_card
          WHERE deleted_at IS NULL
-           AND status = 'ACTIVE'
-           AND state = 'REVIEW'
+           AND status = ?2
+           AND state = ?3
            AND due_study_day = ?1",
     )?;
-    let candidates = statement.query_map([oldest_due_day], |row| row.get::<_, String>(0))?;
+    let candidates = statement.query_map(
+        params![
+            oldest_due_day,
+            domain::ReviewCardStatus::Active.as_db_str(),
+            domain::ReviewCardState::Review.as_db_str()
+        ],
+        |row| row.get::<_, String>(0),
+    )?;
     let mut selected: Option<([u8; 32], String)> = None;
     for review_card_id in candidates {
         let review_card_id = review_card_id?;
@@ -172,11 +188,14 @@ fn select_new(connection: &Connection) -> Result<Option<String>> {
             "SELECT id
              FROM review_card
              WHERE deleted_at IS NULL
-               AND status = 'ACTIVE'
-               AND state = 'NEW'
+               AND status = ?1
+               AND state = ?2
              ORDER BY created_at, id
              LIMIT 1",
-            [],
+            params![
+                domain::ReviewCardStatus::Active.as_db_str(),
+                domain::ReviewCardState::New.as_db_str()
+            ],
             |row| row.get(0),
         )
         .optional()
@@ -189,10 +208,15 @@ fn select_next_intraday_due(connection: &Connection, now: i64) -> Result<Option<
             "SELECT min(due_at)
              FROM review_card
              WHERE deleted_at IS NULL
-               AND status = 'ACTIVE'
-               AND state IN ('LEARNING', 'RELEARNING')
+               AND status = ?2
+               AND state IN (?3, ?4)
                AND due_at > ?1",
-            [now],
+            params![
+                now,
+                domain::ReviewCardStatus::Active.as_db_str(),
+                domain::ReviewCardState::Learning.as_db_str(),
+                domain::ReviewCardState::Relearning.as_db_str()
+            ],
             |row| row.get(0),
         )
         .map_err(Into::into)
