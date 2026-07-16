@@ -1,5 +1,5 @@
 import { ActivityCalendar, type Activity } from 'react-activity-calendar'
-import { useEffect, useMemo, useState } from 'react'
+import { memo, useEffect, useMemo, useState } from 'react'
 import { errorMessage } from '../../review/errors.ts'
 import type { HomeStats, LoadHomeStatsInput } from '../../review/index.ts'
 import { captureStudyMoment } from '../../scheduling/index.ts'
@@ -24,7 +24,7 @@ interface HomeProps {
   refreshToken?: number
 }
 
-export function Home({
+export const Home = memo(function Home({
   onAdd,
   onBrowse,
   onReview,
@@ -107,7 +107,6 @@ export function Home({
       <section aria-labelledby="review-activity-title" className="home-activity">
         <div className="home-section-heading">
           <h1 id="review-activity-title">Review activity</h1>
-          <span>Last 365 days</span>
         </div>
         {activity ? (
           <ActivityCalendar
@@ -171,7 +170,7 @@ export function Home({
       </button>
     </section>
   )
-}
+})
 
 function createHomeRequest(): LoadHomeStatsInput {
   const moment = captureStudyMoment()

@@ -1,5 +1,6 @@
 import { listen } from '@tauri-apps/api/event'
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -42,18 +43,22 @@ type MainWindowMode =
   (typeof MainWindowMode)[keyof typeof MainWindowMode]
 
 export function MainWindow() {
-  const controller = useMemo(
-    () =>
-      new ReviewController(tauriReviewGateway, {
-        onReviewDataChanged: invalidateHomeStats,
-      }),
-    [],
-  )
-  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
-  const spaceCanSubmit = useRef(true)
   const [mode, setMode] = useState<MainWindowMode>(MainWindowMode.Home)
   const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
   const [homeRefreshToken, setHomeRefreshToken] = useState(0)
+  const refreshHomeStats = useCallback(() => {
+    invalidateHomeStats()
+    setHomeRefreshToken((value) => value + 1)
+  }, [])
+  const controller = useMemo(
+    () =>
+      new ReviewController(tauriReviewGateway, {
+        onReviewDataChanged: refreshHomeStats,
+      }),
+    [refreshHomeStats],
+  )
+  const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const spaceCanSubmit = useRef(true)
 
   useEffect(() => {
     void controller.start()
@@ -111,9 +116,8 @@ export function MainWindow() {
 
     void listen('card-created', () => {
       controller.notifyCardCreated()
-      invalidateHomeStats()
+      refreshHomeStats()
       setBrowseRefreshToken((value) => value + 1)
-      setHomeRefreshToken((value) => value + 1)
     }).then(
       (unlisten) => {
         if (disposed) {
@@ -128,7 +132,7 @@ export function MainWindow() {
       disposed = true
       stopListening?.()
     }
-  }, [controller])
+  }, [controller, refreshHomeStats])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -211,21 +215,22 @@ export function MainWindow() {
     }
   }, [controller, mode, state])
 
-  const queueChanged = () => {
+  const queueChanged = useCallback(() => {
     void controller.refresh()
-    invalidateHomeStats()
-    setHomeRefreshToken((value) => value + 1)
-  }
+    refreshHomeStats()
+  }, [controller, refreshHomeStats])
 
-  const cardContentChanged = () => {
+  const cardContentChanged = useCallback(() => {
     void controller.refresh()
-  }
+  }, [controller])
 
-  const showHome = () => setMode(MainWindowMode.Home)
-  const showReview = () => {
+  const showHome = useCallback(() => setMode(MainWindowMode.Home), [])
+  const showCreate = useCallback(() => setMode(MainWindowMode.Create), [])
+  const showBrowse = useCallback(() => setMode(MainWindowMode.Browse), [])
+  const showReview = useCallback(() => {
     setMode(MainWindowMode.Review)
     void controller.refresh()
-  }
+  }, [controller])
 
   return (
     <main
@@ -244,7 +249,7 @@ export function MainWindow() {
               </button>
             )}
             {mode === MainWindowMode.Browse && (
-              <button type="button" onClick={() => setMode(MainWindowMode.Create)}>
+              <button type="button" onClick={showCreate}>
                 Add
               </button>
             )}
@@ -252,20 +257,21 @@ export function MainWindow() {
         </header>
       )}
 
-      {mode === MainWindowMode.Home ? (
+      <div hidden={mode !== MainWindowMode.Home}>
         <Home
-          onAdd={() => setMode(MainWindowMode.Create)}
-          onBrowse={() => setMode(MainWindowMode.Browse)}
+          onAdd={showCreate}
+          onBrowse={showBrowse}
           onReview={showReview}
           refreshToken={homeRefreshToken}
         />
-      ) : mode === MainWindowMode.Create ? (
+      </div>
+
+      {mode === MainWindowMode.Create ? (
         <BasicCardForm
           onCancel={showHome}
           onSaved={() => {
             controller.notifyCardCreated()
-            invalidateHomeStats()
-            setHomeRefreshToken((value) => value + 1)
+            refreshHomeStats()
             showHome()
           }}
           variant={BasicCardFormVariant.Main}
@@ -276,9 +282,9 @@ export function MainWindow() {
           onQueueChanged={queueChanged}
           refreshToken={browseRefreshToken}
         />
-      ) : (
+      ) : mode === MainWindowMode.Review ? (
         <ReviewContent controller={controller} state={state} />
-      )}
+      ) : null}
     </main>
   )
 }

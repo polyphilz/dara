@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import '@fontsource-variable/reddit-mono/wght.css'
 import 'katex/dist/katex.min.css'
 import './styles/base.css'
 import './markdown/rich-text-editor.css'

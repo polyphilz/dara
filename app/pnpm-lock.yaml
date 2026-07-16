@@ -59,6 +59,9 @@ importers:
       '@codemirror/view':
         specifier: 6.43.6
         version: 6.43.6
+      '@fontsource-variable/reddit-mono':
+        specifier: 5.2.8
+        version: 5.2.8
       '@lezer/highlight':
         specifier: 1.2.3
         version: 1.2.3
@@ -357,6 +360,9 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@fontsource-variable/reddit-mono@5.2.8':
+    resolution: {integrity: sha512-+iWznfj13b+3FD3hAAsoh9YRDsfNsz3wXooAE3+9YA3ux3B/n7z9KF7rCPapi1k0O6e+kM7LepkhVC6f3/J08Q==}
 
   '@jridgewell/sourcemap-codec@1.5.5':
     resolution: {integrity: sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og==}
@@ -1935,6 +1941,8 @@ snapshots:
       tabbable: 6.5.0
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@fontsource-variable/reddit-mono@5.2.8': {}
 
   '@jridgewell/sourcemap-codec@1.5.5': {}
 

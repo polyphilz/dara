@@ -216,7 +216,6 @@ export const BasicCardForm = forwardRef<
       </label>
 
       <footer className="card-editor-footer">
-        <span className="editor-note">Both fields are required.</span>
         <div>
           <button
             className="save-button"

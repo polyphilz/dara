@@ -79,11 +79,12 @@ afterEach(() => {
 })
 
 test('Add card opens a persistent main-window editor rather than Quick Add', () => {
-  const { getByRole, queryByRole } = render(<MainWindow />)
+  const { getByRole, queryByRole, queryByText } = render(<MainWindow />)
 
   fireEvent.click(getByRole('button', { name: 'Add' }))
 
   expect(getByRole('heading', { name: 'Add a card' })).toBeTruthy()
+  expect(queryByText('Both fields are required.')).toBeNull()
   expect(queryByRole('heading', { name: 'Caught up for now' })).toBeNull()
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
 
@@ -119,6 +120,7 @@ test('home shows review and queue stats and opens the review flow', async () => 
   const { findByText, getByRole, queryByText } = render(<MainWindow />)
 
   expect(queryByText('dara')).toBeNull()
+  expect(queryByText('Last 365 days')).toBeNull()
   expect(await findByText('7')).toBeTruthy()
   expect(getByRole('button', { name: /Review.*7.*reviewed today.*2.*New.*3.*Learning.*4.*Review/ })).toBeTruthy()
 
@@ -126,6 +128,21 @@ test('home shows review and queue stats and opens the review flow', async () => 
 
   expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
   expect(mocks.refresh).toHaveBeenCalled()
+})
+
+test('keeps the rendered home dashboard mounted while reviewing', async () => {
+  const { findByRole, getByRole } = render(<MainWindow />)
+  const activityHeading = await findByRole('heading', {
+    name: 'Review activity',
+  })
+
+  fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
+  fireEvent.click(getByRole('button', { name: 'Home' }))
+
+  expect(getByRole('heading', { name: 'Review activity' })).toBe(
+    activityHeading,
+  )
+  expect(mocks.loadHomeStats).toHaveBeenCalledTimes(1)
 })
 
 test('automatically rechecks the queue when the next learning deadline arrives', () => {

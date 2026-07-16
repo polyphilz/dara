@@ -96,11 +96,9 @@ body {
 }
 
 .home-section-heading {
-  display: flex;
-  max-width: 745px;
-  align-items: baseline;
-  justify-content: space-between;
+  width: min(745px, 100%);
   margin: 0 auto 17px;
+  padding-left: 45px;
 }
 
 .home-section-heading h1 {
@@ -108,11 +106,6 @@ body {
   font-size: 14px;
   font-weight: 650;
   letter-spacing: -0.01em;
-}
-
-.home-section-heading span {
-  color: var(--muted);
-  font-size: 11px;
 }
 
 .home-activity .react-activity-calendar {
@@ -138,7 +131,7 @@ body {
 
 .main-window .home-review-card {
   display: grid;
-  width: min(620px, 100%);
+  width: min(745px, 100%);
   margin: 54px auto 0;
   padding: 22px 24px;
   gap: 22px;
@@ -207,7 +200,7 @@ body {
 
 .home-error {
   display: flex;
-  width: min(620px, 100%);
+  width: min(745px, 100%);
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -288,7 +281,7 @@ body {
   top: 8px;
   right: 9px;
   color: var(--muted);
-  font: 11px/1 ui-monospace, "SFMono-Regular", monospace;
+  font: 11px/1 var(--font-family-app);
 }
 
 .grade-button.grade-focused {
@@ -387,7 +380,7 @@ body {
 .card-search kbd,
 .card-detail-actions kbd {
   color: var(--muted);
-  font: 10px/1 ui-monospace, "SFMono-Regular", monospace;
+  font: 10px/1 var(--font-family-app);
 }
 
 .card-result-summary {

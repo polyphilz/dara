@@ -1,12 +1,13 @@
 :root {
   color: #181716;
   background: #f5f3ef;
-  font-family:
-    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Helvetica Neue", sans-serif;
+  font-family: var(--font-family-app);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --font-family-app:
+    "Reddit Mono Variable", ui-monospace, "SFMono-Regular", Menlo, Consolas,
+    monospace;
   --ink: #181716;
   --muted: #716d66;
   --line: rgba(24, 23, 22, 0.13);
