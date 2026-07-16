@@ -7,7 +7,7 @@ use objc2_app_kit::{
 };
 use serde::Serialize;
 use tauri::{
-    menu::{Menu, MenuBuilder},
+    menu::{Menu, MenuBuilder, MenuItemBuilder, MenuItemKind, PredefinedMenuItem},
     tray::TrayIconBuilder,
     utils::config::BackgroundThrottlingPolicy,
     App, AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder,
@@ -20,6 +20,32 @@ const QUICK_ADD_LABEL: &str = "quick-add";
 const QUICK_ADD_SHORTCUT_LABEL: &str = "⌃⌥⌘D";
 const REVIEW_SHORTCUT_LABEL: &str = "⌃⌥⌘R";
 const TRAY_ID: &str = "dara-tray";
+const VIEW_MENU_TEXT: &str = "View";
+const ZOOM_COMMAND_EVENT: &str = "app-zoom-command";
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum AppZoomCommand {
+    ZoomIn,
+    ZoomOut,
+    Reset,
+}
+
+impl AppZoomCommand {
+    const fn menu_id(self) -> &'static str {
+        match self {
+            Self::ZoomIn => "zoom-in",
+            Self::ZoomOut => "zoom-out",
+            Self::Reset => "zoom-reset",
+        }
+    }
+
+    fn from_menu_id(id: &str) -> Option<Self> {
+        [Self::ZoomIn, Self::ZoomOut, Self::Reset]
+            .into_iter()
+            .find(|command| command.menu_id() == id)
+    }
+}
 
 #[derive(Clone, Copy)]
 enum TrayMenuAction {
@@ -108,7 +134,45 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
 }
 
 fn install_application_menu(app: &mut App) -> tauri::Result<()> {
-    app.set_menu(Menu::default(app.handle())?)?;
+    let menu = Menu::default(app.handle())?;
+    if let Some(view_menu) = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(submenu)
+            if submenu.text().ok().as_deref() == Some(VIEW_MENU_TEXT) =>
+        {
+            Some(submenu)
+        }
+        _ => None,
+    }) {
+        let zoom_in = MenuItemBuilder::with_id(AppZoomCommand::ZoomIn.menu_id(), "Zoom In")
+            .accelerator("CmdOrCtrl+Shift+=")
+            .build(app)?;
+        let zoom_out = MenuItemBuilder::with_id(AppZoomCommand::ZoomOut.menu_id(), "Zoom Out")
+            .accelerator("CmdOrCtrl+-")
+            .build(app)?;
+        let reset = MenuItemBuilder::with_id(AppZoomCommand::Reset.menu_id(), "Actual Size")
+            .accelerator("CmdOrCtrl+0")
+            .build(app)?;
+        let separator = PredefinedMenuItem::separator(app)?;
+        view_menu.prepend_items(&[&zoom_in, &zoom_out, &reset, &separator])?;
+    }
+
+    app.on_menu_event(|app, event| {
+        let Some(command) = AppZoomCommand::from_menu_id(event.id().as_ref()) else {
+            return;
+        };
+        let target = [QUICK_ADD_LABEL, MAIN_LABEL]
+            .into_iter()
+            .find(|label| {
+                app.get_webview_window(label)
+                    .and_then(|window| window.is_focused().ok())
+                    .unwrap_or(false)
+            })
+            .unwrap_or(MAIN_LABEL);
+        if let Err(error) = app.emit_to(target, ZOOM_COMMAND_EVENT, command) {
+            log::error!("failed to dispatch zoom command: {error}");
+        }
+    });
+    app.set_menu(menu)?;
     Ok(())
 }
 

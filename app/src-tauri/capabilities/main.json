@@ -4,5 +4,10 @@
   "description": "IPC boundary for dara's ordinary main window",
   "windows": ["main"],
   "platforms": ["macOS"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:event:allow-emit",
+    "core:webview:allow-set-webview-zoom"
+  ]
 }

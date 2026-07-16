@@ -4,5 +4,8 @@
   "description": "IPC boundary for dara's ephemeral capture panel",
   "windows": ["quick-add"],
   "platforms": ["macOS"],
-  "permissions": ["core:event:default"]
+  "permissions": [
+    "core:event:default",
+    "core:webview:allow-set-webview-zoom"
+  ]
 }

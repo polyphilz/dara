@@ -7,6 +7,11 @@ import './markdown/rich-text-editor.css'
 import './windows/shared/basic-card-form.css'
 import './windows/quick-add/quick-add-window.css'
 import { QuickAddWindow } from './windows/quick-add/QuickAddWindow.tsx'
+import { installAppZoom } from './zoom/app-zoom.ts'
+
+void installAppZoom().catch((error: unknown) => {
+  console.error('Could not initialize app zoom', error)
+})
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
