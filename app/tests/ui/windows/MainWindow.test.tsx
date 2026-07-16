@@ -101,7 +101,7 @@ test('saving in the main editor creates the card and returns home', async () => 
   fireEvent.change(getByRole('textbox', { name: /Source/ }), {
     target: { value: '  source  ' },
   })
-  fireEvent.click(getByRole('button', { name: /^Add/ }))
+  fireEvent.click(getByRole('button', { name: /Add ⌘↵/ }))
 
   await waitFor(() => {
     expect(mocks.createCardContent).toHaveBeenCalledWith({
@@ -128,6 +128,28 @@ test('home shows review and queue stats and opens the review flow', async () => 
 
   expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
   expect(mocks.refresh).toHaveBeenCalled()
+})
+
+test('uses the same Home, Add, and Browse navigation on every surface', async () => {
+  const { findByText, getByRole } = render(<MainWindow />)
+  await findByText('7')
+
+  const navigation = getByRole('navigation', { name: 'Main navigation' })
+  const navigationButtons = () =>
+    Array.from(navigation.querySelectorAll('button'), (button) =>
+      button.textContent?.trim(),
+    )
+  expect(navigationButtons()).toEqual(['Home', 'Add', 'Browse'])
+
+  fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
+  expect(getByRole('navigation', { name: 'Main navigation' })).toBe(navigation)
+
+  fireEvent.click(getByRole('button', { name: 'Browse' }))
+  expect(getByRole('navigation', { name: 'Main navigation' })).toBe(navigation)
+
+  fireEvent.click(getByRole('button', { name: 'Add' }))
+  expect(getByRole('navigation', { name: 'Main navigation' })).toBe(navigation)
+  expect(navigationButtons()).toEqual(['Home', 'Add', 'Browse'])
 })
 
 test('keeps the rendered home dashboard mounted while reviewing', async () => {

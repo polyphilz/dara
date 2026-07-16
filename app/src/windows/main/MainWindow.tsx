@@ -22,6 +22,7 @@ import { BasicCardFormVariant } from '../shared/card-form.ts'
 import { CardBrowser } from './CardBrowser.tsx'
 import { Home } from './Home.tsx'
 import { invalidateHomeStats } from './home-stats-cache.ts'
+import { MainNavigation } from './MainNavigation.tsx'
 
 const grades = [
   { grade: 1, label: 'Again' },
@@ -236,31 +237,16 @@ export function MainWindow() {
     <main
       className={`main-window${mode === MainWindowMode.Home ? ' main-window-home' : ''}${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}`}
     >
-      {(mode === MainWindowMode.Review || mode === MainWindowMode.Browse) && (
-        <header className="main-toolbar">
-          <button onClick={showHome} type="button">
-            Home
-          </button>
-          <span>{mode === MainWindowMode.Review ? 'Review' : 'Browse'}</span>
-          <div className="toolbar-actions">
-            {mode === MainWindowMode.Review && canUndo(state) && (
-              <button type="button" onClick={() => void controller.undo()}>
-                Undo
-              </button>
-            )}
-            {mode === MainWindowMode.Browse && (
-              <button type="button" onClick={showCreate}>
-                Add
-              </button>
-            )}
-          </div>
-        </header>
-      )}
+      <header className="main-header">
+        <MainNavigation
+          onAdd={showCreate}
+          onBrowse={showBrowse}
+          onHome={showHome}
+        />
+      </header>
 
       <div hidden={mode !== MainWindowMode.Home}>
         <Home
-          onAdd={showCreate}
-          onBrowse={showBrowse}
           onReview={showReview}
           refreshToken={homeRefreshToken}
         />

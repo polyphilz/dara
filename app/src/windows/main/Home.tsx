@@ -18,15 +18,11 @@ const ACTIVITY_THEME = {
 }
 
 interface HomeProps {
-  onAdd: () => void
-  onBrowse: () => void
   onReview: () => void
   refreshToken?: number
 }
 
 export const Home = memo(function Home({
-  onAdd,
-  onBrowse,
   onReview,
   refreshToken = 0,
 }: HomeProps) {
@@ -95,15 +91,6 @@ export const Home = memo(function Home({
 
   return (
     <section className="home-screen">
-      <nav aria-label="Home actions" className="home-navigation">
-        <button onClick={onAdd} type="button">
-          Add
-        </button>
-        <button onClick={onBrowse} type="button">
-          Browse
-        </button>
-      </nav>
-
       <section aria-labelledby="review-activity-title" className="home-activity">
         <div className="home-section-heading">
           <h1 id="review-activity-title">Review activity</h1>

@@ -21,30 +21,10 @@ body {
   width: min(1180px, 100%);
 }
 
-.main-toolbar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 24px;
-  padding-bottom: 18px;
-  border-bottom: 1px solid var(--line);
-}
-
 .card-detail-actions,
 .delete-confirmation > div {
   display: flex;
   align-items: center;
-}
-
-.main-toolbar > span {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.toolbar-actions {
-  display: flex;
-  justify-self: end;
-  gap: 8px;
 }
 
 .main-window button {
@@ -74,19 +54,23 @@ body {
   padding-top: 4px;
 }
 
-.home-navigation {
+.main-navigation {
   display: flex;
   justify-content: center;
   gap: 4px;
 }
 
-.main-window .home-navigation button {
+.main-header {
+  padding-top: 4px;
+}
+
+.main-window .main-navigation button {
   padding: 8px 14px;
   border-color: transparent;
   background: transparent;
 }
 
-.main-window .home-navigation button:hover:not(:disabled) {
+.main-window .main-navigation button:hover:not(:disabled) {
   border-color: var(--line);
   background: var(--surface);
 }
