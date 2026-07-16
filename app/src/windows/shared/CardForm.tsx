@@ -1,0 +1,318 @@
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from 'react'
+import { parseClozeMarkdown, projectClozeMarkdown, ClozeProjection } from '../../cloze/cloze.ts'
+import { DaraInput } from '../../components/DaraInput.tsx'
+import { DaraSelect } from '../../components/DaraSelect.tsx'
+import {
+  RichTextEditor,
+  type RichTextEditorHandle,
+} from '../../markdown/RichTextEditor.tsx'
+import {
+  CardContentType,
+  createCardContent,
+  updateCardContent,
+  type CardContent,
+  type CardContentDraft,
+  type CardContentListItem,
+} from '../../review/index.ts'
+import { errorMessage } from '../../review/errors.ts'
+import {
+  CardFormVariant,
+  type CardFormVariant as CardFormVariantType,
+} from './card-form.ts'
+
+const CARD_TYPE_OPTIONS = [
+  { label: 'Basic', value: CardContentType.Basic },
+  { label: 'Cloze', value: CardContentType.Cloze },
+] as const
+
+export interface CardFormHandle {
+  cancel: () => void
+  focusPrimary: () => void
+}
+
+interface CardFormProps {
+  initialContent?: CardContent
+  onCancel: () => void | Promise<void>
+  onSaved: (item?: CardContentListItem) => void | Promise<void>
+  variant: CardFormVariantType
+}
+
+export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
+  function CardForm({ initialContent, onCancel, onSaved, variant }, ref) {
+    const primaryRef = useRef<RichTextEditorHandle>(null)
+    const secondaryRef = useRef<RichTextEditorHandle>(null)
+    const [cardType, setCardType] = useState(
+      initialContent?.type ?? CardContentType.Basic,
+    )
+    const [front, setFront] = useState(initialContent?.frontMd ?? '')
+    const [back, setBack] = useState(initialContent?.backMd ?? '')
+    const [source, setSource] = useState(initialContent?.source ?? '')
+    const [error, setError] = useState<string | null>(null)
+    const [saving, setSaving] = useState(false)
+
+    const focusPrimary = useCallback(() => {
+      requestAnimationFrame(() => primaryRef.current?.focus())
+    }, [])
+
+    const cancel = useCallback(async () => {
+      if (saving) {
+        return
+      }
+      setError(null)
+      try {
+        await onCancel()
+      } catch (cause) {
+        setError(errorMessage(cause))
+      }
+    }, [onCancel, saving])
+
+    useImperativeHandle(
+      ref,
+      () => ({ cancel: () => void cancel(), focusPrimary }),
+      [cancel, focusPrimary],
+    )
+    useEffect(focusPrimary, [focusPrimary])
+
+    useEffect(() => {
+      setCardType(initialContent?.type ?? CardContentType.Basic)
+      setFront(initialContent?.frontMd ?? '')
+      setBack(initialContent?.backMd ?? '')
+      setSource(initialContent?.source ?? '')
+      setError(null)
+    }, [initialContent])
+
+    const save = async () => {
+      if (saving) {
+        return
+      }
+
+      let content: CardContentDraft
+      if (cardType === CardContentType.Basic) {
+        if (!front.trim()) {
+          setError('Add a question before saving.')
+          primaryRef.current?.focus()
+          return
+        }
+        if (!back.trim()) {
+          setError('Add an answer before saving.')
+          secondaryRef.current?.focus()
+          return
+        }
+        content = {
+          type: CardContentType.Basic,
+          frontMd: front,
+          backMd: back,
+          source: source.trim() || null,
+        }
+      } else {
+        try {
+          const document = parseClozeMarkdown(front)
+          content = {
+            type: CardContentType.Cloze,
+            frontMd: front,
+            backMd: back,
+            source: source.trim() || null,
+            searchMd: projectClozeMarkdown(
+              document,
+              ClozeProjection.Answer,
+            ),
+            variantKeys: [...document.variantKeys],
+          }
+        } catch (cause) {
+          setError(errorMessage(cause))
+          primaryRef.current?.focus()
+          return
+        }
+      }
+
+      setError(null)
+      setSaving(true)
+      try {
+        if (initialContent) {
+          const item = await updateCardContent({
+            id: initialContent.id,
+            expectedUpdatedAt: initialContent.updatedAt,
+            content,
+          })
+          await onSaved(item)
+        } else {
+          await createCardContent(content)
+          setFront('')
+          setBack('')
+          setSource('')
+          await onSaved()
+        }
+      } catch (cause) {
+        setError(errorMessage(cause))
+      } finally {
+        setSaving(false)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) {
+        return
+      }
+
+      if (event.key === 'Escape') {
+        if (event.nativeEvent.isComposing) {
+          return
+        }
+        event.preventDefault()
+        void cancel()
+        return
+      }
+
+      if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+        event.preventDefault()
+        void save()
+      }
+    }
+
+    const editing = initialContent !== undefined
+    const quick = variant === CardFormVariant.Quick
+    const primaryLabel = cardType === CardContentType.Basic ? 'Front' : 'Text'
+    const secondaryLabel = cardType === CardContentType.Basic ? 'Back' : 'Extra'
+    const typeLabel = cardType === CardContentType.Basic ? 'BASIC' : 'CLOZE'
+    const formLabel = editing ? 'Edit card' : quick ? 'Quick add' : 'Add a card'
+
+    return (
+      <section
+        className={`basic-card-form basic-card-form-${variant}`}
+        aria-label={formLabel}
+        onKeyDown={handleKeyDown}
+      >
+        {editing ? (
+          <header className="card-editor-header">
+            <div>
+              <p>{typeLabel} card</p>
+              <h1>Edit card</h1>
+            </div>
+            <span>
+              {quick ? 'Esc to cancel' : 'Rich text · Markdown saved automatically'}
+            </span>
+          </header>
+        ) : (
+          <div className="card-type-picker">
+            <span>Card type</span>
+            <DaraSelect
+              ariaLabel="Card type"
+              disabled={saving}
+              menuHeight={80}
+              menuWidth={128}
+              onSelect={(nextCardType) => {
+                setCardType(nextCardType)
+                setError(null)
+                focusPrimary()
+              }}
+              options={CARD_TYPE_OPTIONS}
+              triggerClassName="card-type-trigger"
+              value={cardType}
+            />
+          </div>
+        )}
+
+        <div className="card-editor-field">
+          <span>{primaryLabel}</span>
+          <RichTextEditor
+            ariaLabel={primaryLabel}
+            disabled={saving}
+            key={`primary-${cardType}`}
+            onChange={setFront}
+            placeholder={
+              cardType === CardContentType.Basic
+                ? 'Question'
+                : 'The capital of France is {{c1::Paris}}.'
+            }
+            ref={primaryRef}
+            value={front}
+          />
+          {cardType === CardContentType.Cloze && (
+            <small className="cloze-syntax-hint">
+              Use {'{{c1::answer}}'} or {'{{c1::answer::hint}}'}
+            </small>
+          )}
+        </div>
+
+        <div className="card-editor-field card-editor-secondary-field">
+          <span>
+            {secondaryLabel}{' '}
+            {cardType === CardContentType.Cloze && <small>optional</small>}
+          </span>
+          <RichTextEditor
+            ariaLabel={secondaryLabel}
+            disabled={saving}
+            key={`secondary-${cardType}`}
+            onChange={setBack}
+            placeholder={
+              cardType === CardContentType.Basic
+                ? 'Answer'
+                : 'Supplemental explanation'
+            }
+            ref={secondaryRef}
+            value={back}
+          />
+        </div>
+
+        <label className="card-editor-field card-editor-secondary-field">
+          <span>
+            Source <small>optional</small>
+          </span>
+          <DaraInput
+            disabled={saving}
+            onChange={(event) => setSource(event.target.value)}
+            onKeyDown={(event) => {
+              if (
+                event.key === 'Enter' &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.altKey
+              ) {
+                event.preventDefault()
+              }
+            }}
+            placeholder="Book, article, lecture…"
+            type="text"
+            value={source}
+          />
+        </label>
+
+        <footer className="card-editor-footer">
+          <div>
+            <button
+              className="save-button"
+              disabled={saving}
+              onClick={() => void save()}
+              type="button"
+            >
+              {saving ? (editing ? 'Saving…' : 'Adding…') : editing ? 'Save' : 'Add'}{' '}
+              <kbd>⌘↵</kbd>
+            </button>
+            <button
+              className="cancel-button"
+              disabled={saving}
+              onClick={() => void cancel()}
+              type="button"
+            >
+              Cancel
+            </button>
+          </div>
+        </footer>
+
+        {error && (
+          <p className="card-editor-error" role="alert">
+            {error}
+          </p>
+        )}
+      </section>
+    )
+  },
+)

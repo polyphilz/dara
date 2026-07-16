@@ -1,7 +1,7 @@
-export const BasicCardFormVariant = {
+export const CardFormVariant = {
   Main: 'main',
   Quick: 'quick',
 } as const
 
-export type BasicCardFormVariant =
-  (typeof BasicCardFormVariant)[keyof typeof BasicCardFormVariant]
+export type CardFormVariant =
+  (typeof CardFormVariant)[keyof typeof CardFormVariant]

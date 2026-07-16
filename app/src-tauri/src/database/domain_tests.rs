@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -134,6 +136,22 @@ fn basic_draft(front: &str, back: &str, source: Option<&str>) -> CardContentDraf
     }
 }
 
+fn cloze_draft(
+    front: &str,
+    back: &str,
+    source: Option<&str>,
+    variant_keys: &[&str],
+    search_md: &str,
+) -> CardContentDraft {
+    CardContentDraft::Cloze {
+        front_md: front.into(),
+        back_md: back.into(),
+        source: source.map(str::to_owned),
+        variant_keys: variant_keys.iter().map(|key| (*key).to_owned()).collect(),
+        search_md: search_md.into(),
+    }
+}
+
 fn grade_input(context: &ReviewContext, step: &FixtureStep) -> RecordGradeInput {
     RecordGradeInput {
         event_id: step.event_id.clone(),
@@ -162,7 +180,10 @@ fn creates_a_basic_card_and_loads_its_scheduling_context() {
 
     let CardContent::Basic {
         front_md, back_md, ..
-    } = &context.card_content;
+    } = &context.card_content
+    else {
+        panic!("expected BASIC content");
+    };
     assert_eq!(front_md, "What is the capital of France?");
     assert_eq!(back_md, "Paris");
     assert_eq!(context.review_card.variant_key, "basic");
@@ -191,6 +212,153 @@ fn creates_a_basic_card_and_loads_its_scheduling_context() {
         row.1,
         "What is the capital of France?\n\u{1e}\nParis\n\u{1e}\nGeography notes"
     );
+}
+
+#[test]
+fn cloze_edits_reconcile_variants_without_losing_retained_history() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let initial = database
+        .create_card_content(cloze_draft(
+            "The {{c1::capital}} of France is {{c2::Paris}}.",
+            "A geography prompt.",
+            Some("Geography notes"),
+            &["cloze:1", "cloze:2"],
+            "The capital of France is Paris.",
+        ))
+        .expect("cloze card");
+    assert_eq!(initial.review_card.variant_key, "cloze:1");
+    let CardContent::Cloze { front_md, .. } = &initial.card_content else {
+        panic!("expected CLOZE content");
+    };
+    assert!(front_md.contains("{{c1::capital}}"));
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let initial_variants = connection
+        .prepare(
+            "SELECT variant_key, id
+             FROM review_card
+             WHERE card_content_id = ?1 AND deleted_at IS NULL
+             ORDER BY variant_key",
+        )
+        .expect("variant query")
+        .query_map([initial.card_content.id()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("variant rows")
+        .collect::<rusqlite::Result<HashMap<_, _>>>()
+        .expect("initial variants");
+    assert_eq!(initial_variants.len(), 2);
+    assert_eq!(
+        initial_variants.get("cloze:1"),
+        Some(&initial.review_card.id)
+    );
+    drop(connection);
+
+    let graded = database
+        .record_grade(grade_input(&initial, &fixture.steps[0]))
+        .expect("grade retained variant")
+        .context;
+    let updated = database
+        .update_card_content(UpdateCardContentInput {
+            id: initial.card_content.id().into(),
+            expected_updated_at: initial.card_content.updated_at(),
+            content: cloze_draft(
+                "The {{c1::capital}} of France is Paris, in {{c3::Europe}}.",
+                "Updated explanation.",
+                Some("Geography notes"),
+                &["cloze:1", "cloze:3"],
+                "The capital of France is Paris, in Europe.",
+            ),
+        })
+        .expect("cloze edit");
+    assert!(updated.card_content.updated_at() > initial.card_content.updated_at());
+
+    let retained = database
+        .load_review_context(graded.review_card.id.clone())
+        .expect("retained c1 context");
+    assert_eq!(retained.review_card.id, graded.review_card.id);
+    assert_eq!(retained.review_card.variant_key, "cloze:1");
+    assert_eq!(retained.review_history.len(), 1);
+    assert_eq!(retained.cache, graded.cache);
+    assert_eq!(retained.card_content, updated.card_content);
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let variants = connection
+        .prepare(
+            "SELECT variant_key, id, deleted_at, state
+             FROM review_card
+             WHERE card_content_id = ?1
+             ORDER BY created_at, id",
+        )
+        .expect("reconciled variant query")
+        .query_map([initial.card_content.id()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })
+        .expect("reconciled rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("reconciled variants");
+    assert_eq!(variants.len(), 3);
+    assert!(variants.iter().any(|(key, id, deleted_at, _)| {
+        key == "cloze:1"
+            && id == initial_variants.get("cloze:1").expect("initial c1")
+            && deleted_at.is_none()
+    }));
+    assert!(variants.iter().any(|(key, id, deleted_at, _)| {
+        key == "cloze:2"
+            && id == initial_variants.get("cloze:2").expect("initial c2")
+            && deleted_at.is_some()
+    }));
+    assert!(variants.iter().any(|(key, _, deleted_at, state)| {
+        key == "cloze:3" && deleted_at.is_none() && state == ReviewCardState::New.as_db_str()
+    }));
+    let search_body: String = connection
+        .query_row(
+            "SELECT body FROM search_document WHERE card_content_id = ?1",
+            [initial.card_content.id()],
+            |row| row.get(0),
+        )
+        .expect("cloze search document");
+    assert!(search_body.contains("The capital of France is Paris, in Europe."));
+    assert!(!search_body.contains("{{c"));
+}
+
+#[test]
+fn cloze_commands_reject_invalid_variants_and_card_type_changes() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    for variant_keys in [Vec::new(), vec!["cloze:0"], vec!["cloze:1", "cloze:1"]] {
+        assert!(matches!(
+            database.create_card_content(cloze_draft(
+                "{{c1::answer}}",
+                "",
+                None,
+                &variant_keys,
+                "answer",
+            )),
+            Err(DatabaseError::InvalidInput(_))
+        ));
+    }
+
+    let basic = database
+        .create_card_content(basic_draft("front", "back", None))
+        .expect("basic card");
+    assert!(matches!(
+        database.update_card_content(UpdateCardContentInput {
+            id: basic.card_content.id().into(),
+            expected_updated_at: basic.card_content.updated_at(),
+            content: cloze_draft("{{c1::front}}", "", None, &["cloze:1"], "front"),
+        }),
+        Err(DatabaseError::InvalidInput(_))
+    ));
 }
 
 #[test]

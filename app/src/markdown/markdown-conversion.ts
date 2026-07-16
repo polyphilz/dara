@@ -45,12 +45,16 @@ const markdownSerializer = unified()
     },
   })
 
+export function parseDaraMarkdownAst(source: string): Root {
+  const parsed = markdownParser.parse(source)
+  return markdownParser.runSync(parsed) as Root
+}
+
 export function parseDaraMarkdown(
   source: string,
   schema: Schema,
 ): ProseMirrorNode {
-  const parsed = markdownParser.parse(source)
-  const tree = markdownParser.runSync(parsed) as Root
+  const tree = parseDaraMarkdownAst(source)
   const definitions = new Map(
     tree.children
       .filter((node) => node.type === 'definition')

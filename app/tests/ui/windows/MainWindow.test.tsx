@@ -3,8 +3,15 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
 import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
-import { CardContentType } from '../../../src/review/contracts.ts'
-import { ReviewControllerPhase } from '../../../src/review/controller.ts'
+import {
+  CardContentType,
+  ReviewCardStatus,
+  ReviewQueueLane,
+} from '../../../src/review/contracts.ts'
+import {
+  ReviewControllerPhase,
+  type ReviewControllerState,
+} from '../../../src/review/controller.ts'
 import { invalidateHomeStats } from '../../../src/windows/main/home-stats-cache.ts'
 
 const mocks = vi.hoisted(() => ({
@@ -14,8 +21,13 @@ const mocks = vi.hoisted(() => ({
   notifyCardCreated: vi.fn(),
   notifyClockChanged: vi.fn(),
   refresh: vi.fn(),
+  reveal: vi.fn(),
   showQuickAdd: vi.fn(),
   start: vi.fn(),
+}))
+
+const controllerStore = vi.hoisted(() => ({
+  current: null as unknown,
 }))
 
 const caughtUpState: {
@@ -47,10 +59,11 @@ vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
   setCardContentSuspended: vi.fn(),
   updateCardContent: vi.fn(),
   ReviewController: class {
-    getSnapshot = () => caughtUpState
+    getSnapshot = () => controllerStore.current
     notifyCardCreated = mocks.notifyCardCreated
     notifyClockChanged = mocks.notifyClockChanged
     refresh = mocks.refresh
+    reveal = mocks.reveal
     start = mocks.start
     subscribe = () => () => undefined
   },
@@ -63,6 +76,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   invalidateHomeStats()
   caughtUpState.nextDueAt = null
+  controllerStore.current = caughtUpState
   mocks.createCardContent.mockResolvedValue(undefined)
   mocks.loadHomeStats.mockResolvedValue({
     activity: [],
@@ -83,7 +97,9 @@ test('Add card opens a persistent main-window editor rather than Quick Add', () 
 
   fireEvent.click(getByRole('button', { name: 'Add' }))
 
-  expect(getByRole('heading', { name: 'Add a card' })).toBeTruthy()
+  expect(getByRole('region', { name: 'Add a card' })).toBeTruthy()
+  expect(getByRole('button', { name: 'Card type: Basic' })).toBeTruthy()
+  expect(queryByRole('heading', { name: 'Add a card' })).toBeNull()
   expect(queryByText('Both fields are required.')).toBeNull()
   expect(queryByRole('heading', { name: 'Caught up for now' })).toBeNull()
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
@@ -128,6 +144,48 @@ test('home shows review and queue stats and opens the review flow', async () => 
 
   expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
   expect(mocks.refresh).toHaveBeenCalled()
+})
+
+test('renders the selected CLOZE variant in the review question', async () => {
+  controllerStore.current = {
+    canUndo: false,
+    notice: null,
+    phase: ReviewControllerPhase.Question,
+    card: {
+      context: {
+        cardContent: {
+          id: '01980c8e-6c00-7000-8000-000000000201',
+          createdAt: 1_000,
+          updatedAt: 2_000,
+          type: CardContentType.Cloze,
+          frontMd:
+            'The {{c1::capital}} of France is {{c2::Paris::city}}.',
+          backMd: '',
+          source: null,
+        },
+        reviewCard: {
+          id: '01980c8e-6c00-7000-8000-000000000202',
+          status: ReviewCardStatus.Active,
+          variantKey: 'cloze:2',
+          updatedAt: 2_000,
+        },
+      },
+      lane: ReviewQueueLane.New,
+      nextNormalLaneCursor: 1,
+      selectionCursor: 0,
+    },
+  } as unknown as ReviewControllerState
+  const { findByText, getByRole, queryByText } = render(<MainWindow />)
+  await findByText('7')
+
+  fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
+
+  expect(getByRole('article').textContent).toContain(
+    'The capital of France is [city].',
+  )
+  expect(queryByText(/Paris/)).toBeNull()
+  fireEvent.click(getByRole('button', { name: 'Reveal answer' }))
+  expect(mocks.reveal).toHaveBeenCalledTimes(1)
 })
 
 test('uses the same Home, Add, and Browse navigation on every surface', async () => {

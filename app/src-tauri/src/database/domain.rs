@@ -1,4 +1,7 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{
+    collections::HashSet,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use pulldown_cmark::{
     Event as MarkdownEvent, Options as MarkdownOptions, Parser as MarkdownParser,
@@ -22,6 +25,8 @@ const SUPPORTED_SCHEDULER_LIBRARY_VERSION: &str = "5.4.1";
 const SUPPORTED_SCHEDULER_CONFIG_SCHEMA_VERSION: i64 = 1;
 // An explicit, non-token field boundary keeps the aggregate deterministic.
 const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
+const BASIC_VARIANT_KEY: &str = "basic";
+const CLOZE_VARIANT_PREFIX: &str = "cloze:";
 const CARD_CONTENT_LIST_SELECT: &str = "
     WITH lifecycle AS (
         SELECT
@@ -51,6 +56,17 @@ pub enum CardContentDraft {
         back_md: String,
         source: Option<String>,
     },
+    Cloze {
+        #[serde(rename = "frontMd")]
+        front_md: String,
+        #[serde(rename = "backMd")]
+        back_md: String,
+        source: Option<String>,
+        #[serde(rename = "variantKeys")]
+        variant_keys: Vec<String>,
+        #[serde(rename = "searchMd")]
+        search_md: String,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -76,18 +92,37 @@ pub enum CardContent {
         back_md: String,
         source: Option<String>,
     },
+    Cloze {
+        id: String,
+        #[serde(rename = "createdAt")]
+        created_at: i64,
+        #[serde(rename = "updatedAt")]
+        updated_at: i64,
+        #[serde(rename = "frontMd")]
+        front_md: String,
+        #[serde(rename = "backMd")]
+        back_md: String,
+        source: Option<String>,
+    },
 }
 
 impl CardContent {
     pub fn id(&self) -> &str {
         match self {
-            Self::Basic { id, .. } => id,
+            Self::Basic { id, .. } | Self::Cloze { id, .. } => id,
         }
     }
 
     pub fn updated_at(&self) -> i64 {
         match self {
-            Self::Basic { updated_at, .. } => *updated_at,
+            Self::Basic { updated_at, .. } | Self::Cloze { updated_at, .. } => *updated_at,
+        }
+    }
+
+    fn content_type(&self) -> CardContentType {
+        match self {
+            Self::Basic { .. } => CardContentType::Basic,
+            Self::Cloze { .. } => CardContentType::Cloze,
         }
     }
 }
@@ -103,18 +138,22 @@ pub enum CardContentReviewStatus {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum CardContentType {
     Basic,
+    Cloze,
 }
 
 impl CardContentType {
     pub(super) const fn as_db_str(self) -> &'static str {
         match self {
             Self::Basic => "BASIC",
+            Self::Cloze => "CLOZE",
         }
     }
 
     fn from_db(value: &str) -> Result<Self> {
         if value == Self::Basic.as_db_str() {
             Ok(Self::Basic)
+        } else if value == Self::Cloze.as_db_str() {
+            Ok(Self::Cloze)
         } else {
             Err(DatabaseError::CorruptReviewData(format!(
                 "unsupported active card content type {value}"
@@ -476,9 +515,8 @@ pub(super) fn create_card_content(
     validate_card_content(&input)?;
     let now = now_millis()?;
     let content_id = Uuid::now_v7().to_string();
-    let review_card_id = Uuid::now_v7().to_string();
-    let (content_type, front_md, back_md, source) = draft_fields(&input);
-    let search_body = search_body(front_md, back_md, source);
+    let fields = draft_fields(&input);
+    let search_body = search_body(fields.search_md, fields.back_md, fields.source);
     let content_hash = Sha256::digest(search_body.as_bytes());
 
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
@@ -489,30 +527,19 @@ pub(super) fn create_card_content(
         params![
             content_id,
             now,
-            content_type.as_db_str(),
-            front_md,
-            back_md,
-            source
+            fields.content_type.as_db_str(),
+            fields.front_md,
+            fields.back_md,
+            fields.source
         ],
     )?;
-    transaction.execute(
-        "INSERT INTO review_card (
-            id, created_at, updated_at, deleted_at, card_content_id, status,
-            suspended_at, variant_key, state, due_at, due_study_day,
-            last_review_at, reps, lapses, scheduler_config_id,
-            scheduler_state_schema_version, scheduler_state_json
-         ) VALUES (
-            ?1, ?2, ?2, NULL, ?3, ?4, NULL, 'basic', ?5, NULL, NULL,
-            NULL, 0, 0, NULL, NULL, NULL
-         )",
-        params![
-            review_card_id,
-            now,
-            content_id,
-            ReviewCardStatus::Active.as_db_str(),
-            ReviewCardState::New.as_db_str()
-        ],
-    )?;
+    let mut first_review_card_id = None;
+    for variant_key in fields.variant_keys {
+        let review_card_id = insert_new_review_card(&transaction, &content_id, variant_key, now)?;
+        first_review_card_id.get_or_insert(review_card_id);
+    }
+    let first_review_card_id = first_review_card_id
+        .ok_or_else(|| DatabaseError::InvalidInput("card has no review variants".into()))?;
     transaction.execute(
         "INSERT INTO search_document (card_content_id, body, content_hash, updated_at)
          VALUES (?1, ?2, ?3, ?4)",
@@ -520,7 +547,7 @@ pub(super) fn create_card_content(
     )?;
     transaction.commit()?;
 
-    load_review_context(connection, &review_card_id)
+    load_review_context(connection, &first_review_card_id)
 }
 
 pub(super) fn update_card_content(
@@ -540,20 +567,25 @@ pub(super) fn update_card_content(
             input.expected_updated_at
         )));
     }
+    let fields = draft_fields(&input.content);
+    if current.content_type() != fields.content_type {
+        return Err(DatabaseError::InvalidInput(
+            "card type cannot be changed after creation".into(),
+        ));
+    }
 
     let now = now_millis()?;
     let updated_at = next_updated_at(current.updated_at(), now)?;
-    let (content_type, front_md, back_md, source) = draft_fields(&input.content);
     let changed = transaction.execute(
         "UPDATE card_content
          SET updated_at = ?1, type = ?2, front_md = ?3, back_md = ?4, source = ?5
          WHERE id = ?6 AND updated_at = ?7 AND deleted_at IS NULL",
         params![
             updated_at,
-            content_type.as_db_str(),
-            front_md,
-            back_md,
-            source,
+            fields.content_type.as_db_str(),
+            fields.front_md,
+            fields.back_md,
+            fields.source,
             input.id,
             input.expected_updated_at,
         ],
@@ -566,11 +598,12 @@ pub(super) fn update_card_content(
     rebuild_search_document(
         &transaction,
         &input.id,
-        front_md,
-        back_md,
-        source,
+        fields.search_md,
+        fields.back_md,
+        fields.source,
         updated_at,
     )?;
+    reconcile_review_card_variants(&transaction, &input.id, fields.variant_keys, updated_at)?;
     transaction.commit()?;
     load_card_content_list_item(connection, &input.id)
 }
@@ -979,18 +1012,165 @@ fn validate_card_content(input: &CardContentDraft) -> Result<()> {
                 ));
             }
         }
+        CardContentDraft::Cloze {
+            front_md,
+            variant_keys,
+            search_md,
+            ..
+        } => {
+            if front_md.trim().is_empty() {
+                return Err(DatabaseError::InvalidInput(
+                    "frontMd must contain cloze content".into(),
+                ));
+            }
+            if markdown_plain_text(search_md).trim().is_empty() {
+                return Err(DatabaseError::InvalidInput(
+                    "searchMd must contain the revealed cloze text".into(),
+                ));
+            }
+            validate_cloze_variant_keys(variant_keys)?;
+        }
     }
     Ok(())
 }
 
-fn draft_fields(input: &CardContentDraft) -> (CardContentType, &str, &str, Option<&str>) {
+struct DraftFields<'a> {
+    content_type: CardContentType,
+    front_md: &'a str,
+    back_md: &'a str,
+    source: Option<&'a str>,
+    search_md: &'a str,
+    variant_keys: Vec<&'a str>,
+}
+
+fn draft_fields(input: &CardContentDraft) -> DraftFields<'_> {
     match input {
         CardContentDraft::Basic {
             front_md,
             back_md,
             source,
-        } => (CardContentType::Basic, front_md, back_md, source.as_deref()),
+        } => DraftFields {
+            content_type: CardContentType::Basic,
+            front_md,
+            back_md,
+            source: source.as_deref(),
+            search_md: front_md,
+            variant_keys: vec![BASIC_VARIANT_KEY],
+        },
+        CardContentDraft::Cloze {
+            front_md,
+            back_md,
+            source,
+            variant_keys,
+            search_md,
+        } => DraftFields {
+            content_type: CardContentType::Cloze,
+            front_md,
+            back_md,
+            source: source.as_deref(),
+            search_md,
+            variant_keys: variant_keys.iter().map(String::as_str).collect(),
+        },
     }
+}
+
+fn validate_cloze_variant_keys(variant_keys: &[String]) -> Result<()> {
+    if variant_keys.is_empty() {
+        return Err(DatabaseError::InvalidInput(
+            "a cloze card must have at least one variant key".into(),
+        ));
+    }
+    let mut unique = HashSet::with_capacity(variant_keys.len());
+    for variant_key in variant_keys {
+        let Some(index) = variant_key.strip_prefix(CLOZE_VARIANT_PREFIX) else {
+            return Err(DatabaseError::InvalidInput(format!(
+                "invalid cloze variant key {variant_key}"
+            )));
+        };
+        if index.is_empty()
+            || index.starts_with('0')
+            || !index.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err(DatabaseError::InvalidInput(format!(
+                "invalid cloze variant key {variant_key}"
+            )));
+        }
+        if !unique.insert(variant_key) {
+            return Err(DatabaseError::InvalidInput(format!(
+                "duplicate cloze variant key {variant_key}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn insert_new_review_card(
+    transaction: &Transaction<'_>,
+    card_content_id: &str,
+    variant_key: &str,
+    now: i64,
+) -> Result<String> {
+    let review_card_id = Uuid::now_v7().to_string();
+    transaction.execute(
+        "INSERT INTO review_card (
+            id, created_at, updated_at, deleted_at, card_content_id, status,
+            suspended_at, variant_key, state, due_at, due_study_day,
+            last_review_at, reps, lapses, scheduler_config_id,
+            scheduler_state_schema_version, scheduler_state_json
+         ) VALUES (
+            ?1, ?2, ?2, NULL, ?3, ?4, NULL, ?5, ?6, NULL, NULL,
+            NULL, 0, 0, NULL, NULL, NULL
+         )",
+        params![
+            review_card_id,
+            now,
+            card_content_id,
+            ReviewCardStatus::Active.as_db_str(),
+            variant_key,
+            ReviewCardState::New.as_db_str()
+        ],
+    )?;
+    Ok(review_card_id)
+}
+
+fn reconcile_review_card_variants(
+    transaction: &Transaction<'_>,
+    card_content_id: &str,
+    desired_variant_keys: Vec<&str>,
+    updated_at: i64,
+) -> Result<()> {
+    let mut statement = transaction.prepare(
+        "SELECT variant_key
+         FROM review_card
+         WHERE card_content_id = ?1 AND deleted_at IS NULL",
+    )?;
+    let active_variant_keys = statement
+        .query_map([card_content_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    drop(statement);
+
+    let desired = desired_variant_keys.iter().copied().collect::<HashSet<_>>();
+    for variant_key in &desired_variant_keys {
+        if !active_variant_keys.contains(*variant_key) {
+            insert_new_review_card(transaction, card_content_id, variant_key, updated_at)?;
+        }
+    }
+    for variant_key in active_variant_keys {
+        if !desired.contains(variant_key.as_str()) {
+            let changed = transaction.execute(
+                "UPDATE review_card
+                 SET updated_at = ?1, deleted_at = ?1
+                 WHERE card_content_id = ?2 AND variant_key = ?3 AND deleted_at IS NULL",
+                params![updated_at, card_content_id, variant_key],
+            )?;
+            if changed != 1 {
+                return Err(DatabaseError::StaleCardContent(
+                    "review-card variants changed before the edit was saved".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn search_body(front_md: &str, back_md: &str, source: Option<&str>) -> String {
@@ -1172,6 +1352,14 @@ fn card_content_from_fields(
 ) -> CardContent {
     match content_type {
         CardContentType::Basic => CardContent::Basic {
+            id,
+            created_at,
+            updated_at,
+            front_md,
+            back_md,
+            source,
+        },
+        CardContentType::Cloze => CardContent::Cloze {
             id,
             created_at,
             updated_at,

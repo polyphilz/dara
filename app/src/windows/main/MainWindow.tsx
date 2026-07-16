@@ -9,16 +9,20 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  CardContentType,
   ReviewController,
   ReviewControllerPhase,
   tauriReviewGateway,
+  type CardContent,
   type ReviewControllerState,
 } from '../../review/index.ts'
 import type { ReviewCardCache, ReviewGrade } from '../../scheduling/index.ts'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
-import { BasicCardForm } from '../shared/BasicCardForm.tsx'
-import { BasicCardFormVariant } from '../shared/card-form.ts'
+import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
+import { ClozeProjection } from '../../cloze/cloze.ts'
+import { CardForm } from '../shared/CardForm.tsx'
+import { CardFormVariant } from '../shared/card-form.ts'
 import { CardBrowser } from './CardBrowser.tsx'
 import { Home } from './Home.tsx'
 import { invalidateHomeStats } from './home-stats-cache.ts'
@@ -253,14 +257,14 @@ export function MainWindow() {
       </div>
 
       {mode === MainWindowMode.Create ? (
-        <BasicCardForm
+        <CardForm
           onCancel={showHome}
           onSaved={() => {
             controller.notifyCardCreated()
             refreshHomeStats()
             showHome()
           }}
-          variant={BasicCardFormVariant.Main}
+          variant={CardFormVariant.Main}
         />
       ) : mode === MainWindowMode.Browse ? (
         <CardBrowser
@@ -291,7 +295,10 @@ function ReviewContent({
         <section className="review-stage">
           {state.notice && <p className="notice">{state.notice}</p>}
           <article className="review-card">
-            <MarkdownRenderer source={state.card.context.cardContent.frontMd} />
+            <CardQuestion
+              content={state.card.context.cardContent}
+              variantKey={state.card.context.reviewCard.variantKey}
+            />
           </article>
           <button
             className="primary-action reveal-action"
@@ -313,11 +320,7 @@ function ReviewContent({
             <p className="notice">{state.notice}</p>
           )}
           <article className="review-card">
-            <MarkdownRenderer source={content.frontMd} />
-            <div className="answer">
-              <MarkdownRenderer source={content.backMd} />
-              {content.source && <CardSource value={content.source} />}
-            </div>
+            <CardAnswer content={content} />
           </article>
           <div className="grade-grid" aria-label="Grade this card">
             {grades.map(({ grade, label }) => (
@@ -369,6 +372,59 @@ function ReviewContent({
             </button>
           )}
         </StatusScreen>
+      )
+  }
+}
+
+function CardQuestion({
+  content,
+  variantKey,
+}: {
+  content: CardContent
+  variantKey: string
+}) {
+  switch (content.type) {
+    case CardContentType.Basic:
+      return <MarkdownRenderer source={content.frontMd} />
+    case CardContentType.Cloze:
+      return (
+        <ClozeMarkdownRenderer
+          projection={ClozeProjection.Question}
+          source={content.frontMd}
+          variantKey={variantKey}
+        />
+      )
+  }
+}
+
+function CardAnswer({ content }: { content: CardContent }) {
+  switch (content.type) {
+    case CardContentType.Basic:
+      return (
+        <>
+          <MarkdownRenderer source={content.frontMd} />
+          <div className="answer">
+            <MarkdownRenderer source={content.backMd} />
+            {content.source && <CardSource value={content.source} />}
+          </div>
+        </>
+      )
+    case CardContentType.Cloze:
+      return (
+        <>
+          <ClozeMarkdownRenderer
+            projection={ClozeProjection.Answer}
+            source={content.frontMd}
+          />
+          {(content.backMd.trim() || content.source) && (
+            <div className="answer">
+              {content.backMd.trim() && (
+                <MarkdownRenderer source={content.backMd} />
+              )}
+              {content.source && <CardSource value={content.source} />}
+            </div>
+          )}
+        </>
       )
   }
 }

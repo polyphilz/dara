@@ -1,0 +1,98 @@
+.dara-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  min-width: 88px;
+  min-height: 30px;
+  padding: 5px 6px 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--surface) 72%, transparent);
+  font: 650 12px/1.1 var(--font-family-app);
+  cursor: pointer;
+}
+
+.dara-select-trigger:hover:not(:disabled),
+.dara-select-trigger[aria-expanded='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dara-select-trigger:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dara-select-trigger:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.dara-select-chevron {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.dara-select-popover {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 5px;
+  overflow-y: auto;
+  border: 1px solid rgba(24, 23, 22, 0.18);
+  border-radius: 10px;
+  color: #24211e;
+  background: #fbfaf8;
+  box-shadow:
+    0 18px 42px rgba(20, 17, 14, 0.24),
+    0 3px 10px rgba(20, 17, 14, 0.12);
+  scrollbar-width: thin;
+}
+
+.dara-select-option {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 31px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+  font: 600 12px/1.2 var(--font-family-app);
+  text-align: left;
+  cursor: pointer;
+}
+
+.dara-select-option:hover,
+.dara-select-option:focus-visible,
+.dara-select-option-selected {
+  outline: none;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dara-select-check {
+  width: 13px;
+  color: var(--accent);
+  text-align: center;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dara-select-popover {
+    border-color: rgba(255, 255, 255, 0.18);
+    color: #f5f1ea;
+    background: #292624;
+    box-shadow:
+      0 18px 42px rgba(0, 0, 0, 0.46),
+      0 3px 10px rgba(0, 0, 0, 0.3);
+  }
+}

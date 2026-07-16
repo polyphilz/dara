@@ -1,5 +1,8 @@
-import { fireEvent, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
+import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
+import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
+import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
 import {
   CardContentReviewStatus,
   CardContentType,
@@ -33,6 +36,20 @@ const activeItem: CardContentListItem = {
     frontMd: 'Why is **copper** conductive?',
     backMd: 'It has mobile electrons.',
     source: 'EE notes',
+  },
+  lifecycleUpdatedAt: 3_000,
+  reviewStatus: CardContentReviewStatus.Active,
+}
+
+const clozeItem: CardContentListItem = {
+  cardContent: {
+    id: '01980c8e-6c00-7000-8000-000000000201',
+    createdAt: 1_000,
+    updatedAt: 2_000,
+    type: CardContentType.Cloze,
+    frontMd: 'The {{c1::capital}} of France is {{c2::Paris::city}}.',
+    backMd: 'A geography prompt.',
+    source: 'Geography notes',
   },
   lifecycleUpdatedAt: 3_000,
   reviewStatus: CardContentReviewStatus.Active,
@@ -114,3 +131,71 @@ test('opens the selected BASIC card for editing and tombstone deletion requires 
   })
   expect(onQueueChanged).toHaveBeenCalledTimes(1)
 })
+
+test('renders and edits CLOZE content without exposing its stored delimiters', async () => {
+  mocks.searchCardContent.mockResolvedValue([clozeItem])
+  mocks.updateCardContent.mockResolvedValue({
+    ...clozeItem,
+    cardContent: {
+      ...clozeItem.cardContent,
+      updatedAt: 2_001,
+      frontMd: 'The {{c1::capital}} of France is Paris in {{c3::Europe}}.',
+    },
+  })
+  const onCardContentChanged = vi.fn()
+  const { getAllByText, getByRole, queryByRole, queryByText } = render(
+    <CardBrowser
+      onCardContentChanged={onCardContentChanged}
+      onQueueChanged={vi.fn()}
+    />,
+  )
+
+  await waitFor(() => {
+    expect(getAllByText('The capital of France is Paris.').length).toBeGreaterThan(0)
+  })
+  expect(getByRole('button', { name: /Edit/ })).toBeTruthy()
+  expect(queryByText(/\{\{c1::/)).toBeNull()
+  expect(getByRole('article').textContent).toContain('A geography prompt.')
+
+  fireEvent.click(getByRole('button', { name: /Edit/ }))
+  expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
+  expect(queryByRole('button', { name: /Card type:/ })).toBeNull()
+  replaceEditorDocument(
+    getByRole('textbox', { name: 'Text' }),
+    'The {{c1::capital}} of France is Paris in {{c3::Europe}}.',
+  )
+  fireEvent.click(getByRole('button', { name: /Save/ }))
+
+  await waitFor(() => {
+    expect(mocks.updateCardContent).toHaveBeenCalledWith({
+      id: clozeItem.cardContent.id,
+      expectedUpdatedAt: clozeItem.cardContent.updatedAt,
+      content: {
+        backMd: 'A geography prompt.',
+        frontMd: 'The {{c1::capital}} of France is Paris in {{c3::Europe}}.',
+        searchMd: 'The capital of France is Paris in Europe.',
+        source: 'Geography notes',
+        type: CardContentType.Cloze,
+        variantKeys: ['cloze:1', 'cloze:3'],
+      },
+    })
+  })
+  expect(onCardContentChanged).toHaveBeenCalledTimes(1)
+})
+
+function replaceEditorDocument(element: HTMLElement, value: string) {
+  const view = richTextEditorViewFromDOM(element)
+  if (!view) {
+    throw new Error('EditorView not found')
+  }
+  const replacement = parseDaraMarkdown(value, daraEditorSchema)
+  act(() => {
+    view.dispatch(
+      view.state.tr.replaceWith(
+        0,
+        view.state.doc.content.size,
+        replacement.content,
+      ),
+    )
+  })
+}

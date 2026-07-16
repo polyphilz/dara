@@ -1,17 +1,14 @@
 import { emit, listen } from '@tauri-apps/api/event'
 import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { native } from '../../lib/native.ts'
-import {
-  BasicCardForm,
-  type BasicCardFormHandle,
-} from '../shared/BasicCardForm.tsx'
-import { BasicCardFormVariant } from '../shared/card-form.ts'
+import { CardForm, type CardFormHandle } from '../shared/CardForm.tsx'
+import { CardFormVariant } from '../shared/card-form.ts'
 
 export function QuickAddWindow() {
-  const formRef = useRef<BasicCardFormHandle>(null)
+  const formRef = useRef<CardFormHandle>(null)
 
   const focusFront = () => {
-    formRef.current?.focusFront()
+    formRef.current?.focusPrimary()
   }
 
   const handleEscapeCapture = (event: KeyboardEvent<HTMLElement>) => {
@@ -21,8 +18,8 @@ export function QuickAddWindow() {
     const target = event.target
     if (
       target instanceof Element &&
-      (target.closest('.formula-dialog, .code-language-popover') ||
-        target.closest(".code-language-trigger[aria-expanded='true']"))
+      (target.closest('.formula-dialog, .dara-select-popover') ||
+        target.closest(".dara-select-trigger[aria-expanded='true']"))
     ) {
       return
     }
@@ -54,7 +51,7 @@ export function QuickAddWindow() {
   return (
     <main className="quick-add-shell" onKeyDownCapture={handleEscapeCapture}>
       <div className="quick-add-card">
-        <BasicCardForm
+        <CardForm
           onCancel={() => native.dismissQuickAdd()}
           onSaved={async () => {
             await emit('card-created').catch((cause: unknown) => {
@@ -66,7 +63,7 @@ export function QuickAddWindow() {
             await native.dismissQuickAdd()
           }}
           ref={formRef}
-          variant={BasicCardFormVariant.Quick}
+          variant={CardFormVariant.Quick}
         />
       </div>
     </main>

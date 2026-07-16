@@ -34,27 +34,45 @@ export type MutationDisposition =
 
 export const CardContentType = {
   Basic: 'BASIC',
+  Cloze: 'CLOZE',
 } as const
 
 export type CardContentType =
   (typeof CardContentType)[keyof typeof CardContentType]
 
-export interface BasicCardContent {
+interface CardContentBase {
   id: string
   createdAt: number
   updatedAt: number
-  type: typeof CardContentType.Basic
   frontMd: string
   backMd: string
   source: string | null
 }
 
-export type CardContent = BasicCardContent
+export interface BasicCardContent extends CardContentBase {
+  type: typeof CardContentType.Basic
+}
 
-export type CardContentDraft = Pick<
+export interface ClozeCardContent extends CardContentBase {
+  type: typeof CardContentType.Cloze
+}
+
+export type CardContent = BasicCardContent | ClozeCardContent
+
+export type BasicCardContentDraft = Pick<
   BasicCardContent,
   'type' | 'frontMd' | 'backMd' | 'source'
 >
+
+export type ClozeCardContentDraft = Pick<
+  ClozeCardContent,
+  'type' | 'frontMd' | 'backMd' | 'source'
+> & {
+  searchMd: string
+  variantKeys: string[]
+}
+
+export type CardContentDraft = BasicCardContentDraft | ClozeCardContentDraft
 
 export const CardContentReviewStatus = {
   Active: 'ACTIVE',

@@ -43,7 +43,10 @@ beforeEach(() => {
 
 test('focuses Front and follows the logical editor and form focus order', async () => {
   const user = userEvent.setup()
-  const { getByRole } = render(<QuickAddWindow />)
+  const { getByRole, queryByRole } = render(<QuickAddWindow />)
+  expect(getByRole('region', { name: 'Quick add' })).toBeTruthy()
+  expect(getByRole('button', { name: 'Card type: Basic' })).toBeTruthy()
+  expect(queryByRole('heading', { name: 'Quick add' })).toBeNull()
   const front = getByRole('textbox', { name: 'Front' })
   const back = getByRole('textbox', { name: 'Back' })
   const source = getByRole('textbox', { name: /Source/ })
@@ -111,6 +114,70 @@ test('normalizes whitespace-only source to null and Mod-Enter saves from Source'
       type: CardContentType.Basic,
     })
   })
+})
+
+test('creates a CLOZE card with canonical variants and a revealed search projection', async () => {
+  const { getByRole } = render(<QuickAddWindow />)
+  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.mouseDown(getByRole('option', { name: 'Cloze' }))
+  const text = getByRole('textbox', { name: 'Text' })
+  const extra = getByRole('textbox', { name: 'Extra' })
+  replaceEditorDocument(
+    text,
+    'A {{c2::**second**::position}} and {{c1::first}} plus {{c2::two}}.',
+  )
+  replaceEditorDocument(extra, 'Supplemental context.')
+
+  fireEvent.click(getByRole('button', { name: /Add/ }))
+
+  await waitFor(() => {
+    expect(mocks.createCardContent).toHaveBeenCalledWith({
+      backMd: 'Supplemental context.',
+      frontMd:
+        'A {{c2::**second**::position}} and {{c1::first}} plus {{c2::two}}.',
+      searchMd: 'A **second** and first plus two.',
+      source: null,
+      type: CardContentType.Cloze,
+      variantKeys: ['cloze:1', 'cloze:2'],
+    })
+  })
+  expect(mocks.dismissQuickAdd).toHaveBeenCalledTimes(1)
+})
+
+test('blocks invalid CLOZE syntax and focuses its Text editor', () => {
+  const { getByRole } = render(<QuickAddWindow />)
+  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.mouseDown(getByRole('option', { name: 'Cloze' }))
+  const text = getByRole('textbox', { name: 'Text' })
+  replaceEditorDocument(text, '`{{c1::code is literal}}`')
+
+  fireEvent.click(getByRole('button', { name: /Add/ }))
+
+  expect(getByRole('alert').textContent).toContain(
+    'Add at least one cloze',
+  )
+  expect(document.activeElement).toBe(text)
+  expect(mocks.createCardContent).not.toHaveBeenCalled()
+})
+
+test('the card-type dropdown is app-owned and consumes Escape before dismissal', async () => {
+  const { getByRole, queryByRole } = render(<QuickAddWindow />)
+  const trigger = getByRole('button', { name: 'Card type: Basic' })
+  expect(queryByRole('combobox', { name: 'Card type' })).toBeNull()
+
+  fireEvent.mouseDown(trigger)
+  const listbox = getByRole('listbox', { name: 'Card type' })
+  expect(listbox.classList.contains('dara-select-popover')).toBe(true)
+  await waitFor(() => {
+    expect(document.activeElement).toBe(
+      getByRole('option', { name: 'Basic' }),
+    )
+  })
+
+  fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
+
+  expect(queryByRole('listbox', { name: 'Card type' })).toBeNull()
+  expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
 })
 
 test('plain Enter in Source neither submits nor changes its value', async () => {

@@ -7,6 +7,11 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { DaraInput } from '../../components/DaraInput.tsx'
+import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
+import {
+  ClozeProjection,
+  clozeAnswerMarkdown,
+} from '../../cloze/cloze.ts'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import {
@@ -18,8 +23,8 @@ import {
   type CardContentListItem,
 } from '../../review/index.ts'
 import { errorMessage } from '../../review/errors.ts'
-import { BasicCardForm } from '../shared/BasicCardForm.tsx'
-import { BasicCardFormVariant } from '../shared/card-form.ts'
+import { CardForm } from '../shared/CardForm.tsx'
+import { CardFormVariant } from '../shared/card-form.ts'
 
 const SEARCH_LIMIT = 75
 
@@ -195,9 +200,9 @@ export function CardBrowser({
     }
   }
 
-  if (editing && selected?.cardContent.type === CardContentType.Basic) {
+  if (editing && selected) {
     return (
-      <BasicCardForm
+      <CardForm
         initialContent={selected.cardContent}
         onCancel={() => setEditing(false)}
         onSaved={(item) => {
@@ -212,7 +217,7 @@ export function CardBrowser({
           onCardContentChanged()
           refresh()
         }}
-        variant={BasicCardFormVariant.Main}
+        variant={CardFormVariant.Main}
       />
     )
   }
@@ -257,7 +262,11 @@ export function CardBrowser({
                 type="button"
               >
                 <span className="card-result-title">
-                  {cardTitle(item.cardContent.frontMd)}
+                  {cardTitle(
+                    item.cardContent.type === CardContentType.Cloze
+                      ? clozeAnswerMarkdown(item.cardContent.frontMd)
+                      : item.cardContent.frontMd,
+                  )}
                 </span>
                 <span className="card-result-meta">
                   {suspended && <span className="suspended-badge">Paused</span>}
@@ -279,7 +288,9 @@ export function CardBrowser({
           <>
             <header className="card-detail-toolbar">
               <div>
-                <span className="card-type-label">BASIC</span>
+                <span className="card-type-label">
+                  {selected.cardContent.type}
+                </span>
                 {selected.reviewStatus !== CardContentReviewStatus.Active && (
                   <span className="detail-status">{statusLabel(selected.reviewStatus)}</span>
                 )}
@@ -321,13 +332,31 @@ export function CardBrowser({
 
             <article className="card-detail-content">
               <section>
-                <span>Front</span>
-                <MarkdownRenderer source={selected.cardContent.frontMd} />
+                <span>
+                  {selected.cardContent.type === CardContentType.Basic
+                    ? 'Front'
+                    : 'Text'}
+                </span>
+                {selected.cardContent.type === CardContentType.Basic ? (
+                  <MarkdownRenderer source={selected.cardContent.frontMd} />
+                ) : (
+                  <ClozeMarkdownRenderer
+                    projection={ClozeProjection.Answer}
+                    source={selected.cardContent.frontMd}
+                  />
+                )}
               </section>
-              <section>
-                <span>Back</span>
-                <MarkdownRenderer source={selected.cardContent.backMd} />
-              </section>
+              {(selected.cardContent.type === CardContentType.Basic ||
+                selected.cardContent.backMd.trim()) && (
+                <section>
+                  <span>
+                    {selected.cardContent.type === CardContentType.Basic
+                      ? 'Back'
+                      : 'Extra'}
+                  </span>
+                  <MarkdownRenderer source={selected.cardContent.backMd} />
+                </section>
+              )}
               {selected.cardContent.source && (
                 <section>
                   <span>Source</span>
