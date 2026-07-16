@@ -121,7 +121,7 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 4);
+    assert_eq!(history_rows, 5);
 }
 
 #[test]
@@ -247,7 +247,7 @@ fn jina_v1_golden_fixtures_match_the_manifest() {
 }
 
 #[test]
-fn ordinary_tables_are_strict_and_media_is_blob_only() {
+fn ordinary_tables_are_strict_and_media_stores_only_blob_lifecycle_state() {
     let (_directory, paths) = test_paths();
     drop(initialize_test(&paths));
     let main = connection::open_read_only(&paths.main, DatabaseKind::Main).expect("main");
@@ -256,6 +256,8 @@ fn ordinary_tables_are_strict_and_media_is_blob_only() {
     for table in [
         "card_content",
         "image",
+        "image_draft_lease",
+        "media_blob_reap_candidate",
         "review_card",
         "review_event",
         "scheduler_config",
@@ -284,7 +286,14 @@ fn ordinary_tables_are_strict_and_media_is_blob_only() {
         .expect("media rows")
         .collect::<rusqlite::Result<_>>()
         .expect("media table names");
-    assert_eq!(media_tables, vec!["media_blob", "refinery_schema_history"]);
+    assert_eq!(
+        media_tables,
+        vec![
+            "media_blob",
+            "media_blob_reap_authorization",
+            "refinery_schema_history"
+        ]
+    );
 }
 
 #[test]
@@ -674,7 +683,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 5, 'future', applied_on, '0'
+         SELECT 6, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -695,14 +704,14 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V5__grouped_good.sql",
+            "V6__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
         .expect("V5 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V6__grouped_failure.sql",
+            "V7__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
         .expect("V6 migration"),
@@ -714,9 +723,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V4")
+            .expect("V5")
             .version(),
-        4
+        5
     );
 }
 
@@ -760,7 +769,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(4));
+    assert_eq!(launch.manifest.main.migration_head, Some(5));
     drop(database);
 
     let base = launch.manifest.created_at;

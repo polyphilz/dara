@@ -19,8 +19,10 @@ const MAX_DECODED_IMAGE_DIMENSION: u32 = 32_768;
 const MAX_CANONICAL_IMAGE_EDGE: u32 = 1_600;
 const WEBP_QUALITY: f32 = 80.0;
 const MEDIA_SCHEME_PATH_PREFIX: &str = "/image/";
+const LEASE_ID_PREFIX_BYTES: usize = 36;
 const OCR_RECONCILIATION_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const OCR_STALE_ATTEMPT_AGE: Duration = Duration::from_secs(2 * 60);
+const MEDIA_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Clone, Copy, Debug)]
 enum OcrWorkerSignal {
@@ -34,6 +36,8 @@ pub struct OcrCoordinator {
 impl OcrCoordinator {
     pub fn start(client: DatabaseClient) -> Result<Self, DatabaseError> {
         let now = crate::database::now_millis()?;
+        let report = client.maintain_media(now, crate::database::MEDIA_ORPHAN_GRACE_MILLIS)?;
+        log_media_maintenance("launch", &report);
         let recovery = client.recover_interrupted_ocr_jobs(i64::MAX, now)?;
         log_ocr_recovery("launch", recovery);
         let (sender, receiver) = mpsc::sync_channel(1);
@@ -61,9 +65,10 @@ pub async fn ingest_clipboard_image(
     app: AppHandle,
     database: State<'_, Database>,
     ocr: State<'_, OcrCoordinator>,
+    lease_id: String,
 ) -> Result<ImageRecord, CommandError> {
     let raw = read_clipboard_image(&app).await?;
-    ingest_image(raw, &database, &ocr).await
+    ingest_image(raw, lease_id, &database, &ocr).await
 }
 
 #[tauri::command]
@@ -72,7 +77,7 @@ pub async fn ingest_image_bytes(
     database: State<'_, Database>,
     ocr: State<'_, OcrCoordinator>,
 ) -> Result<ImageRecord, CommandError> {
-    let raw = match request.body() {
+    let payload = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
         InvokeBody::Json(_) => {
             return Err(CommandError::from(DatabaseError::InvalidInput(
@@ -80,21 +85,30 @@ pub async fn ingest_image_bytes(
             )))
         }
     };
-    if raw.is_empty() {
+    if payload.len() <= LEASE_ID_PREFIX_BYTES {
         return Err(CommandError::from(DatabaseError::InvalidInput(
             "the selected image is empty".into(),
         )));
     }
+    let lease_id = std::str::from_utf8(&payload[..LEASE_ID_PREFIX_BYTES])
+        .map_err(|_| {
+            CommandError::from(DatabaseError::InvalidInput(
+                "image upload has an invalid media lease".into(),
+            ))
+        })?
+        .to_owned();
+    let raw = payload[LEASE_ID_PREFIX_BYTES..].to_vec();
     if raw.len() > MAX_SOURCE_IMAGE_BYTES {
         return Err(CommandError::from(DatabaseError::InvalidInput(
             "the selected image is larger than 64 MiB".into(),
         )));
     }
-    ingest_image(raw, &database, &ocr).await
+    ingest_image(raw, lease_id, &database, &ocr).await
 }
 
 async fn ingest_image(
     raw: Vec<u8>,
+    lease_id: String,
     database: &Database,
     ocr: &OcrCoordinator,
 ) -> Result<ImageRecord, CommandError> {
@@ -106,7 +120,7 @@ async fn ingest_image(
                 "image processing worker failed: {error}"
             )))
         })??;
-    let record = tauri::async_runtime::spawn_blocking(move || client.ingest_image(image))
+    let record = tauri::async_runtime::spawn_blocking(move || client.ingest_image(image, lease_id))
         .await
         .map_err(|error| {
             CommandError::from(DatabaseError::WriterUnavailable).with_context(error.to_string())
@@ -274,8 +288,10 @@ fn invalid_image(reason: String) -> CommandError {
 
 fn ocr_worker(client: DatabaseClient, receiver: mpsc::Receiver<OcrWorkerSignal>) {
     let mut next_reconciliation = Instant::now() + OCR_RECONCILIATION_INTERVAL;
+    let mut next_media_maintenance = Instant::now() + MEDIA_MAINTENANCE_INTERVAL;
     loop {
-        let wait = next_reconciliation.saturating_duration_since(Instant::now());
+        let next_wake = next_reconciliation.min(next_media_maintenance);
+        let wait = next_wake.saturating_duration_since(Instant::now());
         match receiver.recv_timeout(wait) {
             Ok(OcrWorkerSignal::WorkAvailable) => {}
             Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -285,7 +301,41 @@ fn ocr_worker(client: DatabaseClient, receiver: mpsc::Receiver<OcrWorkerSignal>)
             reconcile_ocr_queue(&client);
             next_reconciliation = Instant::now() + OCR_RECONCILIATION_INTERVAL;
         }
+        if Instant::now() >= next_media_maintenance {
+            reconcile_media(&client);
+            next_media_maintenance = Instant::now() + MEDIA_MAINTENANCE_INTERVAL;
+        }
         drain_ocr_queue(&client, recognize_text);
+    }
+}
+
+fn reconcile_media(client: &DatabaseClient) {
+    let result = crate::database::now_millis()
+        .and_then(|now| client.maintain_media(now, crate::database::MEDIA_ORPHAN_GRACE_MILLIS));
+    match result {
+        Ok(report) => log_media_maintenance("periodic reconciliation", &report),
+        Err(error) => log::error!("could not reconcile orphaned media: {error}"),
+    }
+}
+
+fn log_media_maintenance(context: &str, report: &crate::database::MediaMaintenanceReport) {
+    let integrity = &report.integrity;
+    let cleanup = report.cleanup;
+    if !integrity.orphaned_image_ids.is_empty()
+        || !integrity.extra_blob_sha256.is_empty()
+        || !integrity.missing_referenced_blob_image_ids.is_empty()
+        || cleanup.retired_image_count > 0
+        || cleanup.deleted_blob_count > 0
+    {
+        log::info!(
+            "media {context}: {} orphaned image row(s), {} extra blob(s), {} missing referenced blob(s); retired {}, deleted {} and reclaimed {} bytes",
+            integrity.orphaned_image_ids.len(),
+            integrity.extra_blob_sha256.len(),
+            integrity.missing_referenced_blob_image_ids.len(),
+            cleanup.retired_image_count,
+            cleanup.deleted_blob_count,
+            cleanup.reclaimed_bytes,
+        );
     }
 }
 
@@ -438,6 +488,8 @@ mod tests {
         initialize, CanonicalImage, DatabasePaths, ImageOcrStatus, InitializationOptions,
     };
 
+    const TEST_MEDIA_LEASE_ID: &str = "01980c8e-6c00-7000-8000-000000000902";
+
     #[test]
     fn canonicalization_downscales_and_emits_decodable_webp() {
         let source = RgbaImage::from_pixel(2_400, 1_200, Rgba([32, 96, 160, 255]));
@@ -478,7 +530,7 @@ mod tests {
         for image in &images {
             database
                 .client()
-                .ingest_image(image.clone())
+                .ingest_image(image.clone(), TEST_MEDIA_LEASE_ID.into())
                 .expect("image ingestion");
         }
 
@@ -503,7 +555,7 @@ mod tests {
         for image in images {
             let record = database
                 .client()
-                .ingest_image(image)
+                .ingest_image(image, TEST_MEDIA_LEASE_ID.into())
                 .expect("deduplicated image");
             assert_eq!(record.ocr_status, ImageOcrStatus::Ready);
         }

@@ -667,6 +667,7 @@ impl ReviewEventType {
 pub(super) fn create_card_content(
     connection: &mut Connection,
     input: CardContentDraft,
+    media_lease_id: &str,
 ) -> Result<ReviewContext> {
     validate_card_content(&input)?;
     let now = now_millis()?;
@@ -718,6 +719,7 @@ pub(super) fn create_card_content(
          VALUES (?1, ?2, ?3, ?4)",
         params![content_id, search_body, content_hash.as_slice(), now],
     )?;
+    media::consume_media_lease_in_transaction(&transaction, media_lease_id, now)?;
     transaction.commit()?;
 
     load_review_context(connection, &first_review_card_id)
@@ -726,6 +728,7 @@ pub(super) fn create_card_content(
 pub(super) fn update_card_content(
     connection: &mut Connection,
     input: UpdateCardContentInput,
+    media_lease_id: &str,
 ) -> Result<CardContentListItem> {
     validate_uuid_v7(&input.id, "id")?;
     validate_non_negative_safe(input.expected_updated_at, "expectedUpdatedAt")?;
@@ -789,6 +792,7 @@ pub(super) fn update_card_content(
         reconcile_occlusion_definition(&transaction, &input.id, occlusion, updated_at)?;
     }
     reconcile_review_card_variants(&transaction, &input.id, fields.variant_keys, updated_at)?;
+    media::consume_media_lease_in_transaction(&transaction, media_lease_id, now)?;
     transaction.commit()?;
     load_card_content_list_item(connection, &input.id)
 }
@@ -995,6 +999,7 @@ pub(super) fn delete_card_content(
         "DELETE FROM search_document WHERE card_content_id = ?1",
         [&input.card_content_id],
     )?;
+    media::reconcile_orphaned_images(&transaction, now)?;
     transaction.commit()?;
     Ok(())
 }

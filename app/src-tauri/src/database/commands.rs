@@ -3,9 +3,10 @@ use tauri::State;
 
 use super::{
     CardContentDraft, CardContentListItem, Database, DatabaseError, DeleteCardContentInput,
-    HomeStats, LoadHomeStatsInput, RecordGradeInput, ReviewContext, ReviewMutationResult,
-    ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
+    HomeStats, LoadHomeStatsInput, MediaMaintenanceReport, RecordGradeInput, ReviewContext,
+    ReviewMutationResult, ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
     SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
+    MEDIA_ORPHAN_GRACE_MILLIS,
 };
 
 #[derive(Debug, Serialize)]
@@ -64,18 +65,39 @@ type CommandResult<T> = std::result::Result<T, CommandError>;
 pub async fn create_card_content(
     database: State<'_, Database>,
     input: CardContentDraft,
+    media_lease_id: String,
 ) -> CommandResult<ReviewContext> {
     let client = database.client();
-    run_writer(move || client.create_card_content(input)).await
+    run_writer(move || client.create_card_content(input, media_lease_id)).await
 }
 
 #[tauri::command]
 pub async fn update_card_content(
     database: State<'_, Database>,
     input: UpdateCardContentInput,
+    media_lease_id: String,
 ) -> CommandResult<CardContentListItem> {
     let client = database.client();
-    run_writer(move || client.update_card_content(input)).await
+    run_writer(move || client.update_card_content(input, media_lease_id)).await
+}
+
+#[tauri::command]
+pub async fn renew_media_lease(
+    database: State<'_, Database>,
+    lease_id: String,
+) -> CommandResult<u64> {
+    let client = database.client();
+    let now = super::now_millis().map_err(CommandError::from)?;
+    run_writer(move || client.renew_media_lease(lease_id, now)).await
+}
+
+#[tauri::command]
+pub async fn maintain_media(
+    database: State<'_, Database>,
+) -> CommandResult<MediaMaintenanceReport> {
+    let client = database.client();
+    let now = super::now_millis().map_err(CommandError::from)?;
+    run_writer(move || client.maintain_media(now, MEDIA_ORPHAN_GRACE_MILLIS)).await
 }
 
 #[tauri::command]

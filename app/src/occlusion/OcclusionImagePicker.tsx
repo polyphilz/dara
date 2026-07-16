@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useEffect,
   useImperativeHandle,
   useRef,
   useState,
@@ -22,6 +23,7 @@ export interface OcclusionImagePickerHandle {
 
 interface OcclusionImagePickerProps {
   disabled?: boolean
+  leaseId: string
   onError: (cause: unknown) => void
   onImage: (image: ImageRecord) => void
   onPendingChange: (pending: boolean) => void
@@ -37,6 +39,7 @@ export const OcclusionImagePicker = forwardRef<
 >(function OcclusionImagePicker(
   {
     disabled = false,
+    leaseId,
     onError,
     onImage,
     onPendingChange,
@@ -46,8 +49,18 @@ export const OcclusionImagePicker = forwardRef<
 ) {
   const inputRef = useRef<HTMLInputElement>(null)
   const dropZoneRef = useRef<HTMLButtonElement>(null)
+  const activeRef = useRef(true)
+  const leaseIdRef = useRef(leaseId)
   const [pending, setPending] = useState(false)
   const [dragging, setDragging] = useState(false)
+  leaseIdRef.current = leaseId
+
+  useEffect(() => {
+    activeRef.current = true
+    return () => {
+      activeRef.current = false
+    }
+  }, [])
 
   const open = () => {
     if (!disabled && !pending) {
@@ -61,20 +74,28 @@ export const OcclusionImagePicker = forwardRef<
     if (disabled || pending) {
       return
     }
+    const requestLeaseId = leaseId
     setPending(true)
     onPendingChange(true)
     try {
-      onImage(await operation())
+      const image = await operation()
+      if (activeRef.current && leaseIdRef.current === requestLeaseId) {
+        onImage(image)
+      }
     } catch (cause) {
-      onError(cause)
+      if (activeRef.current && leaseIdRef.current === requestLeaseId) {
+        onError(cause)
+      }
     } finally {
-      setPending(false)
-      onPendingChange(false)
+      if (activeRef.current && leaseIdRef.current === requestLeaseId) {
+        setPending(false)
+        onPendingChange(false)
+      }
     }
   }
 
   const ingestClipboard = () => {
-    void process(ingestClipboardImage)
+    void process(() => ingestClipboardImage(leaseId))
   }
   useImperativeHandle(
     ref,
@@ -89,7 +110,7 @@ export const OcclusionImagePicker = forwardRef<
       onError(new Error(unsupportedImageMessage))
       return
     }
-    void process(() => ingestImageFile(file))
+    void process(() => ingestImageFile(file, leaseId))
   }
 
   const handlePaste = (event: ClipboardEvent<HTMLElement>) => {

@@ -33,7 +33,8 @@ pub use domain::{
 pub use error::{DatabaseError, Result};
 pub(crate) use media::now_millis;
 pub use media::{
-    CanonicalImage, ImageOcrStatus, ImageRecord, MediaPayload, OcrJob, OcrQueueRecovery,
+    CanonicalImage, ImageOcrStatus, ImageRecord, MediaMaintenanceReport, MediaPayload, OcrJob,
+    OcrQueueRecovery, MEDIA_ORPHAN_GRACE_MILLIS,
 };
 pub use paths::DatabasePaths;
 pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
@@ -42,6 +43,9 @@ pub use writer::DatabaseClient;
 use writer::WriterMessage;
 
 use connection::{DatabaseKind, FileState};
+
+#[cfg(test)]
+const TEST_MEDIA_LEASE_ID: &str = "01980c8e-6c00-7000-8000-000000000901";
 
 #[derive(Clone, Copy, Debug)]
 pub struct InitializationOptions {
@@ -74,12 +78,14 @@ impl Database {
 
     #[cfg(test)]
     fn create_card_content(&self, input: CardContentDraft) -> Result<ReviewContext> {
-        self.client.create_card_content(input)
+        self.client
+            .create_card_content(input, TEST_MEDIA_LEASE_ID.into())
     }
 
     #[cfg(test)]
     fn update_card_content(&self, input: UpdateCardContentInput) -> Result<CardContentListItem> {
-        self.client.update_card_content(input)
+        self.client
+            .update_card_content(input, TEST_MEDIA_LEASE_ID.into())
     }
 
     #[cfg(test)]
@@ -133,7 +139,7 @@ impl Database {
 
     #[cfg(test)]
     fn ingest_image(&self, image: CanonicalImage) -> Result<ImageRecord> {
-        self.client.ingest_image(image)
+        self.client.ingest_image(image, TEST_MEDIA_LEASE_ID.into())
     }
 
     #[cfg(test)]
@@ -160,6 +166,11 @@ impl Database {
     ) -> Result<OcrQueueRecovery> {
         self.client
             .recover_interrupted_ocr_jobs(stale_started_at_or_before, now)
+    }
+
+    #[cfg(test)]
+    fn maintain_media(&self, now: i64, grace_millis: i64) -> Result<MediaMaintenanceReport> {
+        self.client.maintain_media(now, grace_millis)
     }
 
     #[cfg(test)]
@@ -245,11 +256,12 @@ pub fn initialize(
     let snapshot_thread = if options.launch_snapshot {
         let snapshot_paths = paths.clone();
         let version = application_version.to_owned();
+        let snapshot_client = client.clone();
         Some(
             thread::Builder::new()
                 .name("dara-launch-snapshot".into())
                 .spawn(move || {
-                    let snapshot = snapshot::create_snapshot_pair(&snapshot_paths, &version)?;
+                    let snapshot = snapshot_client.create_snapshot_pair(version)?;
                     log::info!(
                         "created launch snapshot {} at {}",
                         snapshot.manifest_path.display(),
@@ -274,16 +286,32 @@ pub fn initialize(
 fn writer_loop(
     mut main: Connection,
     mut media: Connection,
-    _paths: DatabasePaths,
+    paths: DatabasePaths,
     receiver: Receiver<WriterMessage>,
 ) {
     for message in receiver {
         match message {
-            WriterMessage::CreateCardContent { input, reply } => {
-                let _ = reply.send(domain::create_card_content(&mut main, input));
+            WriterMessage::CreateCardContent {
+                input,
+                media_lease_id,
+                reply,
+            } => {
+                let _ = reply.send(domain::create_card_content(
+                    &mut main,
+                    input,
+                    &media_lease_id,
+                ));
             }
-            WriterMessage::UpdateCardContent { input, reply } => {
-                let _ = reply.send(domain::update_card_content(&mut main, input));
+            WriterMessage::UpdateCardContent {
+                input,
+                media_lease_id,
+                reply,
+            } => {
+                let _ = reply.send(domain::update_card_content(
+                    &mut main,
+                    input,
+                    &media_lease_id,
+                ));
             }
             WriterMessage::SearchCardContent { input, reply } => {
                 let _ = reply.send(domain::search_card_content(&mut main, input));
@@ -312,8 +340,31 @@ fn writer_loop(
             WriterMessage::LoadHomeStats { input, reply } => {
                 let _ = reply.send(stats::load_home_stats(&main, input));
             }
-            WriterMessage::IngestImage { image, reply } => {
-                let _ = reply.send(media::ingest_image(&mut main, &mut media, image));
+            WriterMessage::IngestImage {
+                image,
+                lease_id,
+                reply,
+            } => {
+                let _ = reply.send(media::ingest_image(&mut main, &mut media, image, &lease_id));
+            }
+            WriterMessage::RenewMediaLease {
+                lease_id,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(media::renew_media_lease(&mut main, &lease_id, now));
+            }
+            WriterMessage::MaintainMedia {
+                now,
+                grace_millis,
+                reply,
+            } => {
+                let _ = reply.send(media::maintain_media(
+                    &mut main,
+                    &mut media,
+                    now,
+                    grace_millis,
+                ));
             }
             WriterMessage::LoadMediaPayload { image_id, reply } => {
                 let _ = reply.send(media::load_media_payload(&main, &media, &image_id));
@@ -345,6 +396,17 @@ fn writer_loop(
                     &mut main,
                     stale_started_at_or_before,
                     now,
+                ));
+            }
+            WriterMessage::CreateSnapshotPair {
+                application_version,
+                reply,
+            } => {
+                let _ = reply.send(snapshot::create_snapshot_pair_from_connections(
+                    &paths,
+                    &application_version,
+                    &mut main,
+                    &mut media,
                 ));
             }
             WriterMessage::Shutdown => break,

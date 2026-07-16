@@ -5,6 +5,10 @@ import { beforeEach, expect, test, vi } from 'vitest'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
 import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
 import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
+import {
+  ImageOcrStatus,
+  type ImageRecord,
+} from '../../../src/media/image-reference.ts'
 import { CardContentType } from '../../../src/review/contracts.ts'
 
 const mocks = vi.hoisted(() => ({
@@ -14,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   ingestClipboardImage: vi.fn(),
   ingestImageFile: vi.fn(),
   listen: vi.fn(),
+  renewMediaLease: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -30,6 +35,7 @@ vi.mock('../../../src/lib/native.ts', () => ({
 vi.mock('../../../src/media/gateway.ts', () => ({
   ingestClipboardImage: mocks.ingestClipboardImage,
   ingestImageFile: mocks.ingestImageFile,
+  renewMediaLease: mocks.renewMediaLease,
 }))
 
 vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
@@ -48,6 +54,7 @@ beforeEach(() => {
   mocks.listen.mockResolvedValue(() => undefined)
   mocks.ingestClipboardImage.mockReset()
   mocks.ingestImageFile.mockReset()
+  mocks.renewMediaLease.mockResolvedValue(0)
 })
 
 test('focuses Front and follows the logical editor and form focus order', async () => {
@@ -76,6 +83,21 @@ test('focuses Front and follows the logical editor and form focus order', async 
   expect(document.activeElement).toBe(front)
 })
 
+test('renews its media lease only while the editor window is active', async () => {
+  const hasFocus = vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+  render(<QuickAddWindow />)
+
+  fireEvent.focus(window)
+  expect(mocks.renewMediaLease).not.toHaveBeenCalled()
+
+  hasFocus.mockReturnValue(true)
+  fireEvent.focus(window)
+  await waitFor(() =>
+    expect(mocks.renewMediaLease).toHaveBeenCalledWith(expect.any(String)),
+  )
+  hasFocus.mockRestore()
+})
+
 test('persists canonical Markdown, trims source, and clears all values after success', async () => {
   const { getByRole } = render(<QuickAddWindow />)
   const front = getByRole('textbox', { name: 'Front' })
@@ -88,16 +110,23 @@ test('persists canonical Markdown, trims source, and clears all values after suc
   fireEvent.click(getByRole('button', { name: /Add/ }))
 
   await waitFor(() => {
-    expect(mocks.createCardContent).toHaveBeenCalledWith({
-      backMd: 'answer\nwith a break',
-      frontMd: '**question**',
-      source: 'Chapter 4',
-      type: CardContentType.Basic,
-    })
+    expect(mocks.createCardContent).toHaveBeenCalledWith(
+      {
+        backMd: 'answer\nwith a break',
+        frontMd: '**question**',
+        source: 'Chapter 4',
+        type: CardContentType.Basic,
+      },
+      expect.any(String),
+    )
   })
   await waitFor(() => {
-    expect(editorView(front).state.doc.textContent).toBe('')
-    expect(editorView(back).state.doc.textContent).toBe('')
+    expect(
+      editorView(getByRole('textbox', { name: 'Front' })).state.doc.textContent,
+    ).toBe('')
+    expect(
+      editorView(getByRole('textbox', { name: 'Back' })).state.doc.textContent,
+    ).toBe('')
     expect((source as HTMLInputElement).value).toBe('')
   })
   expect(mocks.emit).toHaveBeenCalledWith('card-created')
@@ -106,13 +135,7 @@ test('persists canonical Markdown, trims source, and clears all values after suc
 
 test('blocks card creation while a pasted image is being persisted', async () => {
   const imageId = '01980c8e-6c00-7000-8000-000000000202'
-  let resolveImage!: (record: {
-    id: string
-    mimeType: string
-    naturalHeight: number
-    naturalWidth: number
-    ocrStatus: 'PENDING'
-  }) => void
+  let resolveImage!: (record: ImageRecord) => void
   mocks.ingestClipboardImage.mockImplementation(
     () =>
       new Promise((resolve) => {
@@ -159,12 +182,15 @@ test('normalizes whitespace-only source to null and Mod-Enter saves from Source'
   await user.keyboard('{Meta>}{Enter}{/Meta}')
 
   await waitFor(() => {
-    expect(mocks.createCardContent).toHaveBeenCalledWith({
-      backMd: 'back',
-      frontMd: 'front',
-      source: null,
-      type: CardContentType.Basic,
-    })
+    expect(mocks.createCardContent).toHaveBeenCalledWith(
+      {
+        backMd: 'back',
+        frontMd: 'front',
+        source: null,
+        type: CardContentType.Basic,
+      },
+      expect.any(String),
+    )
   })
 })
 
@@ -183,15 +209,18 @@ test('creates a CLOZE card with canonical variants and a revealed search project
   fireEvent.click(getByRole('button', { name: /Add/ }))
 
   await waitFor(() => {
-    expect(mocks.createCardContent).toHaveBeenCalledWith({
-      backMd: 'Supplemental context.',
-      frontMd:
-        'A {{c2::**second**::position}} and {{c1::first}} plus {{c2::two}}.',
-      searchMd: 'A **second** and first plus two.',
-      source: null,
-      type: CardContentType.Cloze,
-      variantKeys: ['cloze:1', 'cloze:2'],
-    })
+    expect(mocks.createCardContent).toHaveBeenCalledWith(
+      {
+        backMd: 'Supplemental context.',
+        frontMd:
+          'A {{c2::**second**::position}} and {{c1::first}} plus {{c2::two}}.',
+        searchMd: 'A **second** and first plus two.',
+        source: null,
+        type: CardContentType.Cloze,
+        variantKeys: ['cloze:1', 'cloze:2'],
+      },
+      expect.any(String),
+    )
   })
   expect(mocks.dismissQuickAdd).toHaveBeenCalledTimes(1)
 })
@@ -203,7 +232,7 @@ test('opens the full image-occlusion editor from paste and saves layered masks',
     mimeType: 'image/webp',
     naturalHeight: 400,
     naturalWidth: 800,
-    ocrStatus: 'PENDING' as const,
+    ocrStatus: ImageOcrStatus.Pending,
   }
   mocks.ingestClipboardImage.mockResolvedValue(image)
   const { container, getByRole, queryByRole } = render(<QuickAddWindow />)
@@ -367,6 +396,11 @@ test('validation focuses the missing field and composition Escape does not dismi
   expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
   fireEvent.keyDown(back, { key: 'Escape' })
   await waitFor(() => expect(mocks.dismissQuickAdd).toHaveBeenCalledTimes(1))
+  await waitFor(() =>
+    expect(
+      editorView(getByRole('textbox', { name: 'Front' })).state.doc.textContent,
+    ).toBe(''),
+  )
 })
 
 test('the app-owned code-language menu closes without dismissing Quick Add', () => {

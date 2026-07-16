@@ -20,6 +20,8 @@ const MIN_DISPLAY_WIDTH_PERCENT: u8 = 10;
 const MAX_DISPLAY_WIDTH_PERCENT: u8 = 100;
 pub(crate) const MAX_OCR_ATTEMPTS: u32 = 4;
 pub(crate) const OCR_RETRY_DELAYS_MILLIS: [i64; 3] = [5 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
+pub const MEDIA_LEASE_DURATION_MILLIS: i64 = 24 * 60 * 60 * 1_000;
+pub const MEDIA_ORPHAN_GRACE_MILLIS: i64 = 7 * 24 * 60 * 60 * 1_000;
 const INTERRUPTED_OCR_ERROR: &str = "the previous OCR attempt was interrupted";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -134,6 +136,31 @@ pub struct OcrQueueRecovery {
     pub terminally_failed: u64,
 }
 
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaIntegrityReport {
+    pub orphaned_image_ids: Vec<String>,
+    pub extra_blob_sha256: Vec<String>,
+    pub missing_referenced_blob_image_ids: Vec<String>,
+    pub extra_blob_bytes: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaCleanupResult {
+    pub retired_image_count: u64,
+    pub deleted_blob_count: u64,
+    pub reclaimed_bytes: u64,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaMaintenanceReport {
+    pub inspected_at: i64,
+    pub integrity: MediaIntegrityReport,
+    pub cleanup: MediaCleanupResult,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ImageReference {
     pub image_id: String,
@@ -144,7 +171,9 @@ pub(super) fn ingest_image(
     main: &mut Connection,
     media: &mut Connection,
     image: CanonicalImage,
+    lease_id: &str,
 ) -> Result<ImageRecord> {
+    validate_uuid_v7(lease_id, "leaseId")?;
     if image.bytes.is_empty() {
         return Err(DatabaseError::InvalidInput(
             "the canonical image is empty".into(),
@@ -247,8 +276,405 @@ pub(super) fn ingest_image(
             ocr_status: ImageOcrStatus::Pending,
         }
     };
+    let now = now_millis()?;
+    let expires_at = lease_expiry(now)?;
+    transaction.execute(
+        "INSERT INTO image_draft_lease (
+            lease_id, image_id, created_at, updated_at, expires_at
+         ) VALUES (?1, ?2, ?3, ?3, ?4)
+         ON CONFLICT(lease_id, image_id) DO UPDATE SET
+            updated_at = excluded.updated_at,
+            expires_at = excluded.expires_at",
+        params![lease_id, record.id, now, expires_at],
+    )?;
+    transaction.execute(
+        "UPDATE image SET orphaned_at = NULL WHERE id = ?1",
+        [&record.id],
+    )?;
+    transaction.execute(
+        "DELETE FROM media_blob_reap_candidate WHERE sha256 = ?1",
+        [&sha256],
+    )?;
     transaction.commit()?;
     Ok(record)
+}
+
+pub(super) fn renew_media_lease(main: &mut Connection, lease_id: &str, now: i64) -> Result<u64> {
+    validate_uuid_v7(lease_id, "leaseId")?;
+    validate_non_negative_timestamp(now, "media lease renewal time")?;
+    let transaction = main.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let last_updated_at = transaction.query_row(
+        "SELECT max(updated_at) FROM image_draft_lease WHERE lease_id = ?1",
+        [lease_id],
+        |row| row.get::<_, Option<i64>>(0),
+    )?;
+    let Some(last_updated_at) = last_updated_at else {
+        transaction.commit()?;
+        return Ok(0);
+    };
+    let renewed_at = now.max(
+        last_updated_at
+            .checked_add(1)
+            .ok_or(DatabaseError::InvalidSystemTime)?,
+    );
+    let expires_at = lease_expiry(renewed_at)?;
+    let renewed = transaction.execute(
+        "UPDATE image_draft_lease
+         SET updated_at = ?1, expires_at = ?2
+         WHERE lease_id = ?3",
+        params![renewed_at, expires_at, lease_id],
+    )?;
+    transaction.execute(
+        "UPDATE image
+         SET orphaned_at = NULL
+         WHERE id IN (
+             SELECT image_id FROM image_draft_lease WHERE lease_id = ?1
+         )",
+        [lease_id],
+    )?;
+    transaction.commit()?;
+    Ok(renewed as u64)
+}
+
+pub(super) fn consume_media_lease_in_transaction(
+    transaction: &Transaction<'_>,
+    lease_id: &str,
+    now: i64,
+) -> Result<()> {
+    validate_uuid_v7(lease_id, "mediaLeaseId")?;
+    validate_non_negative_timestamp(now, "media lease consumption time")?;
+    transaction.execute(
+        "DELETE FROM image_draft_lease WHERE lease_id = ?1",
+        [lease_id],
+    )?;
+    reconcile_orphaned_images(transaction, now)?;
+    Ok(())
+}
+
+pub(super) fn reconcile_orphaned_images(transaction: &Transaction<'_>, now: i64) -> Result<()> {
+    validate_non_negative_timestamp(now, "media reconciliation time")?;
+    transaction.execute(
+        "UPDATE image
+         SET orphaned_at = NULL
+         WHERE orphaned_at IS NOT NULL AND (
+             EXISTS (
+                 SELECT 1
+                 FROM card_content_image AS link
+                 JOIN card_content AS content ON content.id = link.card_content_id
+                 WHERE link.image_id = image.id AND content.deleted_at IS NULL
+             )
+             OR EXISTS (
+                 SELECT 1 FROM card_occlusion_content AS occlusion
+                 WHERE occlusion.source_image_id = image.id
+             )
+             OR EXISTS (
+                 SELECT 1 FROM image_draft_lease AS lease
+                 WHERE lease.image_id = image.id AND lease.expires_at > ?1
+             )
+         )",
+        [now],
+    )?;
+    transaction.execute(
+        "UPDATE image
+         SET orphaned_at = ?1
+         WHERE orphaned_at IS NULL
+           AND NOT EXISTS (
+               SELECT 1
+               FROM card_content_image AS link
+               JOIN card_content AS content ON content.id = link.card_content_id
+               WHERE link.image_id = image.id AND content.deleted_at IS NULL
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM card_occlusion_content AS occlusion
+               WHERE occlusion.source_image_id = image.id
+           )
+           AND NOT EXISTS (
+               SELECT 1 FROM image_draft_lease AS lease
+               WHERE lease.image_id = image.id AND lease.expires_at > ?1
+           )",
+        [now],
+    )?;
+    Ok(())
+}
+
+pub(super) fn maintain_media(
+    main: &mut Connection,
+    media: &mut Connection,
+    now: i64,
+    grace_millis: i64,
+) -> Result<MediaMaintenanceReport> {
+    validate_non_negative_timestamp(now, "media maintenance time")?;
+    validate_non_negative_timestamp(grace_millis, "media orphan grace period")?;
+    let integrity = inspect_media_integrity(main, media, now)?;
+    let cleanup = reap_orphaned_media(main, media, now, grace_millis)?;
+    Ok(MediaMaintenanceReport {
+        inspected_at: now,
+        integrity,
+        cleanup,
+    })
+}
+
+fn inspect_media_integrity(
+    main: &Connection,
+    media: &Connection,
+    now: i64,
+) -> Result<MediaIntegrityReport> {
+    let orphaned_image_ids = main
+        .prepare(
+            "SELECT image.id
+             FROM image
+             WHERE NOT EXISTS (
+                 SELECT 1
+                 FROM card_content_image AS link
+                 JOIN card_content AS content ON content.id = link.card_content_id
+                 WHERE link.image_id = image.id AND content.deleted_at IS NULL
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM card_occlusion_content AS occlusion
+                 WHERE occlusion.source_image_id = image.id
+             )
+             AND NOT EXISTS (
+                 SELECT 1 FROM image_draft_lease AS lease
+                 WHERE lease.image_id = image.id AND lease.expires_at > ?1
+             )
+             ORDER BY image.id",
+        )?
+        .query_map([now], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let image_hashes = main
+        .prepare("SELECT sha256 FROM image")?
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    let blobs = media
+        .prepare("SELECT sha256, length(bytes) FROM media_blob ORDER BY sha256")?
+        .query_map([], |row| {
+            Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let blob_hashes = blobs
+        .iter()
+        .map(|(hash, _)| hash.clone())
+        .collect::<HashSet<_>>();
+    let extra = blobs
+        .iter()
+        .filter(|(hash, _)| !image_hashes.contains(hash))
+        .collect::<Vec<_>>();
+    let extra_blob_sha256 = extra.iter().map(|(hash, _)| hex(hash)).collect();
+    let extra_blob_bytes = extra.iter().try_fold(0_u64, |total, (_, bytes)| {
+        let bytes = u64::try_from(*bytes).map_err(|_| {
+            DatabaseError::CorruptReviewData("media blob has a negative byte length".into())
+        })?;
+        total
+            .checked_add(bytes)
+            .ok_or(DatabaseError::InvalidSystemTime)
+    })?;
+
+    let referenced_images = main
+        .prepare(
+            "SELECT image.id, image.sha256
+             FROM image
+             WHERE EXISTS (
+                 SELECT 1
+                 FROM card_content_image AS link
+                 JOIN card_content AS content ON content.id = link.card_content_id
+                 WHERE link.image_id = image.id AND content.deleted_at IS NULL
+             )
+             OR EXISTS (
+                 SELECT 1 FROM card_occlusion_content AS occlusion
+                 WHERE occlusion.source_image_id = image.id
+             )
+             ORDER BY image.id",
+        )?
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let missing_referenced_blob_image_ids = referenced_images
+        .into_iter()
+        .filter_map(|(image_id, hash)| (!blob_hashes.contains(&hash)).then_some(image_id))
+        .collect();
+
+    Ok(MediaIntegrityReport {
+        orphaned_image_ids,
+        extra_blob_sha256,
+        missing_referenced_blob_image_ids,
+        extra_blob_bytes,
+    })
+}
+
+fn reap_orphaned_media(
+    main: &mut Connection,
+    media: &mut Connection,
+    now: i64,
+    grace_millis: i64,
+) -> Result<MediaCleanupResult> {
+    let cutoff = now.saturating_sub(grace_millis);
+    let media_hashes = media
+        .prepare("SELECT sha256 FROM media_blob")?
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let transaction = main.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    reconcile_orphaned_images(&transaction, now)?;
+    let eligible_images = transaction
+        .prepare(
+            "SELECT id, sha256, orphaned_at
+             FROM image
+             WHERE orphaned_at <= ?1
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM card_content_image AS link
+                   JOIN card_content AS content ON content.id = link.card_content_id
+                   WHERE link.image_id = image.id AND content.deleted_at IS NULL
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM card_occlusion_content AS occlusion
+                   WHERE occlusion.source_image_id = image.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM image_draft_lease AS lease
+                   WHERE lease.image_id = image.id AND lease.expires_at > ?2
+               )
+             ORDER BY orphaned_at, id",
+        )?
+        .query_map(params![cutoff, now], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut retired_image_count = 0_u64;
+    for (image_id, hash, orphaned_at) in eligible_images {
+        let deleted = transaction.execute(
+            "DELETE FROM image
+             WHERE id = ?1 AND orphaned_at = ?2 AND orphaned_at <= ?3
+               AND NOT EXISTS (
+                   SELECT 1
+                   FROM card_content_image AS link
+                   JOIN card_content AS content ON content.id = link.card_content_id
+                   WHERE link.image_id = image.id AND content.deleted_at IS NULL
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM card_occlusion_content AS occlusion
+                   WHERE occlusion.source_image_id = image.id
+               )
+               AND NOT EXISTS (
+                   SELECT 1 FROM image_draft_lease AS lease
+                   WHERE lease.image_id = image.id AND lease.expires_at > ?4
+               )",
+            params![image_id, orphaned_at, cutoff, now],
+        )?;
+        if deleted == 1 {
+            retired_image_count += 1;
+            transaction.execute(
+                "INSERT INTO media_blob_reap_candidate(sha256, orphaned_at)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(sha256) DO UPDATE SET
+                    orphaned_at = min(orphaned_at, excluded.orphaned_at)",
+                params![hash, orphaned_at],
+            )?;
+        }
+    }
+
+    let remaining_image_hashes = transaction
+        .prepare("SELECT sha256 FROM image")?
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    transaction.execute(
+        "DELETE FROM media_blob_reap_candidate
+         WHERE EXISTS (
+             SELECT 1 FROM image
+             WHERE image.sha256 = media_blob_reap_candidate.sha256
+         )",
+        [],
+    )?;
+    for hash in &media_hashes {
+        if !remaining_image_hashes.contains(hash) {
+            transaction.execute(
+                "INSERT OR IGNORE INTO media_blob_reap_candidate(sha256, orphaned_at)
+                 VALUES (?1, ?2)",
+                params![hash, now],
+            )?;
+        }
+    }
+    let eligible_hashes = transaction
+        .prepare(
+            "SELECT candidate.sha256
+             FROM media_blob_reap_candidate AS candidate
+             WHERE candidate.orphaned_at <= ?1
+               AND NOT EXISTS (
+                   SELECT 1 FROM image WHERE image.sha256 = candidate.sha256
+               )
+             ORDER BY candidate.sha256",
+        )?
+        .query_map([cutoff], |row| row.get::<_, Vec<u8>>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    transaction.commit()?;
+
+    let media_transaction = media.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut deleted_blob_count = 0_u64;
+    let mut reclaimed_bytes = 0_u64;
+    for hash in &eligible_hashes {
+        let still_unreferenced = main.query_row(
+            "SELECT NOT EXISTS (SELECT 1 FROM image WHERE sha256 = ?1)",
+            [hash],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !still_unreferenced {
+            continue;
+        }
+        let bytes = media_transaction
+            .query_row(
+                "SELECT length(bytes) FROM media_blob WHERE sha256 = ?1",
+                [hash],
+                |row| row.get::<_, i64>(0),
+            )
+            .optional()?;
+        let Some(bytes) = bytes else {
+            continue;
+        };
+        let bytes = u64::try_from(bytes).map_err(|_| {
+            DatabaseError::CorruptReviewData("media blob has a negative byte length".into())
+        })?;
+        media_transaction.execute(
+            "INSERT OR IGNORE INTO media_blob_reap_authorization(sha256) VALUES (?1)",
+            [hash],
+        )?;
+        let deleted =
+            media_transaction.execute("DELETE FROM media_blob WHERE sha256 = ?1", [hash])?;
+        if deleted == 1 {
+            deleted_blob_count += 1;
+            reclaimed_bytes = reclaimed_bytes
+                .checked_add(bytes)
+                .ok_or(DatabaseError::InvalidSystemTime)?;
+        }
+    }
+    media_transaction.commit()?;
+
+    let remaining_blob_hashes = media
+        .prepare("SELECT sha256 FROM media_blob")?
+        .query_map([], |row| row.get::<_, Vec<u8>>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    let transaction = main.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    for hash in eligible_hashes {
+        if !remaining_blob_hashes.contains(&hash) {
+            transaction.execute(
+                "DELETE FROM media_blob_reap_candidate WHERE sha256 = ?1",
+                [&hash],
+            )?;
+        }
+    }
+    transaction.commit()?;
+
+    Ok(MediaCleanupResult {
+        retired_image_count,
+        deleted_blob_count,
+        reclaimed_bytes,
+    })
 }
 
 pub(super) fn load_active_image_record(
@@ -368,6 +794,27 @@ pub(super) fn claim_next_ocr_job(
              WHERE deleted_at IS NULL
                AND ocr_queue_state IN (?1, ?2)
                AND ocr_next_attempt_at <= ?3
+               AND (
+                   EXISTS (
+                       SELECT 1
+                       FROM card_content_image AS link
+                       JOIN card_content AS content ON content.id = link.card_content_id
+                       WHERE link.image_id = image.id AND content.deleted_at IS NULL
+                   )
+                   OR EXISTS (
+                       SELECT 1
+                       FROM card_occlusion_content AS occlusion
+                       JOIN card_content AS content
+                         ON content.id = occlusion.card_content_id
+                       WHERE occlusion.source_image_id = image.id
+                         AND occlusion.deleted_at IS NULL
+                         AND content.deleted_at IS NULL
+                   )
+                   OR EXISTS (
+                       SELECT 1 FROM image_draft_lease AS lease
+                       WHERE lease.image_id = image.id AND lease.expires_at > ?3
+                   )
+               )
              ORDER BY ocr_next_attempt_at, created_at, id
              LIMIT 1",
             params![
@@ -396,7 +843,28 @@ pub(super) fn claim_next_ocr_job(
              ocr_attempt_count = ?3, ocr_next_attempt_at = NULL,
              ocr_started_at = ?1
          WHERE id = ?4 AND deleted_at IS NULL
-           AND ocr_queue_state IN (?5, ?6) AND ocr_next_attempt_at <= ?1",
+           AND ocr_queue_state IN (?5, ?6) AND ocr_next_attempt_at <= ?1
+           AND (
+               EXISTS (
+                   SELECT 1
+                   FROM card_content_image AS link
+                   JOIN card_content AS content ON content.id = link.card_content_id
+                   WHERE link.image_id = image.id AND content.deleted_at IS NULL
+               )
+               OR EXISTS (
+                   SELECT 1
+                   FROM card_occlusion_content AS occlusion
+                   JOIN card_content AS content
+                     ON content.id = occlusion.card_content_id
+                   WHERE occlusion.source_image_id = image.id
+                     AND occlusion.deleted_at IS NULL
+                     AND content.deleted_at IS NULL
+               )
+               OR EXISTS (
+                   SELECT 1 FROM image_draft_lease AS lease
+                   WHERE lease.image_id = image.id AND lease.expires_at > ?1
+               )
+           )",
         params![
             now,
             OcrQueueState::Running.as_db_str(),
@@ -437,11 +905,11 @@ pub(super) fn complete_image_ocr(
             [image_id],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?)),
         )
-        .optional()?
-        .ok_or_else(|| DatabaseError::NotFound {
-            entity: "image",
-            id: image_id.into(),
-        })?;
+        .optional()?;
+    let Some(current) = current else {
+        transaction.commit()?;
+        return Ok(());
+    };
     if OcrQueueState::from_db(&current.0)? != OcrQueueState::Running
         || current.1 != expected_attempt_count
     {
@@ -863,6 +1331,21 @@ fn retry_delay_millis(attempt_count: u32) -> Result<i64> {
     OCR_RETRY_DELAYS_MILLIS.get(index).copied().ok_or_else(|| {
         DatabaseError::CorruptReviewData(format!("OCR attempt {attempt_count} has no retry delay"))
     })
+}
+
+fn lease_expiry(now: i64) -> Result<i64> {
+    now.checked_add(MEDIA_LEASE_DURATION_MILLIS)
+        .ok_or(DatabaseError::InvalidSystemTime)
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(output, "{byte:02x}");
+    }
+    output
 }
 
 fn truncate_error(error: &str) -> String {

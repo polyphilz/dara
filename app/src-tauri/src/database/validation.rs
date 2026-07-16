@@ -152,6 +152,8 @@ fn validate_main_schema(connection: &Connection) -> Result<()> {
         "card_occlusion_mask",
         "card_occlusion_mask_layer",
         "image",
+        "image_draft_lease",
+        "media_blob_reap_candidate",
         "review_card",
         "review_event",
         "scheduler_config",
@@ -241,11 +243,13 @@ fn validate_jina_v1_definition(connection: &Connection) -> Result<()> {
 }
 
 fn validate_media_schema(connection: &Connection) -> Result<()> {
-    if !table_exists(connection, "media_blob")? {
-        return invalid(
-            DatabaseKind::Media,
-            "required table media_blob is missing".into(),
-        );
+    for table in ["media_blob", "media_blob_reap_authorization"] {
+        if !table_exists(connection, table)? {
+            return invalid(
+                DatabaseKind::Media,
+                format!("required table {table} is missing"),
+            );
+        }
     }
     Ok(())
 }

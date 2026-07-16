@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   notifyClockChanged: vi.fn(),
   refresh: vi.fn(),
   reveal: vi.fn(),
+  renewMediaLease: vi.fn(),
   showQuickAdd: vi.fn(),
   start: vi.fn(),
 }))
@@ -48,6 +49,12 @@ vi.mock('@tauri-apps/api/event', () => ({
 
 vi.mock('../../../src/lib/native.ts', () => ({
   native: { showQuickAdd: mocks.showQuickAdd },
+}))
+
+vi.mock('../../../src/media/gateway.ts', () => ({
+  ingestClipboardImage: vi.fn(),
+  ingestImageFile: vi.fn(),
+  renewMediaLease: mocks.renewMediaLease,
 }))
 
 vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
@@ -85,6 +92,7 @@ beforeEach(() => {
     nextLearningDueAt: null,
   })
   mocks.listen.mockResolvedValue(() => undefined)
+  mocks.renewMediaLease.mockResolvedValue(0)
   mocks.start.mockResolvedValue(undefined)
 })
 
@@ -92,7 +100,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-test('Add card opens a persistent main-window editor rather than Quick Add', () => {
+test('Add card opens a persistent main-window editor rather than Quick Add', async () => {
   const { getByRole, queryByRole, queryByText } = render(<MainWindow />)
 
   fireEvent.click(getByRole('button', { name: 'Add' }))
@@ -105,7 +113,9 @@ test('Add card opens a persistent main-window editor rather than Quick Add', () 
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
 
   fireEvent.click(getByRole('button', { name: 'Cancel' }))
-  expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy()
+  await waitFor(() =>
+    expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy(),
+  )
 })
 
 test('Escape is inert in the persistent Add view and preserves the draft', () => {
@@ -134,12 +144,15 @@ test('saving in the main editor creates the card and returns home', async () => 
   fireEvent.click(getByRole('button', { name: /Add ⌘↵/ }))
 
   await waitFor(() => {
-    expect(mocks.createCardContent).toHaveBeenCalledWith({
-      backMd: 'back',
-      frontMd: '**front**',
-      source: 'source',
-      type: CardContentType.Basic,
-    })
+    expect(mocks.createCardContent).toHaveBeenCalledWith(
+      {
+        backMd: 'back',
+        frontMd: '**front**',
+        source: 'source',
+        type: CardContentType.Basic,
+      },
+      expect.any(String),
+    )
   })
   expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(1)
   expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy()

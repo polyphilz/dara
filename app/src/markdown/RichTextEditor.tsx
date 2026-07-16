@@ -55,7 +55,6 @@ import {
 } from 'react'
 import { DaraInput } from '../components/DaraInput.tsx'
 import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
-import { ingestClipboardImage } from '../media/gateway.ts'
 import {
   ImageDisplayWidthStep,
   initialImageDisplayWidth,
@@ -106,6 +105,8 @@ interface LinkDialogState {
 const externalValueUpdate = 'dara-external-value-update'
 let codeBlockNodeViewPromise: Promise<NodeViewConstructor> | null = null
 let pendingImageRequestSequence = 0
+const unavailableImageIngestion = () =>
+  Promise.reject(new Error('Image ingestion requires an active editor lease.'))
 
 export const RichTextEditor = forwardRef<
   RichTextEditorHandle,
@@ -114,7 +115,7 @@ export const RichTextEditor = forwardRef<
   {
     ariaLabel,
     disabled = false,
-    ingestImage = ingestClipboardImage,
+    ingestImage = unavailableImageIngestion,
     onChange,
     onMediaError,
     onPendingMediaChange,

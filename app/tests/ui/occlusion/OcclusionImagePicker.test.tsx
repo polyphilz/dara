@@ -18,6 +18,7 @@ const image = {
   naturalWidth: 800,
   ocrStatus: ImageOcrStatus.Pending,
 }
+const leaseId = '01980c8e-6c00-7000-8000-000000000399'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -29,6 +30,7 @@ test('accepts paste, file-picker, and drag-and-drop images through one restricte
   const onImage = vi.fn()
   const { container, getByRole } = render(
     <OcclusionImagePicker
+      leaseId={leaseId}
       onError={vi.fn()}
       onImage={onImage}
       onPendingChange={vi.fn()}
@@ -40,7 +42,9 @@ test('accepts paste, file-picker, and drag-and-drop images through one restricte
   fireEvent.paste(picker, {
     clipboardData: { items: [{ type: 'image/png' }] },
   })
-  await waitFor(() => expect(mocks.ingestClipboardImage).toHaveBeenCalledTimes(1))
+  await waitFor(() =>
+    expect(mocks.ingestClipboardImage).toHaveBeenCalledWith(leaseId),
+  )
   await waitFor(() => expect(onImage).toHaveBeenCalledTimes(1))
 
   const file = new File(['png'], 'diagram.png', { type: 'image/png' })
@@ -50,7 +54,9 @@ test('accepts paste, file-picker, and drag-and-drop images through one restricte
   )
   expect(input.accept).toBe(OcclusionImageFileAccept)
   fireEvent.change(input, { target: { files: [file] } })
-  await waitFor(() => expect(mocks.ingestImageFile).toHaveBeenCalledWith(file))
+  await waitFor(() =>
+    expect(mocks.ingestImageFile).toHaveBeenCalledWith(file, leaseId),
+  )
   await waitFor(() => expect(onImage).toHaveBeenCalledTimes(2))
 
   fireEvent.drop(picker, { dataTransfer: { files: [file] } })
@@ -62,6 +68,7 @@ test('rejects unsupported selections and drops before ingestion', () => {
   const onError = vi.fn()
   const { container, getByRole } = render(
     <OcclusionImagePicker
+      leaseId={leaseId}
       onError={onError}
       onImage={vi.fn()}
       onPendingChange={vi.fn()}
@@ -85,4 +92,37 @@ test('rejects unsupported selections and drops before ingestion', () => {
     'Choose a JPEG, PNG, WebP, or TIFF image.',
   )
   expect(mocks.ingestImageFile).not.toHaveBeenCalled()
+})
+
+test('ignores an ingestion result after the picker is abandoned', async () => {
+  let resolveImage!: (record: typeof image) => void
+  mocks.ingestClipboardImage.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveImage = resolve
+      }),
+  )
+  const onImage = vi.fn()
+  const { getByRole, unmount } = render(
+    <OcclusionImagePicker
+      leaseId={leaseId}
+      onError={vi.fn()}
+      onImage={onImage}
+      onPendingChange={vi.fn()}
+      showDropZone
+    />,
+  )
+
+  fireEvent.paste(
+    getByRole('button', { name: 'Choose an image for occlusion' }),
+    { clipboardData: { items: [{ type: 'image/png' }] } },
+  )
+  await waitFor(() =>
+    expect(mocks.ingestClipboardImage).toHaveBeenCalledWith(leaseId),
+  )
+  unmount()
+  resolveImage(image)
+
+  await Promise.resolve()
+  expect(onImage).not.toHaveBeenCalled()
 })

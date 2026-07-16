@@ -1,20 +1,23 @@
 use std::sync::mpsc::{self, Sender, SyncSender};
 
+use super::snapshot::CreatedSnapshot;
 use super::{
     CanonicalImage, CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput,
-    HomeStats, ImageRecord, LoadHomeStatsInput, MediaPayload, OcrJob, OcrQueueRecovery,
-    RecordGradeInput, Result, ReviewContext, ReviewMutationResult, ReviewQueueSelection,
-    SearchCardContentInput, SelectNextReviewCardInput, SetCardContentSuspendedInput,
-    UndoLastGradeInput, UpdateCardContentInput,
+    HomeStats, ImageRecord, LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob,
+    OcrQueueRecovery, RecordGradeInput, Result, ReviewContext, ReviewMutationResult,
+    ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
+    SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
 };
 
 pub(super) enum WriterMessage {
     CreateCardContent {
         input: CardContentDraft,
+        media_lease_id: String,
         reply: SyncSender<Result<ReviewContext>>,
     },
     UpdateCardContent {
         input: UpdateCardContentInput,
+        media_lease_id: String,
         reply: SyncSender<Result<CardContentListItem>>,
     },
     SearchCardContent {
@@ -51,7 +54,18 @@ pub(super) enum WriterMessage {
     },
     IngestImage {
         image: CanonicalImage,
+        lease_id: String,
         reply: SyncSender<Result<ImageRecord>>,
+    },
+    RenewMediaLease {
+        lease_id: String,
+        now: i64,
+        reply: SyncSender<Result<u64>>,
+    },
+    MaintainMedia {
+        now: i64,
+        grace_millis: i64,
+        reply: SyncSender<Result<MediaMaintenanceReport>>,
     },
     LoadMediaPayload {
         image_id: String,
@@ -73,6 +87,10 @@ pub(super) enum WriterMessage {
         now: i64,
         reply: SyncSender<Result<OcrQueueRecovery>>,
     },
+    CreateSnapshotPair {
+        application_version: String,
+        reply: SyncSender<Result<CreatedSnapshot>>,
+    },
     Shutdown,
 }
 
@@ -86,10 +104,18 @@ impl DatabaseClient {
         Self { sender }
     }
 
-    pub fn create_card_content(&self, input: CardContentDraft) -> Result<ReviewContext> {
+    pub fn create_card_content(
+        &self,
+        input: CardContentDraft,
+        media_lease_id: String,
+    ) -> Result<ReviewContext> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(WriterMessage::CreateCardContent { input, reply })
+            .send(WriterMessage::CreateCardContent {
+                input,
+                media_lease_id,
+                reply,
+            })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()
@@ -99,10 +125,15 @@ impl DatabaseClient {
     pub fn update_card_content(
         &self,
         input: UpdateCardContentInput,
+        media_lease_id: String,
     ) -> Result<CardContentListItem> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(WriterMessage::UpdateCardContent { input, reply })
+            .send(WriterMessage::UpdateCardContent {
+                input,
+                media_lease_id,
+                reply,
+            })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()
@@ -201,10 +232,42 @@ impl DatabaseClient {
             .map_err(|_| DatabaseError::WriterUnavailable)?
     }
 
-    pub fn ingest_image(&self, image: CanonicalImage) -> Result<ImageRecord> {
+    pub fn ingest_image(&self, image: CanonicalImage, lease_id: String) -> Result<ImageRecord> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(WriterMessage::IngestImage { image, reply })
+            .send(WriterMessage::IngestImage {
+                image,
+                lease_id,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn renew_media_lease(&self, lease_id: String, now: i64) -> Result<u64> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::RenewMediaLease {
+                lease_id,
+                now,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn maintain_media(&self, now: i64, grace_millis: i64) -> Result<MediaMaintenanceReport> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::MaintainMedia {
+                now,
+                grace_millis,
+                reply,
+            })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()
@@ -263,6 +326,22 @@ impl DatabaseClient {
             .send(WriterMessage::RecoverInterruptedOcrJobs {
                 stale_started_at_or_before,
                 now,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(super) fn create_snapshot_pair(
+        &self,
+        application_version: String,
+    ) -> Result<CreatedSnapshot> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::CreateSnapshotPair {
+                application_version,
                 reply,
             })
             .map_err(|_| DatabaseError::WriterUnavailable)?;

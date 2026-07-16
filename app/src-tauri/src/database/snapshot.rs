@@ -49,6 +49,24 @@ pub fn create_snapshot_pair(
     paths: &DatabasePaths,
     application_version: &str,
 ) -> Result<CreatedSnapshot> {
+    let mut main_source =
+        connection::open_writer(&paths.main, DatabaseKind::Main, FileState::Existing)?;
+    let mut media_source =
+        connection::open_writer(&paths.media, DatabaseKind::Media, FileState::Existing)?;
+    create_snapshot_pair_from_connections(
+        paths,
+        application_version,
+        &mut main_source,
+        &mut media_source,
+    )
+}
+
+pub(super) fn create_snapshot_pair_from_connections(
+    paths: &DatabasePaths,
+    application_version: &str,
+    main_source: &mut Connection,
+    media_source: &mut Connection,
+) -> Result<CreatedSnapshot> {
     fs::create_dir_all(&paths.backups)?;
 
     let created_at = now_millis()?;
@@ -65,14 +83,10 @@ pub fn create_snapshot_pair(
     let media_final = paths.backups.join(&media_name);
     let manifest_final = paths.backups.join(&manifest_name);
 
-    let mut main_source =
-        connection::open_writer(&paths.main, DatabaseKind::Main, FileState::Existing)?;
-    let mut media_source =
-        connection::open_writer(&paths.media, DatabaseKind::Media, FileState::Existing)?;
-    let heads = migrations::current_heads(&mut main_source, &mut media_source)?;
+    let heads = migrations::current_heads(main_source, media_source)?;
 
-    vacuum_into(&main_source, &main_temp)?;
-    vacuum_into(&media_source, &media_temp)?;
+    vacuum_into(main_source, &main_temp)?;
+    vacuum_into(media_source, &media_temp)?;
     sync_file(&main_temp)?;
     sync_file(&media_temp)?;
 

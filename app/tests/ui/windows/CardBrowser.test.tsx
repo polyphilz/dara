@@ -19,6 +19,13 @@ const mocks = vi.hoisted(() => ({
   searchCardContent: vi.fn(),
   setCardContentSuspended: vi.fn(),
   updateCardContent: vi.fn(),
+  renewMediaLease: vi.fn(),
+}))
+
+vi.mock('../../../src/media/gateway.ts', () => ({
+  ingestClipboardImage: vi.fn(),
+  ingestImageFile: vi.fn(),
+  renewMediaLease: mocks.renewMediaLease,
 }))
 
 vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
@@ -176,6 +183,7 @@ beforeEach(() => {
     reviewStatus: CardContentReviewStatus.Suspended,
   })
   mocks.updateCardContent.mockResolvedValue(activeItem)
+  mocks.renewMediaLease.mockResolvedValue(0)
 })
 
 test('searches immediately and toggles the selected authored item with Command-J', async () => {
@@ -230,6 +238,10 @@ test('opens the selected BASIC card for editing and tombstone deletion requires 
   fireEvent.keyDown(getByLabelText('Search cards'), { key: 'Enter' })
   expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
   fireEvent.click(getByRole('button', { name: 'Cancel' }))
+
+  await waitFor(() =>
+    expect(queryByRole('heading', { name: 'Edit card' })).toBeNull(),
+  )
 
   const deleteButton = getByRole('button', { name: 'Delete' })
   fireEvent.keyDown(deleteButton, { key: 'Enter' })
@@ -294,18 +306,21 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
   fireEvent.click(getByRole('button', { name: /Save/ }))
 
   await waitFor(() => {
-    expect(mocks.updateCardContent).toHaveBeenCalledWith({
-      id: clozeItem.cardContent.id,
-      expectedUpdatedAt: clozeItem.cardContent.updatedAt,
-      content: {
-        backMd: 'A geography prompt.',
-        frontMd: 'The {{c1::capital}} of France is Paris in {{c3::Europe}}.',
-        searchMd: 'The capital of France is Paris in Europe.',
-        source: 'Geography notes',
-        type: CardContentType.Cloze,
-        variantKeys: ['cloze:1', 'cloze:3'],
+    expect(mocks.updateCardContent).toHaveBeenCalledWith(
+      {
+        id: clozeItem.cardContent.id,
+        expectedUpdatedAt: clozeItem.cardContent.updatedAt,
+        content: {
+          backMd: 'A geography prompt.',
+          frontMd: 'The {{c1::capital}} of France is Paris in {{c3::Europe}}.',
+          searchMd: 'The capital of France is Paris in Europe.',
+          source: 'Geography notes',
+          type: CardContentType.Cloze,
+          variantKeys: ['cloze:1', 'cloze:3'],
+        },
       },
-    })
+      expect.any(String),
+    )
   })
   expect(onCardContentChanged).toHaveBeenCalledTimes(1)
 })

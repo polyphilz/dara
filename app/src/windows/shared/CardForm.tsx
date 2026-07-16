@@ -36,6 +36,10 @@ import {
 import { errorMessage } from '../../review/errors.ts'
 import { createUuidV7 } from '../../review/uuid-v7.ts'
 import {
+  ingestClipboardImage,
+  renewMediaLease,
+} from '../../media/gateway.ts'
+import {
   CardFormVariant,
   type CardFormVariant as CardFormVariantType,
 } from './card-form.ts'
@@ -57,6 +61,8 @@ interface CardFormProps {
   onSaved: (item?: CardContentListItem) => void | Promise<void>
   variant: CardFormVariantType
 }
+
+const MEDIA_LEASE_RENEWAL_INTERVAL_MILLIS = 15 * 60 * 1_000
 
 export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
   function CardForm({ initialContent, onCancel, onSaved, variant }, ref) {
@@ -80,7 +86,24 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
     const [primaryMediaPending, setPrimaryMediaPending] = useState(false)
     const [secondaryMediaPending, setSecondaryMediaPending] = useState(false)
     const [occlusionMediaPending, setOcclusionMediaPending] = useState(false)
+    const [mediaLeaseId, setMediaLeaseId] = useState(() => createUuidV7())
     const hasOcclusion = occlusion !== null
+
+    const resetForm = useCallback(() => {
+      setCardType(initialContent?.type ?? CardContentType.Basic)
+      setFront(initialContent?.frontMd ?? '')
+      setBack(initialContent?.backMd ?? '')
+      setSource(initialContent?.source ?? '')
+      setOcclusion(
+        initialContent?.type === CardContentType.Occlusion
+          ? initialContent.occlusion
+          : null,
+      )
+      setError(null)
+      setPrimaryMediaPending(false)
+      setSecondaryMediaPending(false)
+      setOcclusionMediaPending(false)
+    }, [initialContent])
 
     const focusPrimary = useCallback(() => {
       requestAnimationFrame(() => {
@@ -96,40 +119,60 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
       })
     }, [cardType, hasOcclusion])
 
-    const cancel = useCallback(async () => {
+    const discard = useCallback(() => {
       if (saving) {
         return
       }
       setError(null)
+      setMediaLeaseId(createUuidV7())
+      resetForm()
+    }, [resetForm, saving])
+
+    const cancel = useCallback(async () => {
+      if (saving) {
+        return
+      }
+      discard()
       try {
         await onCancel()
       } catch (cause) {
         setError(errorMessage(cause))
       }
-    }, [onCancel, saving])
+    }, [discard, onCancel, saving])
 
     useImperativeHandle(
       ref,
-      () => ({ cancel: () => void cancel(), focusPrimary }),
+      () => ({
+        cancel: () => void cancel(),
+        focusPrimary,
+      }),
       [cancel, focusPrimary],
     )
     useEffect(focusPrimary, [focusPrimary])
 
     useEffect(() => {
-      setCardType(initialContent?.type ?? CardContentType.Basic)
-      setFront(initialContent?.frontMd ?? '')
-      setBack(initialContent?.backMd ?? '')
-      setSource(initialContent?.source ?? '')
-      setOcclusion(
-        initialContent?.type === CardContentType.Occlusion
-          ? initialContent.occlusion
-          : null,
+      const renewIfActive = () => {
+        if (!document.hasFocus()) {
+          return
+        }
+        void renewMediaLease(mediaLeaseId).catch((cause: unknown) => {
+          setError(errorMessage(cause))
+        })
+      }
+      const interval = window.setInterval(
+        renewIfActive,
+        MEDIA_LEASE_RENEWAL_INTERVAL_MILLIS,
       )
-      setError(null)
-      setPrimaryMediaPending(false)
-      setSecondaryMediaPending(false)
-      setOcclusionMediaPending(false)
-    }, [initialContent])
+      window.addEventListener('focus', renewIfActive)
+      return () => {
+        window.clearInterval(interval)
+        window.removeEventListener('focus', renewIfActive)
+      }
+    }, [mediaLeaseId])
+
+    useEffect(() => {
+      resetForm()
+    }, [resetForm])
 
     const save = async () => {
       if (saving) {
@@ -210,14 +253,19 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
       setSaving(true)
       try {
         if (initialContent) {
-          const item = await updateCardContent({
-            id: initialContent.id,
-            expectedUpdatedAt: initialContent.updatedAt,
-            content,
-          })
+          const item = await updateCardContent(
+            {
+              id: initialContent.id,
+              expectedUpdatedAt: initialContent.updatedAt,
+              content,
+            },
+            mediaLeaseId,
+          )
+          setMediaLeaseId(createUuidV7())
           await onSaved(item)
         } else {
-          await createCardContent(content)
+          await createCardContent(content, mediaLeaseId)
+          setMediaLeaseId(createUuidV7())
           setFront('')
           setBack('')
           setSource('')
@@ -325,6 +373,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
           <>
             <OcclusionImagePicker
               disabled={saving}
+              leaseId={mediaLeaseId}
               onError={(cause) => setError(errorMessage(cause))}
               onImage={(image) => {
                 setError(null)
@@ -365,7 +414,8 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
             <RichTextEditor
               ariaLabel={primaryLabel}
               disabled={saving}
-              key={`primary-${cardType}`}
+              ingestImage={() => ingestClipboardImage(mediaLeaseId)}
+              key={`primary-${cardType}-${mediaLeaseId}`}
               onChange={setFront}
               onMediaError={(cause) => setError(errorMessage(cause))}
               onPendingMediaChange={(pending) => {
@@ -399,7 +449,8 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
             <RichTextEditor
               ariaLabel={secondaryLabel}
               disabled={saving}
-              key={`secondary-${cardType}`}
+              ingestImage={() => ingestClipboardImage(mediaLeaseId)}
+              key={`secondary-${cardType}-${mediaLeaseId}`}
               onChange={setBack}
               onMediaError={(cause) => setError(errorMessage(cause))}
               onPendingMediaChange={(pending) => {

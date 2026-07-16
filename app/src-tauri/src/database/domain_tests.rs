@@ -19,6 +19,9 @@ use super::{
 };
 
 const FIXTURE_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
+const MEDIA_LEASE_A: &str = "01980c8e-6c00-7000-8000-000000000911";
+const MEDIA_LEASE_B: &str = "01980c8e-6c00-7000-8000-000000000912";
+const MEDIA_LEASE_C: &str = "01980c8e-6c00-7000-8000-000000000913";
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -513,6 +516,559 @@ fn image_ocr_queue_row(
             },
         )
         .expect("image OCR queue row")
+}
+
+#[test]
+fn expired_draft_media_is_aged_before_reaping_and_is_not_claimed_for_ocr() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let bytes = b"cancelled quick add image".to_vec();
+    let image = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: bytes.clone(),
+                natural_width: 800,
+                natural_height: 600,
+            },
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("leased image ingestion");
+    let lease_expires_at = media_lease_expiry(&paths, MEDIA_LEASE_A);
+    assert!(database
+        .claim_next_ocr_job(lease_expires_at)
+        .expect("orphan OCR claim")
+        .is_none());
+
+    let expired = database
+        .maintain_media(lease_expires_at, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("lease-expiry maintenance");
+    assert_eq!(expired.integrity.orphaned_image_ids, vec![image.id.clone()]);
+    assert_eq!(expired.cleanup.retired_image_count, 0);
+
+    let before_grace = database
+        .maintain_media(
+            lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS - 1,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("pre-grace maintenance");
+    assert_eq!(
+        before_grace.integrity.orphaned_image_ids,
+        vec![image.id.clone()]
+    );
+    assert_eq!(before_grace.cleanup.retired_image_count, 0);
+
+    let reaped = database
+        .maintain_media(
+            lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("post-grace maintenance");
+    assert_eq!(reaped.cleanup.retired_image_count, 1);
+    assert_eq!(reaped.cleanup.deleted_blob_count, 1);
+    assert_eq!(reaped.cleanup.reclaimed_bytes, bytes.len() as u64);
+    assert_eq!(media_row_counts(&paths), (0, 0));
+
+    let removed_before_save = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"removed before card save".to_vec(),
+                natural_width: 400,
+                natural_height: 300,
+            },
+            MEDIA_LEASE_B.into(),
+        )
+        .expect("removed draft image");
+    database
+        .client()
+        .create_card_content(
+            basic_draft("saved without the image", "answer", None),
+            MEDIA_LEASE_B.into(),
+        )
+        .expect("card saved after image removal");
+    let orphaned_at: i64 = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("main database")
+        .query_row(
+            "SELECT orphaned_at FROM image WHERE id = ?1",
+            [&removed_before_save.id],
+            |row| row.get(0),
+        )
+        .expect("durable orphan timestamp");
+    let removed_reap = database
+        .maintain_media(
+            orphaned_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("removed image maintenance");
+    assert_eq!(removed_reap.cleanup.retired_image_count, 1);
+    assert_eq!(media_row_counts(&paths), (0, 0));
+}
+
+#[test]
+fn reattachment_and_saved_deduplication_cancel_orphan_eligibility() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let canonical = CanonicalImage {
+        bytes: b"reattached deduplicated image".to_vec(),
+        natural_width: 900,
+        natural_height: 700,
+    };
+    let image = database
+        .client()
+        .ingest_image(canonical.clone(), MEDIA_LEASE_A.into())
+        .expect("first draft image");
+    let first_expiry = media_lease_expiry(&paths, MEDIA_LEASE_A);
+    database
+        .maintain_media(first_expiry, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("first lease expiry");
+
+    let duplicate = database
+        .client()
+        .ingest_image(canonical, MEDIA_LEASE_B.into())
+        .expect("reattached image");
+    assert_eq!(duplicate.id, image.id);
+    let old_grace_end = first_expiry + super::media::MEDIA_ORPHAN_GRACE_MILLIS;
+    database
+        .client()
+        .renew_media_lease(MEDIA_LEASE_B.into(), old_grace_end)
+        .expect("lease renewal");
+    let protected = database
+        .maintain_media(old_grace_end, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("reattachment maintenance");
+    assert!(protected.integrity.orphaned_image_ids.is_empty());
+    assert_eq!(
+        protected.cleanup,
+        super::media::MediaCleanupResult::default()
+    );
+
+    let token = format!("{{{{image:{};width=75%}}}}", image.id);
+    database
+        .client()
+        .create_card_content(
+            basic_draft(&token, "saved answer", None),
+            MEDIA_LEASE_B.into(),
+        )
+        .expect("saved image card");
+    let third = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"reattached deduplicated image".to_vec(),
+                natural_width: 900,
+                natural_height: 700,
+            },
+            MEDIA_LEASE_C.into(),
+        )
+        .expect("saved image deduplication");
+    assert_eq!(third.id, image.id);
+    let third_expiry = media_lease_expiry(&paths, MEDIA_LEASE_C);
+    let retained = database
+        .maintain_media(
+            third_expiry + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("saved media maintenance");
+    assert!(retained.integrity.orphaned_image_ids.is_empty());
+    assert_eq!(retained.cleanup.retired_image_count, 0);
+    assert_eq!(media_row_counts(&paths), (1, 1));
+}
+
+#[test]
+fn a_save_during_orphan_grace_restores_an_expired_draft_image() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"long-running editor image".to_vec(),
+                natural_width: 900,
+                natural_height: 600,
+            },
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("draft image");
+    let lease_expires_at = media_lease_expiry(&paths, MEDIA_LEASE_A);
+    let expired = database
+        .maintain_media(lease_expires_at, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("lease-expiry maintenance");
+    assert_eq!(expired.integrity.orphaned_image_ids, vec![image.id.clone()]);
+
+    let token = format!("{{{{image:{};width=80%}}}}", image.id);
+    database
+        .client()
+        .create_card_content(
+            basic_draft(&token, "committed after 25 hours", None),
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("save during orphan grace");
+    let orphaned_at: Option<i64> = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("main database")
+        .query_row(
+            "SELECT orphaned_at FROM image WHERE id = ?1",
+            [&image.id],
+            |row| row.get(0),
+        )
+        .expect("restored image");
+    assert_eq!(orphaned_at, None);
+
+    let retained = database
+        .maintain_media(
+            lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("post-save maintenance");
+    assert_eq!(retained.cleanup.retired_image_count, 0);
+    assert_eq!(media_row_counts(&paths), (1, 1));
+}
+
+#[test]
+fn an_active_editor_can_renew_an_expired_lease_during_orphan_grace() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"renewed long-running editor image".to_vec(),
+                natural_width: 700,
+                natural_height: 500,
+            },
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("draft image");
+    let lease_expires_at = media_lease_expiry(&paths, MEDIA_LEASE_A);
+    database
+        .maintain_media(lease_expires_at, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("lease-expiry maintenance");
+
+    let renewed_at = lease_expires_at + 1;
+    assert_eq!(
+        database
+            .client()
+            .renew_media_lease(MEDIA_LEASE_A.into(), renewed_at)
+            .expect("expired lease renewal"),
+        1
+    );
+    let report = database
+        .maintain_media(renewed_at, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("renewed lease maintenance");
+    assert!(report.integrity.orphaned_image_ids.is_empty());
+    assert_eq!(report.cleanup.retired_image_count, 0);
+    assert_eq!(media_row_counts(&paths), (1, 1));
+    assert_eq!(
+        database
+            .client()
+            .load_media_payload(image.id)
+            .unwrap()
+            .bytes,
+        b"renewed long-running editor image"
+    );
+}
+
+#[test]
+fn abandoned_leases_survive_restart_and_running_ocr_completion_is_discarded_after_reap() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"abandoned occlusion draft".to_vec(),
+                natural_width: 720,
+                natural_height: 540,
+            },
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("abandoned image");
+    let lease_expires_at: i64 = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("main database")
+        .query_row(
+            "SELECT expires_at FROM image_draft_lease WHERE lease_id = ?1",
+            [MEDIA_LEASE_A],
+            |row| row.get(0),
+        )
+        .expect("lease expiry");
+    drop(database);
+
+    let reopened = initialize_test(&paths);
+    let first_launch = reopened
+        .maintain_media(lease_expires_at, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("launch reconciliation");
+    assert_eq!(first_launch.integrity.orphaned_image_ids, vec![image.id]);
+    assert_eq!(first_launch.cleanup.retired_image_count, 0);
+    drop(reopened);
+
+    let reopened = initialize_test(&paths);
+    let reaped = reopened
+        .maintain_media(
+            lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("restart post-grace reconciliation");
+    assert_eq!(reaped.cleanup.retired_image_count, 1);
+    assert_eq!(media_row_counts(&paths), (0, 0));
+
+    let running = reopened
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"running OCR orphan".to_vec(),
+                natural_width: 640,
+                natural_height: 480,
+            },
+            MEDIA_LEASE_B.into(),
+        )
+        .expect("running OCR image");
+    let claimed_at = lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS + 1;
+    reopened
+        .client()
+        .renew_media_lease(MEDIA_LEASE_B.into(), claimed_at)
+        .expect("running lease renewal");
+    let job = reopened
+        .claim_next_ocr_job(claimed_at)
+        .expect("OCR claim")
+        .expect("running OCR job");
+    assert_eq!(job.image_id, running.id);
+    let running_lease_expires_at = media_lease_expiry(&paths, MEDIA_LEASE_B);
+    reopened
+        .maintain_media(
+            running_lease_expires_at,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("running OCR lease expiry");
+    let reaped_at = running_lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS;
+    reopened
+        .maintain_media(reaped_at, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("running OCR reap");
+    reopened
+        .complete_image_ocr(&job, Ok("late OCR result".into()), reaped_at + 1)
+        .expect("discarded late OCR completion");
+    assert_eq!(media_row_counts(&paths), (0, 0));
+}
+
+#[test]
+fn media_delete_failure_leaves_a_retryable_extra_blob_without_missing_references() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"media failure boundary".to_vec(),
+                natural_width: 500,
+                natural_height: 500,
+            },
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("failure-boundary image");
+    let lease_expires_at = media_lease_expiry(&paths, MEDIA_LEASE_A);
+    database
+        .maintain_media(lease_expires_at, super::media::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("lease-expiry maintenance");
+
+    let media = connection::open_writer(&paths.media, DatabaseKind::Media, FileState::Existing)
+        .expect("media database");
+    assert!(media.execute("DELETE FROM media_blob", []).is_err());
+    media
+        .execute_batch(
+            "CREATE TRIGGER test_abort_media_reap
+             BEFORE DELETE ON media_blob
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected media delete failure');
+             END;",
+        )
+        .expect("failure trigger");
+    drop(media);
+
+    assert!(database
+        .maintain_media(
+            lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .is_err());
+    assert_eq!(media_row_counts(&paths), (0, 1));
+    let main = connection::open_read_only(&paths.main, DatabaseKind::Main).expect("main database");
+    assert_eq!(
+        main.query_row(
+            "SELECT count(*) FROM media_blob_reap_candidate",
+            [],
+            |row| { row.get::<_, i64>(0) }
+        )
+        .expect("durable blob candidate"),
+        1
+    );
+    drop(main);
+
+    let media = connection::open_writer(&paths.media, DatabaseKind::Media, FileState::Existing)
+        .expect("media database");
+    media
+        .execute_batch("DROP TRIGGER test_abort_media_reap")
+        .expect("remove failure trigger");
+    drop(media);
+    let retried = database
+        .maintain_media(
+            lease_expires_at + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("retry maintenance");
+    assert_eq!(retried.integrity.extra_blob_sha256.len(), 1);
+    assert_eq!(retried.cleanup.deleted_blob_count, 1);
+    assert_eq!(media_row_counts(&paths), (0, 0));
+    assert!(matches!(
+        database.client().load_media_payload(image.id),
+        Err(DatabaseError::NotFound { .. })
+    ));
+}
+
+#[test]
+fn tombstoned_occlusion_history_retains_its_source_media() {
+    const DEFINITION_ID: &str = "01980c8e-6c00-7000-8000-000000000921";
+    const LAYER_ID: &str = "01980c8e-6c00-7000-8000-000000000922";
+    const MASK_ID: &str = "01980c8e-6c00-7000-8000-000000000923";
+
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"retained occlusion history".to_vec(),
+                natural_width: 1_000,
+                natural_height: 800,
+            },
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("occlusion source");
+    let context = database
+        .client()
+        .create_card_content(
+            occlusion_draft(
+                &image.id,
+                DEFINITION_ID,
+                OcclusionMode::HideOneGuessOne,
+                vec![occlusion_layer(
+                    LAYER_ID,
+                    "retained",
+                    &[(MASK_ID, 0.1, 0.1, 0.2, 0.2, OcclusionMaskColor::White)],
+                )],
+            ),
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("occlusion card");
+    let item = database
+        .search_card_content(SearchCardContentInput {
+            query: String::new(),
+            limit: 10,
+            offset: 0,
+        })
+        .expect("saved content")
+        .into_iter()
+        .find(|item| item.card_content.id() == context.card_content.id())
+        .expect("occlusion list item");
+    database
+        .delete_card_content(DeleteCardContentInput {
+            card_content_id: context.card_content.id().into(),
+            expected_updated_at: context.card_content.updated_at(),
+            expected_lifecycle_updated_at: item.lifecycle_updated_at,
+        })
+        .expect("occlusion tombstone");
+
+    let now = super::media::now_millis().expect("maintenance time");
+    let report = database
+        .maintain_media(
+            now + super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("history-aware maintenance");
+    assert!(report.integrity.orphaned_image_ids.is_empty());
+    assert_eq!(report.cleanup.retired_image_count, 0);
+    assert_eq!(media_row_counts(&paths), (1, 1));
+}
+
+#[test]
+fn maintenance_reports_a_missing_blob_for_referenced_content() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .client()
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"missing referenced diagnostic".to_vec(),
+                natural_width: 600,
+                natural_height: 400,
+            },
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("diagnostic image");
+    let token = format!("{{{{image:{};width=80%}}}}", image.id);
+    database
+        .client()
+        .create_card_content(
+            basic_draft(&token, "diagnostic answer", None),
+            MEDIA_LEASE_A.into(),
+        )
+        .expect("referenced image card");
+
+    let main = connection::open_read_only(&paths.main, DatabaseKind::Main).expect("main database");
+    let hash: Vec<u8> = main
+        .query_row(
+            "SELECT sha256 FROM image WHERE id = ?1",
+            [&image.id],
+            |row| row.get(0),
+        )
+        .expect("image hash");
+    drop(main);
+    let mut media = connection::open_writer(&paths.media, DatabaseKind::Media, FileState::Existing)
+        .expect("media database");
+    let transaction = media.transaction().expect("media transaction");
+    transaction
+        .execute(
+            "INSERT INTO media_blob_reap_authorization(sha256) VALUES (?1)",
+            [&hash],
+        )
+        .expect("test delete authorization");
+    transaction
+        .execute("DELETE FROM media_blob WHERE sha256 = ?1", [&hash])
+        .expect("injected missing blob");
+    transaction.commit().expect("missing blob commit");
+
+    let report = database
+        .maintain_media(
+            super::media::now_millis().expect("maintenance time"),
+            super::media::MEDIA_ORPHAN_GRACE_MILLIS,
+        )
+        .expect("integrity maintenance");
+    assert_eq!(
+        report.integrity.missing_referenced_blob_image_ids,
+        vec![image.id]
+    );
+    assert_eq!(report.cleanup.deleted_blob_count, 0);
+}
+
+fn media_row_counts(paths: &DatabasePaths) -> (i64, i64) {
+    let main = connection::open_read_only(&paths.main, DatabaseKind::Main).expect("main database");
+    let media =
+        connection::open_read_only(&paths.media, DatabaseKind::Media).expect("media database");
+    let images = main
+        .query_row("SELECT count(*) FROM image", [], |row| row.get(0))
+        .expect("image count");
+    let blobs = media
+        .query_row("SELECT count(*) FROM media_blob", [], |row| row.get(0))
+        .expect("blob count");
+    (images, blobs)
+}
+
+fn media_lease_expiry(paths: &DatabasePaths, lease_id: &str) -> i64 {
+    connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("main database")
+        .query_row(
+            "SELECT max(expires_at) FROM image_draft_lease WHERE lease_id = ?1",
+            [lease_id],
+            |row| row.get(0),
+        )
+        .expect("media lease expiry")
 }
 
 #[test]

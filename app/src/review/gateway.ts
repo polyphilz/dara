@@ -28,14 +28,19 @@ export const tauriReviewGateway: ReviewGateway = {
 
 export function createCardContent(
   input: CardContentDraft,
+  mediaLeaseId: string,
 ): Promise<ReviewContext> {
-  return invoke<ReviewContext>('create_card_content', { input })
+  return invoke<ReviewContext>('create_card_content', { input, mediaLeaseId })
 }
 
 export function updateCardContent(
   input: UpdateCardContentInput,
+  mediaLeaseId: string,
 ): Promise<CardContentListItem> {
-  return invoke<CardContentListItem>('update_card_content', { input })
+  return invoke<CardContentListItem>('update_card_content', {
+    input,
+    mediaLeaseId,
+  })
 }
 
 export function searchCardContent(
