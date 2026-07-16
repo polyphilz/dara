@@ -33,6 +33,21 @@ Object.defineProperty(SVGElement.prototype, 'getBBox', {
   value: () => new DOMRect(),
 })
 
+Object.defineProperties(SVGElement.prototype, {
+  hasPointerCapture: {
+    configurable: true,
+    value: () => true,
+  },
+  releasePointerCapture: {
+    configurable: true,
+    value: () => undefined,
+  },
+  setPointerCapture: {
+    configurable: true,
+    value: () => undefined,
+  },
+})
+
 Object.defineProperty(globalThis, 'CSS', {
   configurable: true,
   value: { supports: () => true },

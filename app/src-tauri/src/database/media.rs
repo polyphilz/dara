@@ -39,7 +39,7 @@ impl ImageOcrStatus {
         }
     }
 
-    fn from_db(value: &str) -> Result<Self> {
+    pub(super) fn from_db(value: &str) -> Result<Self> {
         if value == Self::Pending.as_db_str() {
             Ok(Self::Pending)
         } else if value == Self::Ready.as_db_str() {
@@ -249,6 +249,66 @@ pub(super) fn ingest_image(
     };
     transaction.commit()?;
     Ok(record)
+}
+
+pub(super) fn load_active_image_record(
+    connection: &Connection,
+    image_id: &str,
+) -> Result<ImageRecord> {
+    validate_uuid_v7(image_id, "sourceImageId")?;
+    connection
+        .query_row(
+            "SELECT id, mime_type, natural_width, natural_height, ocr_status
+             FROM image
+             WHERE id = ?1 AND deleted_at IS NULL",
+            [image_id],
+            |row| {
+                let ocr_status = row.get::<_, String>(4)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, u32>(3)?,
+                    ocr_status,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| DatabaseError::NotFound {
+            entity: "image",
+            id: image_id.into(),
+        })
+        .and_then(
+            |(id, mime_type, natural_width, natural_height, ocr_status)| {
+                Ok(ImageRecord {
+                    id,
+                    mime_type,
+                    natural_width,
+                    natural_height,
+                    ocr_status: ImageOcrStatus::from_db(&ocr_status)?,
+                })
+            },
+        )
+}
+
+pub(super) fn active_image_ocr_text(
+    transaction: &Transaction<'_>,
+    image_id: &str,
+) -> Result<String> {
+    validate_uuid_v7(image_id, "sourceImageId")?;
+    transaction
+        .query_row(
+            "SELECT CASE WHEN ocr_status = ?1 THEN ocr_text ELSE '' END
+             FROM image
+             WHERE id = ?2 AND deleted_at IS NULL",
+            params![ImageOcrStatus::Ready.as_db_str(), image_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .ok_or_else(|| DatabaseError::NotFound {
+            entity: "image",
+            id: image_id.into(),
+        })
 }
 
 pub(super) fn load_media_payload(
@@ -720,7 +780,22 @@ fn rebuild_search_documents_for_image(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )?;
         let references = parse_card_image_references(&front_md, &back_md)?;
-        let ocr_texts = referenced_ocr_texts(transaction, &references)?;
+        let mut ocr_texts = referenced_ocr_texts(transaction, &references)?;
+        let occlusion_source = transaction
+            .query_row(
+                "SELECT source_image_id
+                 FROM card_occlusion_content
+                 WHERE card_content_id = ?1 AND deleted_at IS NULL",
+                [&card_content_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        if let Some(source_image_id) = occlusion_source {
+            let source_ocr = active_image_ocr_text(transaction, &source_image_id)?;
+            if !source_ocr.trim().is_empty() && !ocr_texts.contains(&source_ocr) {
+                ocr_texts.push(source_ocr);
+            }
+        }
         let (current_body, current_updated_at) = transaction.query_row(
             "SELECT body, updated_at FROM search_document WHERE card_content_id = ?1",
             [&card_content_id],

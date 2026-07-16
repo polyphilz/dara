@@ -21,6 +21,8 @@ import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
 import { ClozeProjection } from '../../cloze/cloze.ts'
+import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
+import { occlusionLayerId } from '../../occlusion/occlusion.ts'
 import { CardForm } from '../shared/CardForm.tsx'
 import { CardFormVariant } from '../shared/card-form.ts'
 import { CardBrowser } from './CardBrowser.tsx'
@@ -49,6 +51,7 @@ type MainWindowMode =
 
 export function MainWindow() {
   const [mode, setMode] = useState<MainWindowMode>(MainWindowMode.Home)
+  const [browseNavigationToken, setBrowseNavigationToken] = useState(0)
   const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
   const [homeRefreshToken, setHomeRefreshToken] = useState(0)
   const refreshHomeStats = useCallback(() => {
@@ -231,7 +234,10 @@ export function MainWindow() {
 
   const showHome = useCallback(() => setMode(MainWindowMode.Home), [])
   const showCreate = useCallback(() => setMode(MainWindowMode.Create), [])
-  const showBrowse = useCallback(() => setMode(MainWindowMode.Browse), [])
+  const showBrowse = useCallback(() => {
+    setMode(MainWindowMode.Browse)
+    setBrowseNavigationToken((value) => value + 1)
+  }, [])
   const showReview = useCallback(() => {
     setMode(MainWindowMode.Review)
     void controller.refresh()
@@ -268,6 +274,7 @@ export function MainWindow() {
         />
       ) : mode === MainWindowMode.Browse ? (
         <CardBrowser
+          navigationToken={browseNavigationToken}
           onCardContentChanged={cardContentChanged}
           onQueueChanged={queueChanged}
           refreshToken={browseRefreshToken}
@@ -320,7 +327,10 @@ function ReviewContent({
             <p className="notice">{state.notice}</p>
           )}
           <article className="review-card">
-            <CardAnswer content={content} />
+            <CardAnswer
+              content={content}
+              variantKey={state.card.context.reviewCard.variantKey}
+            />
           </article>
           <div className="grade-grid" aria-label="Grade this card">
             {grades.map(({ grade, label }) => (
@@ -394,10 +404,31 @@ function CardQuestion({
           variantKey={variantKey}
         />
       )
+    case CardContentType.Occlusion: {
+      const targetLayerId = occlusionLayerId(variantKey)
+      return (
+        <>
+          {content.frontMd.trim() && <MarkdownRenderer source={content.frontMd} />}
+          {targetLayerId && (
+            <OcclusionReview
+              definition={content.occlusion}
+              revealed={false}
+              targetLayerId={targetLayerId}
+            />
+          )}
+        </>
+      )
+    }
   }
 }
 
-function CardAnswer({ content }: { content: CardContent }) {
+function CardAnswer({
+  content,
+  variantKey,
+}: {
+  content: CardContent
+  variantKey: string
+}) {
   switch (content.type) {
     case CardContentType.Basic:
       return (
@@ -426,6 +457,27 @@ function CardAnswer({ content }: { content: CardContent }) {
           )}
         </>
       )
+    case CardContentType.Occlusion: {
+      const targetLayerId = occlusionLayerId(variantKey)
+      return (
+        <>
+          {content.frontMd.trim() && <MarkdownRenderer source={content.frontMd} />}
+          {targetLayerId && (
+            <OcclusionReview
+              definition={content.occlusion}
+              revealed
+              targetLayerId={targetLayerId}
+            />
+          )}
+          {(content.backMd.trim() || content.source) && (
+            <div className="answer">
+              {content.backMd.trim() && <MarkdownRenderer source={content.backMd} />}
+              {content.source && <CardSource value={content.source} />}
+            </div>
+          )}
+        </>
+      )
+    }
   }
 }
 

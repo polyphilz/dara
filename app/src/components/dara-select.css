@@ -32,10 +32,21 @@
 }
 
 .dara-select-chevron {
+  display: block;
+  flex: 0 0 auto;
+  width: 9px;
+  height: 6px;
+  margin-left: 2px;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1;
-  transform: translateY(-1px);
+}
+
+.dara-select-chevron path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5px;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .dara-select-popover {

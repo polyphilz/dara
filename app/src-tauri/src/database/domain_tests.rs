@@ -9,9 +9,10 @@ use super::{
     connection::{self, DatabaseKind, FileState},
     domain::{
         CardContent, CardContentDraft, CardContentReviewStatus, CardContentType,
-        DeleteCardContentInput, MutationDisposition, ReviewCardCache, ReviewCardState,
-        ReviewCardStatus, ReviewEventType, ReviewFact, SchedulerLogV1, SearchCardContentInput,
-        SetCardContentSuspendedInput, UpdateCardContentInput,
+        DeleteCardContentInput, MutationDisposition, OcclusionDefinitionDraft, OcclusionMaskColor,
+        OcclusionMaskDraft, OcclusionMaskLayerDraft, OcclusionMode, ReviewCardCache,
+        ReviewCardState, ReviewCardStatus, ReviewEventType, ReviewFact, SchedulerLogV1,
+        SearchCardContentInput, SetCardContentSuspendedInput, UpdateCardContentInput,
     },
     initialize, CanonicalImage, Database, DatabaseError, DatabasePaths, InitializationOptions,
     RecordGradeInput, ReviewContext, UndoLastGradeInput,
@@ -149,6 +150,47 @@ fn cloze_draft(
         source: source.map(str::to_owned),
         variant_keys: variant_keys.iter().map(|key| (*key).to_owned()).collect(),
         search_md: search_md.into(),
+    }
+}
+
+fn occlusion_draft(
+    source_image_id: &str,
+    definition_id: &str,
+    mode: OcclusionMode,
+    layers: Vec<OcclusionMaskLayerDraft>,
+) -> CardContentDraft {
+    CardContentDraft::Occlusion {
+        front_md: "Identify the covered structure.".into(),
+        back_md: "Anatomy plate".into(),
+        source: Some("Atlas".into()),
+        occlusion: OcclusionDefinitionDraft {
+            id: definition_id.into(),
+            source_image_id: source_image_id.into(),
+            mode,
+            layers,
+        },
+    }
+}
+
+fn occlusion_layer(
+    id: &str,
+    label: &str,
+    masks: &[(&str, f64, f64, f64, f64, OcclusionMaskColor)],
+) -> OcclusionMaskLayerDraft {
+    OcclusionMaskLayerDraft {
+        id: id.into(),
+        label: Some(label.into()),
+        masks: masks
+            .iter()
+            .map(|(id, x, y, width, height, color)| OcclusionMaskDraft {
+                id: (*id).into(),
+                x: *x,
+                y: *y,
+                width: *width,
+                height: *height,
+                color: *color,
+            })
+            .collect(),
     }
 }
 
@@ -299,6 +341,7 @@ fn image_ingestion_deduplicates_and_ocr_fans_out_into_search() {
         .search_card_content(SearchCardContentInput {
             query: "ATP synthase".into(),
             limit: 10,
+            offset: 0,
         })
         .expect("OCR lexical search");
     let result_ids = results
@@ -624,6 +667,215 @@ fn cloze_edits_reconcile_variants_without_losing_retained_history() {
 }
 
 #[test]
+fn image_occlusion_persists_layers_and_reconciles_siblings_by_stable_layer_id() {
+    const DEFINITION_ID: &str = "01980c8e-6c00-7000-8000-000000000301";
+    const LAYER_ONE_ID: &str = "01980c8e-6c00-7000-8000-000000000302";
+    const LAYER_TWO_ID: &str = "01980c8e-6c00-7000-8000-000000000303";
+    const LAYER_THREE_ID: &str = "01980c8e-6c00-7000-8000-000000000304";
+    const MASK_ONE_ID: &str = "01980c8e-6c00-7000-8000-000000000305";
+    const MASK_TWO_A_ID: &str = "01980c8e-6c00-7000-8000-000000000306";
+    const MASK_TWO_B_ID: &str = "01980c8e-6c00-7000-8000-000000000307";
+    const MASK_THREE_ID: &str = "01980c8e-6c00-7000-8000-000000000308";
+
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .ingest_image(CanonicalImage {
+            bytes: b"canonical image occlusion source".to_vec(),
+            natural_width: 1200,
+            natural_height: 800,
+        })
+        .expect("source image");
+    let initial = database
+        .create_card_content(occlusion_draft(
+            &image.id,
+            DEFINITION_ID,
+            OcclusionMode::HideOneGuessOne,
+            vec![
+                occlusion_layer(
+                    LAYER_ONE_ID,
+                    "Aorta",
+                    &[(MASK_ONE_ID, 0.1, 0.2, 0.15, 0.1, OcclusionMaskColor::White)],
+                ),
+                occlusion_layer(
+                    LAYER_TWO_ID,
+                    "Pulmonary veins",
+                    &[
+                        (
+                            MASK_TWO_A_ID,
+                            0.4,
+                            0.2,
+                            0.12,
+                            0.08,
+                            OcclusionMaskColor::Black,
+                        ),
+                        (
+                            MASK_TWO_B_ID,
+                            0.62,
+                            0.21,
+                            0.12,
+                            0.08,
+                            OcclusionMaskColor::White,
+                        ),
+                    ],
+                ),
+            ],
+        ))
+        .expect("image occlusion card");
+
+    let CardContent::Occlusion { occlusion, .. } = &initial.card_content else {
+        panic!("expected OCCLUSION content");
+    };
+    assert_eq!(occlusion.id, DEFINITION_ID);
+    assert_eq!(occlusion.source_image, image);
+    assert_eq!(occlusion.layers.len(), 2);
+    assert_eq!(occlusion.layers[1].masks.len(), 2);
+    assert_eq!(
+        initial.review_card.variant_key,
+        format!("layer:{LAYER_ONE_ID}")
+    );
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let initial_variants = connection
+        .prepare(
+            "SELECT variant_key, id
+             FROM review_card
+             WHERE card_content_id = ?1 AND deleted_at IS NULL
+             ORDER BY variant_key",
+        )
+        .expect("variant query")
+        .query_map([initial.card_content.id()], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("variant rows")
+        .collect::<rusqlite::Result<HashMap<_, _>>>()
+        .expect("initial variants");
+    assert_eq!(initial_variants.len(), 2);
+    drop(connection);
+
+    let graded = database
+        .record_grade(grade_input(&initial, &fixture.steps[0]))
+        .expect("grade retained layer")
+        .context;
+    let updated = database
+        .update_card_content(UpdateCardContentInput {
+            id: initial.card_content.id().into(),
+            expected_updated_at: initial.card_content.updated_at(),
+            content: occlusion_draft(
+                &image.id,
+                DEFINITION_ID,
+                OcclusionMode::HideAllGuessOne,
+                vec![
+                    occlusion_layer(
+                        LAYER_ONE_ID,
+                        "Ascending aorta",
+                        &[(
+                            MASK_ONE_ID,
+                            0.12,
+                            0.22,
+                            0.16,
+                            0.11,
+                            OcclusionMaskColor::Black,
+                        )],
+                    ),
+                    occlusion_layer(
+                        LAYER_THREE_ID,
+                        "Vena cava",
+                        &[(
+                            MASK_THREE_ID,
+                            0.72,
+                            0.45,
+                            0.1,
+                            0.12,
+                            OcclusionMaskColor::White,
+                        )],
+                    ),
+                ],
+            ),
+        })
+        .expect("occlusion edit");
+
+    let retained = database
+        .load_review_context(graded.review_card.id.clone())
+        .expect("retained layer context");
+    assert_eq!(retained.review_card.id, graded.review_card.id);
+    assert_eq!(retained.review_history.len(), 1);
+    assert_eq!(retained.cache, graded.cache);
+    let CardContent::Occlusion { occlusion, .. } = &updated.card_content else {
+        panic!("expected updated OCCLUSION content");
+    };
+    assert_eq!(occlusion.mode, OcclusionMode::HideAllGuessOne);
+    assert_eq!(occlusion.layers[0].id, LAYER_ONE_ID);
+    assert_eq!(occlusion.layers[0].masks[0].id, MASK_ONE_ID);
+    assert_eq!(occlusion.layers[0].masks[0].x, 0.12);
+    assert_eq!(retained.card_content, updated.card_content);
+    assert_eq!(updated.review_cards.len(), 2);
+    let retained_summary = updated
+        .review_cards
+        .iter()
+        .find(|card| card.id == graded.review_card.id)
+        .expect("retained layer summary");
+    assert_eq!(retained_summary.state, graded.cache.state);
+    assert_eq!(retained_summary.due_at, graded.cache.due_at);
+    assert_eq!(retained_summary.due_study_day, graded.cache.due_study_day);
+    assert_eq!(retained_summary.last_review_at, graded.cache.last_review_at);
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let variants = connection
+        .prepare(
+            "SELECT variant_key, id, deleted_at
+             FROM review_card
+             WHERE card_content_id = ?1
+             ORDER BY created_at, id",
+        )
+        .expect("reconciled variants")
+        .query_map([initial.card_content.id()], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<i64>>(2)?,
+            ))
+        })
+        .expect("variant rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("variant values");
+    assert!(variants.iter().any(|(key, id, deleted_at)| {
+        key == &format!("layer:{LAYER_ONE_ID}")
+            && id
+                == initial_variants
+                    .get(&format!("layer:{LAYER_ONE_ID}"))
+                    .expect("initial layer one")
+            && deleted_at.is_none()
+    }));
+    assert!(variants.iter().any(|(key, _, deleted_at)| {
+        key == &format!("layer:{LAYER_TWO_ID}") && deleted_at.is_some()
+    }));
+    assert!(variants.iter().any(|(key, _, deleted_at)| {
+        key == &format!("layer:{LAYER_THREE_ID}") && deleted_at.is_none()
+    }));
+    let removed_layer_deleted_at: Option<i64> = connection
+        .query_row(
+            "SELECT deleted_at FROM card_occlusion_mask_layer WHERE id = ?1",
+            [LAYER_TWO_ID],
+            |row| row.get(0),
+        )
+        .expect("removed layer tombstone");
+    assert!(removed_layer_deleted_at.is_some());
+    let removed_mask_count: i64 = connection
+        .query_row(
+            "SELECT count(*) FROM card_occlusion_mask
+             WHERE card_occlusion_mask_layer_id = ?1 AND deleted_at IS NOT NULL",
+            [LAYER_TWO_ID],
+            |row| row.get(0),
+        )
+        .expect("removed mask tombstones");
+    assert_eq!(removed_mask_count, 2);
+}
+
+#[test]
 fn cloze_commands_reject_invalid_variants_and_card_type_changes() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);
@@ -654,6 +906,56 @@ fn cloze_commands_reject_invalid_variants_and_card_type_changes() {
 }
 
 #[test]
+fn browse_search_paginates_without_hiding_authored_items() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    for index in 1..=3 {
+        database
+            .create_card_content(basic_draft(
+                &format!("front {index}"),
+                &format!("back {index}"),
+                None,
+            ))
+            .expect("paginated card");
+    }
+
+    let first_page = database
+        .search_card_content(SearchCardContentInput {
+            query: String::new(),
+            limit: 2,
+            offset: 0,
+        })
+        .expect("first page");
+    let second_page = database
+        .search_card_content(SearchCardContentInput {
+            query: String::new(),
+            limit: 2,
+            offset: 2,
+        })
+        .expect("second page");
+    assert_eq!(first_page.len(), 2);
+    assert_eq!(second_page.len(), 1);
+    let mut ids = first_page
+        .iter()
+        .chain(&second_page)
+        .map(|item| item.card_content.id())
+        .collect::<Vec<_>>();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), 3);
+    assert!(first_page.iter().all(|item| item.review_cards.len() == 1));
+
+    assert!(matches!(
+        database.search_card_content(SearchCardContentInput {
+            query: String::new(),
+            limit: 2,
+            offset: -1,
+        }),
+        Err(DatabaseError::InvalidInput(_))
+    ));
+}
+
+#[test]
 fn lexical_search_and_protected_edits_share_one_plain_text_document() {
     let fixture = fixture();
     let (_directory, paths) = test_paths();
@@ -670,6 +972,7 @@ fn lexical_search_and_protected_edits_share_one_plain_text_document() {
         .search_card_content(SearchCardContentInput {
             query: "copp".into(),
             limit: 20,
+            offset: 0,
         })
         .expect("substring search");
     assert_eq!(matches.len(), 1);
@@ -681,6 +984,7 @@ fn lexical_search_and_protected_edits_share_one_plain_text_document() {
             .search_card_content(SearchCardContentInput {
                 query: "opp".into(),
                 limit: 20,
+                offset: 0,
             })
             .expect("infix search")
             .len(),
@@ -691,6 +995,7 @@ fn lexical_search_and_protected_edits_share_one_plain_text_document() {
             .search_card_content(SearchCardContentInput {
                 query: "op".into(),
                 limit: 20,
+                offset: 0,
             })
             .expect("short literal search")
             .len(),
@@ -714,6 +1019,7 @@ fn lexical_search_and_protected_edits_share_one_plain_text_document() {
         .search_card_content(SearchCardContentInput {
             query: "copper".into(),
             limit: 20,
+            offset: 0,
         })
         .expect("old search")
         .is_empty());
@@ -722,6 +1028,7 @@ fn lexical_search_and_protected_edits_share_one_plain_text_document() {
             .search_card_content(SearchCardContentInput {
                 query: "alum".into(),
                 limit: 20,
+                offset: 0,
             })
             .expect("new search")
             .len(),
@@ -769,6 +1076,7 @@ fn suspend_unsuspend_and_tombstone_delete_preserve_scheduler_history() {
         .search_card_content(SearchCardContentInput {
             query: String::new(),
             limit: 20,
+            offset: 0,
         })
         .expect("recent cards")
         .pop()
@@ -817,6 +1125,7 @@ fn suspend_unsuspend_and_tombstone_delete_preserve_scheduler_history() {
         .search_card_content(SearchCardContentInput {
             query: String::new(),
             limit: 20,
+            offset: 0,
         })
         .expect("current card")
         .pop()
@@ -833,6 +1142,7 @@ fn suspend_unsuspend_and_tombstone_delete_preserve_scheduler_history() {
         .search_card_content(SearchCardContentInput {
             query: String::new(),
             limit: 20,
+            offset: 0,
         })
         .expect("recent cards after deletion")
         .is_empty());

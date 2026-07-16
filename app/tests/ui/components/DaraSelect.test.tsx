@@ -80,3 +80,22 @@ test('Escape closes the listbox and returns focus to its trigger', async () => {
   expect(queryByRole('listbox', { name: 'Card type' })).toBeNull()
   await waitFor(() => expect(document.activeElement).toBe(trigger))
 })
+
+test('returns focus to a caller-owned surface after selection when requested', async () => {
+  const returnTarget = document.createElement('button')
+  document.body.append(returnTarget)
+  const { getByRole } = render(
+    <DaraSelect
+      ariaLabel="Card type"
+      onReturnFocus={() => returnTarget.focus()}
+      onSelect={vi.fn()}
+      options={options}
+      value={TestValue.Basic}
+    />,
+  )
+  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.mouseDown(getByRole('option', { name: 'Cloze' }))
+
+  await waitFor(() => expect(document.activeElement).toBe(returnTarget))
+  returnTarget.remove()
+})

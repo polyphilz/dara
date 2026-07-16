@@ -28,6 +28,7 @@ const SUPPORTED_SCHEDULER_CONFIG_SCHEMA_VERSION: i64 = 1;
 pub(super) const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
 const BASIC_VARIANT_KEY: &str = "basic";
 const CLOZE_VARIANT_PREFIX: &str = "cloze:";
+const OCCLUSION_VARIANT_PREFIX: &str = "layer:";
 const CARD_CONTENT_LIST_SELECT: &str = "
     WITH lifecycle AS (
         SELECT
@@ -68,6 +69,98 @@ pub enum CardContentDraft {
         #[serde(rename = "searchMd")]
         search_md: String,
     },
+    Occlusion {
+        #[serde(rename = "frontMd")]
+        front_md: String,
+        #[serde(rename = "backMd")]
+        back_md: String,
+        source: Option<String>,
+        occlusion: OcclusionDefinitionDraft,
+    },
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OcclusionDefinitionDraft {
+    pub(super) id: String,
+    pub(super) source_image_id: String,
+    pub(super) mode: OcclusionMode,
+    pub(super) layers: Vec<OcclusionMaskLayerDraft>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OcclusionMaskLayerDraft {
+    pub(super) id: String,
+    pub(super) label: Option<String>,
+    pub(super) masks: Vec<OcclusionMaskDraft>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct OcclusionMaskDraft {
+    pub(super) id: String,
+    pub(super) x: f64,
+    pub(super) y: f64,
+    pub(super) width: f64,
+    pub(super) height: f64,
+    pub(super) color: OcclusionMaskColor,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OcclusionMode {
+    HideOneGuessOne,
+    HideAllGuessOne,
+}
+
+impl OcclusionMode {
+    const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::HideOneGuessOne => "HIDE_ONE_GUESS_ONE",
+            Self::HideAllGuessOne => "HIDE_ALL_GUESS_ONE",
+        }
+    }
+
+    fn from_db(value: &str) -> Result<Self> {
+        if value == Self::HideOneGuessOne.as_db_str() {
+            Ok(Self::HideOneGuessOne)
+        } else if value == Self::HideAllGuessOne.as_db_str() {
+            Ok(Self::HideAllGuessOne)
+        } else {
+            Err(DatabaseError::CorruptReviewData(format!(
+                "unknown image occlusion mode {value}"
+            )))
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum OcclusionMaskColor {
+    White,
+    Black,
+}
+
+impl OcclusionMaskColor {
+    const fn as_db_str(self) -> &'static str {
+        match self {
+            Self::White => "WHITE",
+            Self::Black => "BLACK",
+        }
+    }
+
+    fn from_db(value: &str) -> Result<Self> {
+        if value == Self::White.as_db_str() {
+            Ok(Self::White)
+        } else if value == Self::Black.as_db_str() {
+            Ok(Self::Black)
+        } else {
+            Err(DatabaseError::CorruptReviewData(format!(
+                "unknown image occlusion mask color {value}"
+            )))
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -105,18 +198,61 @@ pub enum CardContent {
         back_md: String,
         source: Option<String>,
     },
+    Occlusion {
+        id: String,
+        #[serde(rename = "createdAt")]
+        created_at: i64,
+        #[serde(rename = "updatedAt")]
+        updated_at: i64,
+        #[serde(rename = "frontMd")]
+        front_md: String,
+        #[serde(rename = "backMd")]
+        back_md: String,
+        source: Option<String>,
+        occlusion: OcclusionDefinition,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcclusionDefinition {
+    pub(super) id: String,
+    pub(super) source_image: media::ImageRecord,
+    pub(super) mode: OcclusionMode,
+    pub(super) layers: Vec<OcclusionMaskLayer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcclusionMaskLayer {
+    pub(super) id: String,
+    pub(super) label: Option<String>,
+    pub(super) masks: Vec<OcclusionMask>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OcclusionMask {
+    pub(super) id: String,
+    pub(super) x: f64,
+    pub(super) y: f64,
+    pub(super) width: f64,
+    pub(super) height: f64,
+    pub(super) color: OcclusionMaskColor,
 }
 
 impl CardContent {
     pub fn id(&self) -> &str {
         match self {
-            Self::Basic { id, .. } | Self::Cloze { id, .. } => id,
+            Self::Basic { id, .. } | Self::Cloze { id, .. } | Self::Occlusion { id, .. } => id,
         }
     }
 
     pub fn updated_at(&self) -> i64 {
         match self {
-            Self::Basic { updated_at, .. } | Self::Cloze { updated_at, .. } => *updated_at,
+            Self::Basic { updated_at, .. }
+            | Self::Cloze { updated_at, .. }
+            | Self::Occlusion { updated_at, .. } => *updated_at,
         }
     }
 
@@ -124,6 +260,7 @@ impl CardContent {
         match self {
             Self::Basic { .. } => CardContentType::Basic,
             Self::Cloze { .. } => CardContentType::Cloze,
+            Self::Occlusion { .. } => CardContentType::Occlusion,
         }
     }
 }
@@ -140,6 +277,7 @@ pub enum CardContentReviewStatus {
 pub(super) enum CardContentType {
     Basic,
     Cloze,
+    Occlusion,
 }
 
 impl CardContentType {
@@ -147,6 +285,7 @@ impl CardContentType {
         match self {
             Self::Basic => "BASIC",
             Self::Cloze => "CLOZE",
+            Self::Occlusion => "OCCLUSION",
         }
     }
 
@@ -155,6 +294,8 @@ impl CardContentType {
             Ok(Self::Basic)
         } else if value == Self::Cloze.as_db_str() {
             Ok(Self::Cloze)
+        } else if value == Self::Occlusion.as_db_str() {
+            Ok(Self::Occlusion)
         } else {
             Err(DatabaseError::CorruptReviewData(format!(
                 "unsupported active card content type {value}"
@@ -167,8 +308,21 @@ impl CardContentType {
 #[serde(rename_all = "camelCase")]
 pub struct CardContentListItem {
     pub card_content: CardContent,
+    pub review_cards: Vec<ReviewCardListItem>,
     pub review_status: CardContentReviewStatus,
     pub lifecycle_updated_at: i64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewCardListItem {
+    pub id: String,
+    pub status: ReviewCardStatus,
+    pub variant_key: String,
+    pub state: ReviewCardState,
+    pub due_at: Option<i64>,
+    pub due_study_day: Option<i64>,
+    pub last_review_at: Option<i64>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -176,6 +330,7 @@ pub struct CardContentListItem {
 pub struct SearchCardContentInput {
     pub query: String,
     pub limit: i64,
+    pub offset: i64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -518,16 +673,24 @@ pub(super) fn create_card_content(
     let content_id = Uuid::now_v7().to_string();
     let fields = draft_fields(&input);
     let image_references = media::parse_card_image_references(fields.front_md, fields.back_md)?;
+    let occlusion_source_image_id = fields.occlusion.map(|value| value.source_image_id.as_str());
 
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     media::validate_active_image_references(&transaction, &image_references)?;
+    if let Some(image_id) = occlusion_source_image_id {
+        media::load_active_image_record(&transaction, image_id)?;
+    }
     let search_body = search_body(
         &transaction,
         fields.search_md,
         fields.back_md,
         fields.source,
         &image_references,
+        occlusion_source_image_id,
     )?;
+    if let Some(occlusion) = fields.occlusion {
+        insert_occlusion_definition(&transaction, &content_id, occlusion, now)?;
+    }
     let content_hash = Sha256::digest(search_body.as_bytes());
     transaction.execute(
         "INSERT INTO card_content (
@@ -543,7 +706,7 @@ pub(super) fn create_card_content(
         ],
     )?;
     let mut first_review_card_id = None;
-    for variant_key in fields.variant_keys {
+    for variant_key in &fields.variant_keys {
         let review_card_id = insert_new_review_card(&transaction, &content_id, variant_key, now)?;
         first_review_card_id.get_or_insert(review_card_id);
     }
@@ -585,6 +748,10 @@ pub(super) fn update_card_content(
     }
     let image_references = media::parse_card_image_references(fields.front_md, fields.back_md)?;
     media::validate_active_image_references(&transaction, &image_references)?;
+    let occlusion_source_image_id = fields.occlusion.map(|value| value.source_image_id.as_str());
+    if let Some(image_id) = occlusion_source_image_id {
+        media::load_active_image_record(&transaction, image_id)?;
+    }
 
     let now = now_millis()?;
     let updated_at = next_updated_at(current.updated_at(), now)?;
@@ -614,9 +781,13 @@ pub(super) fn update_card_content(
         fields.back_md,
         fields.source,
         &image_references,
+        occlusion_source_image_id,
         updated_at,
     )?;
     media::sync_card_content_images(&transaction, &input.id, &image_references)?;
+    if let Some(occlusion) = fields.occlusion {
+        reconcile_occlusion_definition(&transaction, &input.id, occlusion, updated_at)?;
+    }
     reconcile_review_card_variants(&transaction, &input.id, fields.variant_keys, updated_at)?;
     transaction.commit()?;
     load_card_content_list_item(connection, &input.id)
@@ -631,9 +802,10 @@ pub(super) fn search_card_content(
             "limit must be between 1 and 100".into(),
         ));
     }
+    validate_non_negative_safe(input.offset, "offset")?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
     let terms = literal_search_terms(&input.query);
-    let mut results = Vec::new();
+    let mut stored_results = Vec::new();
     if !terms.is_empty() && terms.iter().all(|term| term.chars().count() >= 3) {
         let fts_query = literal_trigram_query(&terms);
         let mut statement = transaction.prepare(&format!(
@@ -643,11 +815,14 @@ pub(super) fn search_card_content(
              WHERE content.deleted_at IS NULL
                AND search_document_fts MATCH ?1
              ORDER BY bm25(search_document_fts), content.updated_at DESC, content.id
-             LIMIT ?2"
+             LIMIT ?2 OFFSET ?3"
         ))?;
-        let rows = statement.query_map(params![fts_query, input.limit], card_content_list_row)?;
+        let rows = statement.query_map(
+            params![fts_query, input.limit, input.offset],
+            card_content_list_row,
+        )?;
         for row in rows {
-            results.push(row?);
+            stored_results.push(row?);
         }
     } else if !terms.is_empty() {
         // FTS5's trigram tokenizer cannot produce a token for a one- or
@@ -660,34 +835,40 @@ pub(super) fn search_card_content(
             .collect::<Vec<_>>()
             .join(" AND ");
         let limit_parameter = terms.len() + 1;
+        let offset_parameter = terms.len() + 2;
         let mut parameters = terms.into_iter().map(SqlValue::Text).collect::<Vec<_>>();
         parameters.push(SqlValue::Integer(input.limit));
+        parameters.push(SqlValue::Integer(input.offset));
         let mut statement = transaction.prepare(&format!(
             "{CARD_CONTENT_LIST_SELECT}
              JOIN search_document AS document ON document.card_content_id = content.id
              WHERE content.deleted_at IS NULL
                AND {predicates}
              ORDER BY content.updated_at DESC, content.id
-             LIMIT ?{limit_parameter}"
+             LIMIT ?{limit_parameter} OFFSET ?{offset_parameter}"
         ))?;
         let rows = statement.query_map(params_from_iter(parameters), card_content_list_row)?;
         for row in rows {
-            results.push(row?);
+            stored_results.push(row?);
         }
     } else if input.query.trim().is_empty() {
         let mut statement = transaction.prepare(&format!(
             "{CARD_CONTENT_LIST_SELECT}
              WHERE content.deleted_at IS NULL
              ORDER BY content.updated_at DESC, content.id
-             LIMIT ?1"
+             LIMIT ?1 OFFSET ?2"
         ))?;
-        let rows = statement.query_map([input.limit], card_content_list_row)?;
+        let rows =
+            statement.query_map(params![input.limit, input.offset], card_content_list_row)?;
         for row in rows {
-            results.push(row?);
+            stored_results.push(row?);
         }
     }
     drop(transaction);
-    Ok(results)
+    stored_results
+        .into_iter()
+        .map(|item| hydrate_card_content_list_item(connection, item))
+        .collect()
 }
 
 pub(super) fn set_card_content_suspended(
@@ -779,6 +960,35 @@ pub(super) fn delete_card_content(
         "DELETE FROM card_content_image WHERE card_content_id = ?1",
         [&input.card_content_id],
     )?;
+    transaction.execute(
+        "UPDATE card_occlusion_mask
+         SET updated_at = ?1, deleted_at = ?2
+         WHERE card_occlusion_mask_layer_id IN (
+             SELECT layer.id
+             FROM card_occlusion_mask_layer AS layer
+             JOIN card_occlusion_content AS occlusion
+               ON occlusion.id = layer.card_occlusion_content_id
+             WHERE occlusion.card_content_id = ?3
+               AND layer.deleted_at IS NULL
+               AND occlusion.deleted_at IS NULL
+         ) AND deleted_at IS NULL",
+        params![content_updated_at, now, input.card_content_id],
+    )?;
+    transaction.execute(
+        "UPDATE card_occlusion_mask_layer
+         SET updated_at = ?1, deleted_at = ?2
+         WHERE card_occlusion_content_id IN (
+             SELECT id FROM card_occlusion_content
+             WHERE card_content_id = ?3 AND deleted_at IS NULL
+         ) AND deleted_at IS NULL",
+        params![content_updated_at, now, input.card_content_id],
+    )?;
+    transaction.execute(
+        "UPDATE card_occlusion_content
+         SET updated_at = ?1, deleted_at = ?2
+         WHERE card_content_id = ?3 AND deleted_at IS NULL",
+        params![content_updated_at, now, input.card_content_id],
+    )?;
     // Search documents are derived rather than tombstoned. No embedding rows are
     // produced before the complete-search milestone, so vector invalidation remains deferred.
     transaction.execute(
@@ -820,6 +1030,7 @@ pub(super) fn load_review_context(
 
     Ok(ReviewContext {
         card_content: card_content_from_fields(
+            connection,
             stored.content_id,
             stored.content_created_at,
             stored.content_updated_at,
@@ -827,7 +1038,7 @@ pub(super) fn load_review_context(
             stored.front_md,
             stored.back_md,
             stored.source,
-        ),
+        )?,
         review_card: ReviewCardSummary {
             id: stored.card_id,
             status: stored.status,
@@ -1052,6 +1263,82 @@ fn validate_card_content(input: &CardContentDraft) -> Result<()> {
             }
             validate_cloze_variant_keys(variant_keys)?;
         }
+        CardContentDraft::Occlusion { occlusion, .. } => {
+            validate_occlusion_definition(occlusion)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_occlusion_definition(definition: &OcclusionDefinitionDraft) -> Result<()> {
+    validate_uuid_v7(&definition.id, "occlusion.id")?;
+    validate_uuid_v7(&definition.source_image_id, "occlusion.sourceImageId")?;
+    if definition.layers.is_empty() {
+        return Err(DatabaseError::InvalidInput(
+            "an image occlusion card must have at least one layer".into(),
+        ));
+    }
+    let mut ids = HashSet::new();
+    if !ids.insert(definition.id.as_str()) {
+        unreachable!("a fresh ID set accepts the definition ID");
+    }
+    for layer in &definition.layers {
+        validate_uuid_v7(&layer.id, "occlusion layer ID")?;
+        if !ids.insert(layer.id.as_str()) {
+            return Err(DatabaseError::InvalidInput(
+                "image occlusion IDs must be unique".into(),
+            ));
+        }
+        if layer.masks.is_empty() {
+            return Err(DatabaseError::InvalidInput(format!(
+                "image occlusion layer {} has no masks",
+                layer.id
+            )));
+        }
+        if layer.label.as_ref().is_some_and(|label| label.len() > 500) {
+            return Err(DatabaseError::InvalidInput(
+                "image occlusion layer labels must be at most 500 characters".into(),
+            ));
+        }
+        for mask in &layer.masks {
+            validate_uuid_v7(&mask.id, "occlusion mask ID")?;
+            if !ids.insert(mask.id.as_str()) {
+                return Err(DatabaseError::InvalidInput(
+                    "image occlusion IDs must be unique".into(),
+                ));
+            }
+            if !mask.x.is_finite()
+                || !mask.y.is_finite()
+                || !mask.width.is_finite()
+                || !mask.height.is_finite()
+                || !(0.0..1.0).contains(&mask.x)
+                || !(0.0..1.0).contains(&mask.y)
+                || !(0.0..=1.0).contains(&mask.width)
+                || !(0.0..=1.0).contains(&mask.height)
+                || mask.width == 0.0
+                || mask.height == 0.0
+                || mask.x + mask.width > 1.0
+                || mask.y + mask.height > 1.0
+            {
+                return Err(DatabaseError::InvalidInput(format!(
+                    "image occlusion mask {} has invalid normalized geometry",
+                    mask.id
+                )));
+            }
+            let coordinate_scale = 10_000.0;
+            if [mask.x, mask.y, mask.width, mask.height]
+                .iter()
+                .any(|value| {
+                    let scaled = value * coordinate_scale;
+                    (scaled - scaled.round()).abs() > 1e-8
+                })
+            {
+                return Err(DatabaseError::InvalidInput(format!(
+                    "image occlusion mask {} coordinates require at most four decimal places",
+                    mask.id
+                )));
+            }
+        }
     }
     Ok(())
 }
@@ -1062,7 +1349,8 @@ struct DraftFields<'a> {
     back_md: &'a str,
     source: Option<&'a str>,
     search_md: &'a str,
-    variant_keys: Vec<&'a str>,
+    variant_keys: Vec<String>,
+    occlusion: Option<&'a OcclusionDefinitionDraft>,
 }
 
 fn draft_fields(input: &CardContentDraft) -> DraftFields<'_> {
@@ -1077,7 +1365,8 @@ fn draft_fields(input: &CardContentDraft) -> DraftFields<'_> {
             back_md,
             source: source.as_deref(),
             search_md: front_md,
-            variant_keys: vec![BASIC_VARIANT_KEY],
+            variant_keys: vec![BASIC_VARIANT_KEY.into()],
+            occlusion: None,
         },
         CardContentDraft::Cloze {
             front_md,
@@ -1091,7 +1380,26 @@ fn draft_fields(input: &CardContentDraft) -> DraftFields<'_> {
             back_md,
             source: source.as_deref(),
             search_md,
-            variant_keys: variant_keys.iter().map(String::as_str).collect(),
+            variant_keys: variant_keys.clone(),
+            occlusion: None,
+        },
+        CardContentDraft::Occlusion {
+            front_md,
+            back_md,
+            source,
+            occlusion,
+        } => DraftFields {
+            content_type: CardContentType::Occlusion,
+            front_md,
+            back_md,
+            source: source.as_deref(),
+            search_md: front_md,
+            variant_keys: occlusion
+                .layers
+                .iter()
+                .map(|layer| format!("{OCCLUSION_VARIANT_PREFIX}{}", layer.id))
+                .collect(),
+            occlusion: Some(occlusion),
         },
     }
 }
@@ -1126,6 +1434,278 @@ fn validate_cloze_variant_keys(variant_keys: &[String]) -> Result<()> {
     Ok(())
 }
 
+fn insert_occlusion_definition(
+    transaction: &Transaction<'_>,
+    card_content_id: &str,
+    definition: &OcclusionDefinitionDraft,
+    now: i64,
+) -> Result<()> {
+    transaction.execute(
+        "INSERT INTO card_occlusion_content (
+            id, created_at, updated_at, deleted_at, card_content_id,
+            source_image_id, mode
+         ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5)",
+        params![
+            definition.id,
+            now,
+            card_content_id,
+            definition.source_image_id,
+            definition.mode.as_db_str(),
+        ],
+    )?;
+    for (sort_order, layer) in definition.layers.iter().enumerate() {
+        insert_occlusion_layer(transaction, &definition.id, layer, sort_order, now)?;
+    }
+    Ok(())
+}
+
+fn insert_occlusion_layer(
+    transaction: &Transaction<'_>,
+    definition_id: &str,
+    layer: &OcclusionMaskLayerDraft,
+    sort_order: usize,
+    now: i64,
+) -> Result<()> {
+    let sort_order = i64::try_from(sort_order)
+        .map_err(|_| DatabaseError::InvalidInput("too many image occlusion layers".into()))?;
+    transaction.execute(
+        "INSERT INTO card_occlusion_mask_layer (
+            id, created_at, updated_at, deleted_at, card_occlusion_content_id,
+            label, sort_order
+         ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5)",
+        params![
+            layer.id,
+            now,
+            definition_id,
+            normalized_label(&layer.label),
+            sort_order
+        ],
+    )?;
+    for mask in &layer.masks {
+        insert_occlusion_mask(transaction, &layer.id, mask, now)?;
+    }
+    Ok(())
+}
+
+fn insert_occlusion_mask(
+    transaction: &Transaction<'_>,
+    layer_id: &str,
+    mask: &OcclusionMaskDraft,
+    now: i64,
+) -> Result<()> {
+    transaction.execute(
+        "INSERT INTO card_occlusion_mask (
+            id, created_at, updated_at, deleted_at, card_occlusion_mask_layer_id,
+            x, y, width, height, color
+         ) VALUES (?1, ?2, ?2, NULL, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            mask.id,
+            now,
+            layer_id,
+            mask.x,
+            mask.y,
+            mask.width,
+            mask.height,
+            mask.color.as_db_str(),
+        ],
+    )?;
+    Ok(())
+}
+
+fn reconcile_occlusion_definition(
+    transaction: &Transaction<'_>,
+    card_content_id: &str,
+    desired: &OcclusionDefinitionDraft,
+    updated_at: i64,
+) -> Result<()> {
+    let active_definition_id = transaction
+        .query_row(
+            "SELECT id
+             FROM card_occlusion_content
+             WHERE card_content_id = ?1 AND deleted_at IS NULL",
+            [card_content_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .ok_or_else(|| {
+            DatabaseError::CorruptReviewData(format!(
+                "active occlusion card content {card_content_id} has no definition"
+            ))
+        })?;
+    if active_definition_id != desired.id {
+        return Err(DatabaseError::InvalidInput(
+            "an existing image occlusion definition cannot change identity".into(),
+        ));
+    }
+    transaction.execute(
+        "UPDATE card_occlusion_content
+         SET updated_at = ?1, source_image_id = ?2, mode = ?3
+         WHERE id = ?4 AND deleted_at IS NULL",
+        params![
+            updated_at,
+            desired.source_image_id,
+            desired.mode.as_db_str(),
+            desired.id,
+        ],
+    )?;
+
+    let active_layer_ids = active_occlusion_child_ids(
+        transaction,
+        "card_occlusion_mask_layer",
+        "card_occlusion_content_id",
+        &desired.id,
+    )?;
+    // Move current orders out of the active unique-index range before applying
+    // the desired order, so swaps never fail halfway through the transaction.
+    transaction.execute(
+        "UPDATE card_occlusion_mask_layer
+         SET sort_order = sort_order + 1000000
+         WHERE card_occlusion_content_id = ?1 AND deleted_at IS NULL",
+        [&desired.id],
+    )?;
+
+    let desired_layer_ids = desired
+        .layers
+        .iter()
+        .map(|layer| layer.id.as_str())
+        .collect::<HashSet<_>>();
+    for (sort_order, layer) in desired.layers.iter().enumerate() {
+        if active_layer_ids.contains(&layer.id) {
+            let sort_order = i64::try_from(sort_order).map_err(|_| {
+                DatabaseError::InvalidInput("too many image occlusion layers".into())
+            })?;
+            transaction.execute(
+                "UPDATE card_occlusion_mask_layer
+                 SET updated_at = ?1, label = ?2, sort_order = ?3
+                 WHERE id = ?4 AND card_occlusion_content_id = ?5
+                   AND deleted_at IS NULL",
+                params![
+                    updated_at,
+                    normalized_label(&layer.label),
+                    sort_order,
+                    layer.id,
+                    desired.id,
+                ],
+            )?;
+            reconcile_occlusion_masks(transaction, layer, updated_at)?;
+        } else {
+            reject_reused_occlusion_id(transaction, "card_occlusion_mask_layer", &layer.id)?;
+            insert_occlusion_layer(transaction, &desired.id, layer, sort_order, updated_at)?;
+        }
+    }
+    for layer_id in active_layer_ids {
+        if desired_layer_ids.contains(layer_id.as_str()) {
+            continue;
+        }
+        transaction.execute(
+            "UPDATE card_occlusion_mask
+             SET updated_at = ?1, deleted_at = ?1
+             WHERE card_occlusion_mask_layer_id = ?2 AND deleted_at IS NULL",
+            params![updated_at, layer_id],
+        )?;
+        transaction.execute(
+            "UPDATE card_occlusion_mask_layer
+             SET updated_at = ?1, deleted_at = ?1
+             WHERE id = ?2 AND deleted_at IS NULL",
+            params![updated_at, layer_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn reconcile_occlusion_masks(
+    transaction: &Transaction<'_>,
+    desired_layer: &OcclusionMaskLayerDraft,
+    updated_at: i64,
+) -> Result<()> {
+    let active_mask_ids = active_occlusion_child_ids(
+        transaction,
+        "card_occlusion_mask",
+        "card_occlusion_mask_layer_id",
+        &desired_layer.id,
+    )?;
+    let desired_mask_ids = desired_layer
+        .masks
+        .iter()
+        .map(|mask| mask.id.as_str())
+        .collect::<HashSet<_>>();
+    for mask in &desired_layer.masks {
+        if active_mask_ids.contains(&mask.id) {
+            transaction.execute(
+                "UPDATE card_occlusion_mask
+                 SET updated_at = ?1, x = ?2, y = ?3, width = ?4, height = ?5,
+                     color = ?6
+                 WHERE id = ?7 AND card_occlusion_mask_layer_id = ?8
+                   AND deleted_at IS NULL",
+                params![
+                    updated_at,
+                    mask.x,
+                    mask.y,
+                    mask.width,
+                    mask.height,
+                    mask.color.as_db_str(),
+                    mask.id,
+                    desired_layer.id,
+                ],
+            )?;
+        } else {
+            reject_reused_occlusion_id(transaction, "card_occlusion_mask", &mask.id)?;
+            insert_occlusion_mask(transaction, &desired_layer.id, mask, updated_at)?;
+        }
+    }
+    for mask_id in active_mask_ids {
+        if desired_mask_ids.contains(mask_id.as_str()) {
+            continue;
+        }
+        transaction.execute(
+            "UPDATE card_occlusion_mask
+             SET updated_at = ?1, deleted_at = ?1
+             WHERE id = ?2 AND deleted_at IS NULL",
+            params![updated_at, mask_id],
+        )?;
+    }
+    Ok(())
+}
+
+fn active_occlusion_child_ids(
+    transaction: &Transaction<'_>,
+    table: &str,
+    parent_column: &str,
+    parent_id: &str,
+) -> Result<HashSet<String>> {
+    let mut statement = transaction.prepare(&format!(
+        "SELECT id FROM {table} WHERE {parent_column} = ?1 AND deleted_at IS NULL"
+    ))?;
+    let ids = statement
+        .query_map([parent_id], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(ids)
+}
+
+fn reject_reused_occlusion_id(transaction: &Transaction<'_>, table: &str, id: &str) -> Result<()> {
+    let exists = transaction
+        .query_row(
+            &format!("SELECT 1 FROM {table} WHERE id = ?1"),
+            [id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if exists {
+        return Err(DatabaseError::InvalidInput(
+            "deleted image occlusion IDs cannot be reused".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn normalized_label(label: &Option<String>) -> Option<&str> {
+    label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+}
+
 fn insert_new_review_card(
     transaction: &Transaction<'_>,
     card_content_id: &str,
@@ -1158,7 +1738,7 @@ fn insert_new_review_card(
 fn reconcile_review_card_variants(
     transaction: &Transaction<'_>,
     card_content_id: &str,
-    desired_variant_keys: Vec<&str>,
+    desired_variant_keys: Vec<String>,
     updated_at: i64,
 ) -> Result<()> {
     let mut statement = transaction.prepare(
@@ -1171,9 +1751,12 @@ fn reconcile_review_card_variants(
         .collect::<rusqlite::Result<HashSet<_>>>()?;
     drop(statement);
 
-    let desired = desired_variant_keys.iter().copied().collect::<HashSet<_>>();
+    let desired = desired_variant_keys
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
     for variant_key in &desired_variant_keys {
-        if !active_variant_keys.contains(*variant_key) {
+        if !active_variant_keys.contains(variant_key) {
             insert_new_review_card(transaction, card_content_id, variant_key, updated_at)?;
         }
     }
@@ -1201,6 +1784,7 @@ fn search_body(
     back_md: &str,
     source: Option<&str>,
     image_references: &[media::ImageReference],
+    occlusion_source_image_id: Option<&str>,
 ) -> Result<String> {
     let front = markdown_plain_text(front_md);
     let back = markdown_plain_text(back_md);
@@ -1209,7 +1793,13 @@ fn search_body(
         fields.push(source.to_owned());
     }
     let authored_body = fields.join(SEARCH_FIELD_SEPARATOR);
-    let ocr_texts = media::referenced_ocr_texts(transaction, image_references)?;
+    let mut ocr_texts = media::referenced_ocr_texts(transaction, image_references)?;
+    if let Some(image_id) = occlusion_source_image_id {
+        let ocr_text = media::active_image_ocr_text(transaction, image_id)?;
+        if !ocr_text.trim().is_empty() {
+            ocr_texts.push(ocr_text);
+        }
+    }
     Ok(media::search_body_with_ocr(&authored_body, &ocr_texts))
 }
 
@@ -1272,9 +1862,17 @@ fn rebuild_search_document(
     back_md: &str,
     source: Option<&str>,
     image_references: &[media::ImageReference],
+    occlusion_source_image_id: Option<&str>,
     updated_at: i64,
 ) -> Result<()> {
-    let body = search_body(transaction, front_md, back_md, source, image_references)?;
+    let body = search_body(
+        transaction,
+        front_md,
+        back_md,
+        source,
+        image_references,
+        occlusion_source_image_id,
+    )?;
     let content_hash = Sha256::digest(body.as_bytes());
     let changed = transaction.execute(
         "UPDATE search_document
@@ -1307,26 +1905,27 @@ fn literal_trigram_query(terms: &[String]) -> String {
 }
 
 fn load_card_content(connection: &Connection, card_content_id: &str) -> Result<CardContent> {
-    connection
+    let fields = connection
         .query_row(
             "SELECT id, created_at, updated_at, type, front_md, back_md, source
              FROM card_content
              WHERE id = ?1 AND deleted_at IS NULL",
             [card_content_id],
-            card_content_row,
+            card_content_fields_row,
         )
         .optional()?
         .ok_or_else(|| DatabaseError::NotFound {
             entity: "card content",
             id: card_content_id.to_owned(),
-        })
+        })?;
+    hydrate_card_content(connection, fields)
 }
 
 fn load_card_content_list_item(
     connection: &Connection,
     card_content_id: &str,
 ) -> Result<CardContentListItem> {
-    connection
+    let stored = connection
         .query_row(
             &format!(
                 "{CARD_CONTENT_LIST_SELECT}
@@ -1339,30 +1938,40 @@ fn load_card_content_list_item(
         .ok_or_else(|| DatabaseError::NotFound {
             entity: "card content",
             id: card_content_id.to_owned(),
-        })
+        })?;
+    hydrate_card_content_list_item(connection, stored)
 }
 
-fn card_content_row(row: &Row<'_>) -> rusqlite::Result<CardContent> {
-    let id = row.get(0)?;
-    let created_at = row.get(1)?;
-    let updated_at = row.get(2)?;
-    let content_type = enum_column(row, 3, CardContentType::from_db)?;
-    let front_md = row.get(4)?;
-    let back_md = row.get(5)?;
-    let source = row.get(6)?;
-    Ok(card_content_from_fields(
-        id,
-        created_at,
-        updated_at,
-        content_type,
-        front_md,
-        back_md,
-        source,
-    ))
+struct StoredCardContentFields {
+    id: String,
+    created_at: i64,
+    updated_at: i64,
+    content_type: CardContentType,
+    front_md: String,
+    back_md: String,
+    source: Option<String>,
 }
 
-fn card_content_list_row(row: &Row<'_>) -> rusqlite::Result<CardContentListItem> {
-    let card_content = card_content_row(row)?;
+struct StoredCardContentListItem {
+    fields: StoredCardContentFields,
+    review_status: CardContentReviewStatus,
+    lifecycle_updated_at: i64,
+}
+
+fn card_content_fields_row(row: &Row<'_>) -> rusqlite::Result<StoredCardContentFields> {
+    Ok(StoredCardContentFields {
+        id: row.get(0)?,
+        created_at: row.get(1)?,
+        updated_at: row.get(2)?,
+        content_type: enum_column(row, 3, CardContentType::from_db)?,
+        front_md: row.get(4)?,
+        back_md: row.get(5)?,
+        source: row.get(6)?,
+    })
+}
+
+fn card_content_list_row(row: &Row<'_>) -> rusqlite::Result<StoredCardContentListItem> {
+    let fields = card_content_fields_row(row)?;
     let review_card_status = enum_column(row, 7, ReviewCardStatus::from_db)?;
     let review_status = match (review_card_status, row.get::<_, i64>(8)?) {
         (ReviewCardStatus::Active, 1) => CardContentReviewStatus::Active,
@@ -1378,14 +1987,71 @@ fn card_content_list_row(row: &Row<'_>) -> rusqlite::Result<CardContentListItem>
             ));
         }
     };
-    Ok(CardContentListItem {
-        card_content,
+    Ok(StoredCardContentListItem {
+        fields,
         review_status,
         lifecycle_updated_at: row.get(9)?,
     })
 }
 
+fn hydrate_card_content_list_item(
+    connection: &Connection,
+    stored: StoredCardContentListItem,
+) -> Result<CardContentListItem> {
+    let review_cards = load_review_card_list_items(connection, &stored.fields.id)?;
+    Ok(CardContentListItem {
+        card_content: hydrate_card_content(connection, stored.fields)?,
+        review_cards,
+        review_status: stored.review_status,
+        lifecycle_updated_at: stored.lifecycle_updated_at,
+    })
+}
+
+fn load_review_card_list_items(
+    connection: &Connection,
+    card_content_id: &str,
+) -> Result<Vec<ReviewCardListItem>> {
+    let mut statement = connection.prepare(
+        "SELECT id, status, variant_key, state, due_at, due_study_day,
+                last_review_at
+         FROM review_card
+         WHERE card_content_id = ?1 AND deleted_at IS NULL
+         ORDER BY created_at, id",
+    )?;
+    let review_cards = statement
+        .query_map([card_content_id], |row| {
+            Ok(ReviewCardListItem {
+                id: row.get(0)?,
+                status: enum_column(row, 1, ReviewCardStatus::from_db)?,
+                variant_key: row.get(2)?,
+                state: enum_column(row, 3, ReviewCardState::from_db)?,
+                due_at: row.get(4)?,
+                due_study_day: row.get(5)?,
+                last_review_at: row.get(6)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(review_cards)
+}
+
+fn hydrate_card_content(
+    connection: &Connection,
+    fields: StoredCardContentFields,
+) -> Result<CardContent> {
+    card_content_from_fields(
+        connection,
+        fields.id,
+        fields.created_at,
+        fields.updated_at,
+        fields.content_type,
+        fields.front_md,
+        fields.back_md,
+        fields.source,
+    )
+}
+
 fn card_content_from_fields(
+    connection: &Connection,
     id: String,
     created_at: i64,
     updated_at: i64,
@@ -1393,8 +2059,8 @@ fn card_content_from_fields(
     front_md: String,
     back_md: String,
     source: Option<String>,
-) -> CardContent {
-    match content_type {
+) -> Result<CardContent> {
+    Ok(match content_type {
         CardContentType::Basic => CardContent::Basic {
             id,
             created_at,
@@ -1411,7 +2077,110 @@ fn card_content_from_fields(
             back_md,
             source,
         },
+        CardContentType::Occlusion => CardContent::Occlusion {
+            occlusion: load_occlusion_definition(connection, &id)?,
+            id,
+            created_at,
+            updated_at,
+            front_md,
+            back_md,
+            source,
+        },
+    })
+}
+
+fn load_occlusion_definition(
+    connection: &Connection,
+    card_content_id: &str,
+) -> Result<OcclusionDefinition> {
+    let (id, source_image_id, mode) = connection
+        .query_row(
+            "SELECT id, source_image_id, mode
+             FROM card_occlusion_content
+             WHERE card_content_id = ?1 AND deleted_at IS NULL",
+            [card_content_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            DatabaseError::CorruptReviewData(format!(
+                "active occlusion card content {card_content_id} has no definition"
+            ))
+        })?;
+    let source_image = media::load_active_image_record(connection, &source_image_id)?;
+    let mode = OcclusionMode::from_db(&mode)?;
+    let mut layer_statement = connection.prepare(
+        "SELECT id, label
+         FROM card_occlusion_mask_layer
+         WHERE card_occlusion_content_id = ?1 AND deleted_at IS NULL
+         ORDER BY sort_order, id",
+    )?;
+    let stored_layers = layer_statement
+        .query_map([&id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(layer_statement);
+    if stored_layers.is_empty() {
+        return Err(DatabaseError::CorruptReviewData(format!(
+            "active image occlusion definition {id} has no layers"
+        )));
     }
+    let mut layers = Vec::with_capacity(stored_layers.len());
+    for (layer_id, label) in stored_layers {
+        let mut mask_statement = connection.prepare(
+            "SELECT id, x, y, width, height, color
+             FROM card_occlusion_mask
+             WHERE card_occlusion_mask_layer_id = ?1 AND deleted_at IS NULL
+             ORDER BY created_at, id",
+        )?;
+        let masks = mask_statement
+            .query_map([&layer_id], |row| {
+                let color = row.get::<_, String>(5)?;
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, f64>(1)?,
+                    row.get::<_, f64>(2)?,
+                    row.get::<_, f64>(3)?,
+                    row.get::<_, f64>(4)?,
+                    color,
+                ))
+            })?
+            .map(|row| {
+                let (id, x, y, width, height, color) = row?;
+                Ok(OcclusionMask {
+                    id,
+                    x,
+                    y,
+                    width,
+                    height,
+                    color: OcclusionMaskColor::from_db(&color)?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        if masks.is_empty() {
+            return Err(DatabaseError::CorruptReviewData(format!(
+                "active image occlusion layer {layer_id} has no masks"
+            )));
+        }
+        layers.push(OcclusionMaskLayer {
+            id: layer_id,
+            label,
+            masks,
+        });
+    }
+    Ok(OcclusionDefinition {
+        id,
+        source_image,
+        mode,
+        layers,
+    })
 }
 
 fn load_stored_card(connection: &Connection, review_card_id: &str) -> Result<StoredCard> {

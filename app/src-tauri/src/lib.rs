@@ -34,6 +34,7 @@ pub fn run() {
             database::commands::undo_last_grade,
             database::commands::update_card_content,
             media::ingest_clipboard_image,
+            media::ingest_image_bytes,
             external::open_external_url,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,

@@ -108,6 +108,20 @@ test('Add card opens a persistent main-window editor rather than Quick Add', () 
   expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy()
 })
 
+test('Escape is inert in the persistent Add view and preserves the draft', () => {
+  const { getByRole } = render(<MainWindow />)
+  fireEvent.click(getByRole('button', { name: 'Add' }))
+  const front = getByRole('textbox', { name: 'Front' })
+  replaceEditorDocument(front, 'unfinished question')
+
+  fireEvent.keyDown(front, { key: 'Escape' })
+
+  expect(getByRole('region', { name: 'Add a card' })).toBeTruthy()
+  expect(richTextEditorViewFromDOM(front)?.state.doc.textContent).toBe(
+    'unfinished question',
+  )
+})
+
 test('saving in the main editor creates the card and returns home', async () => {
   const { getByRole } = render(<MainWindow />)
   fireEvent.click(getByRole('button', { name: 'Add' }))

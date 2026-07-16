@@ -11,32 +11,44 @@ import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
 import {
   ClozeProjection,
   clozeAnswerMarkdown,
+  clozeIndexFromVariantKey,
 } from '../../cloze/cloze.ts'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
+import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
+import { occlusionLayerId } from '../../occlusion/occlusion.ts'
 import {
   CardContentReviewStatus,
   CardContentType,
+  OcclusionMode,
+  ReviewCardStatus,
   deleteCardContent,
   searchCardContent,
   setCardContentSuspended,
   type CardContentListItem,
+  type ReviewCardListItem,
 } from '../../review/index.ts'
 import { errorMessage } from '../../review/errors.ts'
+import { ReviewCardState } from '../../scheduling/index.ts'
+import { captureStudyMoment } from '../../scheduling/study-clock.ts'
+import { studyDayToIsoDate } from './home-activity.ts'
 import { CardForm } from '../shared/CardForm.tsx'
 import { CardFormVariant } from '../shared/card-form.ts'
 
-const SEARCH_LIMIT = 75
+const SEARCH_PAGE_SIZE = 50
+const SEARCH_FETCH_LIMIT = SEARCH_PAGE_SIZE + 1
 
 interface CardBrowserProps {
   onCardContentChanged?: () => void
   onQueueChanged: () => void
+  navigationToken?: number
   refreshToken?: number
 }
 
 export function CardBrowser({
   onQueueChanged,
   onCardContentChanged = onQueueChanged,
+  navigationToken = 0,
   refreshToken = 0,
 }: CardBrowserProps) {
   const searchRef = useRef<HTMLInputElement>(null)
@@ -45,9 +57,14 @@ export function CardBrowser({
   const [revision, setRevision] = useState(0)
   const [results, setResults] = useState<CardContentListItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedReviewCardId, setSelectedReviewCardId] = useState<string | null>(
+    null,
+  )
   const [editing, setEditing] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(false)
   const [mutating, setMutating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,25 +72,58 @@ export function CardBrowser({
     () => results.find((item) => item.cardContent.id === selectedId) ?? null,
     [results, selectedId],
   )
+  const reviewCards = useMemo(
+    () => (selected ? orderedReviewCards(selected) : []),
+    [selected],
+  )
+  const selectedReviewCard =
+    reviewCards.find((card) => card.id === selectedReviewCardId) ??
+    reviewCards[0] ??
+    null
+  const selectedOcclusionLayerId =
+    selected?.cardContent.type === CardContentType.Occlusion && selectedReviewCard
+      ? occlusionLayerId(selectedReviewCard.variantKey)
+      : null
 
   useEffect(() => {
     searchRef.current?.focus()
   }, [])
 
   useEffect(() => {
+    setEditing(false)
+    setConfirmingDelete(false)
+  }, [navigationToken])
+
+  useEffect(() => {
+    setSelectedReviewCardId((current) =>
+      current && reviewCards.some((card) => card.id === current)
+        ? current
+        : (reviewCards[0]?.id ?? null),
+    )
+  }, [reviewCards])
+
+  useEffect(() => {
     const currentRequest = ++requestId.current
     setLoading(true)
+    setLoadingMore(false)
+    setHasMore(false)
     setError(null)
-    void searchCardContent({ query, limit: SEARCH_LIMIT })
+    void searchCardContent({
+      query,
+      limit: SEARCH_FETCH_LIMIT,
+      offset: 0,
+    })
       .then((nextResults) => {
         if (requestId.current !== currentRequest) {
           return
         }
-        setResults(nextResults)
+        const page = nextResults.slice(0, SEARCH_PAGE_SIZE)
+        setResults(page)
+        setHasMore(nextResults.length > SEARCH_PAGE_SIZE)
         setSelectedId((current) =>
-          current && nextResults.some((item) => item.cardContent.id === current)
+          current && page.some((item) => item.cardContent.id === current)
             ? current
-            : (nextResults[0]?.cardContent.id ?? null),
+            : (page[0]?.cardContent.id ?? null),
         )
       })
       .catch((cause: unknown) => {
@@ -91,6 +141,44 @@ export function CardBrowser({
   const refresh = useCallback(() => {
     setRevision((value) => value + 1)
   }, [])
+
+  const loadMore = async () => {
+    if (loading || loadingMore || !hasMore) {
+      return
+    }
+    const currentRequest = ++requestId.current
+    setLoadingMore(true)
+    setError(null)
+    try {
+      const nextResults = await searchCardContent({
+        query,
+        limit: SEARCH_FETCH_LIMIT,
+        offset: results.length,
+      })
+      if (requestId.current !== currentRequest) {
+        return
+      }
+      const page = nextResults.slice(0, SEARCH_PAGE_SIZE)
+      setResults((current) => {
+        const existingIds = new Set(
+          current.map((item) => item.cardContent.id),
+        )
+        return [
+          ...current,
+          ...page.filter((item) => !existingIds.has(item.cardContent.id)),
+        ]
+      })
+      setHasMore(nextResults.length > SEARCH_PAGE_SIZE)
+    } catch (cause) {
+      if (requestId.current === currentRequest) {
+        setError(errorMessage(cause))
+      }
+    } finally {
+      if (requestId.current === currentRequest) {
+        setLoadingMore(false)
+      }
+    }
+  }
 
   const moveSelection = (delta: -1 | 1) => {
     if (results.length === 0) {
@@ -239,8 +327,8 @@ export function CardBrowser({
         </div>
 
         <div className="card-result-summary" aria-live="polite">
-          <span>{query ? 'Matches' : 'Recently edited'}</span>
-          <span>{loading ? '…' : results.length}</span>
+          <span>{query ? 'Matches' : 'All cards'}</span>
+          <span>{loading ? '…' : `${results.length}${hasMore ? '+' : ''}`}</span>
         </div>
 
         <div className="card-result-list" role="listbox" aria-label="Cards">
@@ -265,7 +353,10 @@ export function CardBrowser({
                   {cardTitle(
                     item.cardContent.type === CardContentType.Cloze
                       ? clozeAnswerMarkdown(item.cardContent.frontMd)
-                      : item.cardContent.frontMd,
+                      : item.cardContent.type === CardContentType.Occlusion
+                        ? item.cardContent.frontMd ||
+                          `Image occlusion · ${item.cardContent.occlusion.layers.length} layers`
+                        : item.cardContent.frontMd,
                   )}
                 </span>
                 <span className="card-result-meta">
@@ -281,6 +372,16 @@ export function CardBrowser({
             <p className="card-result-empty">No cards found.</p>
           )}
         </div>
+        {hasMore && (
+          <button
+            className="card-browser-load-more"
+            disabled={loadingMore}
+            onClick={() => void loadMore()}
+            type="button"
+          >
+            {loadingMore ? 'Loading…' : 'Load more'}
+          </button>
+        )}
       </aside>
 
       <div className="card-browser-detail">
@@ -291,6 +392,11 @@ export function CardBrowser({
                 <span className="card-type-label">
                   {selected.cardContent.type}
                 </span>
+                {selected.cardContent.type === CardContentType.Occlusion && (
+                  <span className="occlusion-mode-badge">
+                    {occlusionModeLabel(selected.cardContent.occlusion.mode)}
+                  </span>
+                )}
                 {selected.reviewStatus !== CardContentReviewStatus.Active && (
                   <span className="detail-status">{statusLabel(selected.reviewStatus)}</span>
                 )}
@@ -331,32 +437,106 @@ export function CardBrowser({
             )}
 
             <article className="card-detail-content">
-              <section>
-                <span>
-                  {selected.cardContent.type === CardContentType.Basic
-                    ? 'Front'
-                    : 'Text'}
-                </span>
-                {selected.cardContent.type === CardContentType.Basic ? (
-                  <MarkdownRenderer source={selected.cardContent.frontMd} />
-                ) : (
-                  <ClozeMarkdownRenderer
-                    projection={ClozeProjection.Answer}
-                    source={selected.cardContent.frontMd}
-                  />
-                )}
-              </section>
-              {(selected.cardContent.type === CardContentType.Basic ||
-                selected.cardContent.backMd.trim()) && (
+              {selected.cardContent.type === CardContentType.Occlusion ? (
+                <>
+                  <section>
+                    <span>
+                      Image · {selected.cardContent.occlusion.layers.length} layers
+                    </span>
+                    {selectedOcclusionLayerId && (
+                      <div className="occlusion-browser-preview">
+                        <OcclusionReview
+                          definition={selected.cardContent.occlusion}
+                          revealed={false}
+                          targetLayerId={selectedOcclusionLayerId}
+                        />
+                      </div>
+                    )}
+                  </section>
+                  {selected.cardContent.frontMd.trim() && (
+                    <section>
+                      <span>Prompt</span>
+                      <MarkdownRenderer source={selected.cardContent.frontMd} />
+                    </section>
+                  )}
+                </>
+              ) : (
                 <section>
                   <span>
                     {selected.cardContent.type === CardContentType.Basic
-                      ? 'Back'
-                      : 'Extra'}
+                      ? 'Front'
+                      : 'Text'}
                   </span>
-                  <MarkdownRenderer source={selected.cardContent.backMd} />
+                  {selected.cardContent.type === CardContentType.Basic ? (
+                    <MarkdownRenderer source={selected.cardContent.frontMd} />
+                  ) : (
+                    <ClozeMarkdownRenderer
+                      projection={ClozeProjection.Question}
+                      source={selected.cardContent.frontMd}
+                      variantKey={selectedReviewCard?.variantKey}
+                    />
+                  )}
                 </section>
               )}
+              {reviewCards.length > 0 && (
+                <section>
+                  <span>Review cards · {reviewCards.length}</span>
+                  <div
+                    aria-label="Review cards"
+                    className="review-card-siblings"
+                    role="group"
+                  >
+                    {reviewCards.map((reviewCard, index) => {
+                      const active = reviewCard.id === selectedReviewCard?.id
+                      return (
+                        <button
+                          aria-pressed={active}
+                          className={`review-card-sibling${active ? ' review-card-sibling-selected' : ''}`}
+                          key={reviewCard.id}
+                          onClick={() =>
+                            setSelectedReviewCardId(reviewCard.id)
+                          }
+                          type="button"
+                        >
+                          <span className="review-card-sibling-number">
+                            {index + 1}
+                          </span>
+                          <span className="review-card-sibling-name">
+                            {reviewCardLabel(
+                              selected.cardContent,
+                              reviewCard.variantKey,
+                            )}
+                            {reviewCard.status === ReviewCardStatus.Suspended && (
+                              <small>Paused</small>
+                            )}
+                          </span>
+                          <span className="review-card-sibling-date">
+                            <small>Due</small>
+                            {formatReviewCardDue(reviewCard)}
+                          </span>
+                          <span className="review-card-sibling-date">
+                            <small>Last reviewed</small>
+                            {reviewCard.lastReviewAt === null
+                              ? 'Never'
+                              : formatRecency(reviewCard.lastReviewAt)}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </section>
+              )}
+              {(selected.cardContent.type === CardContentType.Basic ||
+                selected.cardContent.backMd.trim()) && (
+                  <section>
+                    <span>
+                      {selected.cardContent.type === CardContentType.Basic
+                        ? 'Back'
+                        : 'Extra'}
+                    </span>
+                    <MarkdownRenderer source={selected.cardContent.backMd} />
+                  </section>
+                )}
               {selected.cardContent.source && (
                 <section>
                   <span>Source</span>
@@ -368,7 +548,7 @@ export function CardBrowser({
         ) : (
           <div className="card-browser-placeholder">
             <h2>{loading ? 'Searching…' : 'No card selected'}</h2>
-            <p>Start typing to search, or choose a recently edited card.</p>
+            <p>Start typing to search, or choose a card.</p>
           </div>
         )}
         {error && (
@@ -390,6 +570,102 @@ function cardTitle(markdown: string): string {
   return title || 'Untitled card'
 }
 
+function occlusionModeLabel(mode: OcclusionMode): string {
+  switch (mode) {
+    case OcclusionMode.HideOneGuessOne:
+      return 'Hide one, guess one'
+    case OcclusionMode.HideAllGuessOne:
+      return 'Hide all, guess one'
+  }
+}
+
+function orderedReviewCards(item: CardContentListItem): ReviewCardListItem[] {
+  return [...item.reviewCards].sort((left, right) => {
+    const leftIndex = reviewCardIndex(item, left.variantKey)
+    const rightIndex = reviewCardIndex(item, right.variantKey)
+    return leftIndex - rightIndex || left.variantKey.localeCompare(right.variantKey)
+  })
+}
+
+function reviewCardIndex(
+  item: CardContentListItem,
+  variantKey: string,
+): number {
+  if (item.cardContent.type === CardContentType.Basic) {
+    return 0
+  }
+  if (item.cardContent.type === CardContentType.Cloze) {
+    const index = Number(clozeIndexFromVariantKey(variantKey))
+    return Number.isSafeInteger(index) ? index : Number.MAX_SAFE_INTEGER
+  }
+  const layerId = occlusionLayerId(variantKey)
+  const index = item.cardContent.occlusion.layers.findIndex(
+    (layer) => layer.id === layerId,
+  )
+  return index === -1 ? Number.MAX_SAFE_INTEGER : index
+}
+
+function reviewCardLabel(
+  content: CardContentListItem['cardContent'],
+  variantKey: string,
+): string {
+  if (content.type === CardContentType.Basic) {
+    return 'Basic card'
+  }
+  if (content.type === CardContentType.Cloze) {
+    const clozeIndex = clozeIndexFromVariantKey(variantKey)
+    return `Cloze ${clozeIndex}`
+  }
+  const layerId = occlusionLayerId(variantKey)
+  const index = content.occlusion.layers.findIndex(
+    (layer) => layer.id === layerId,
+  )
+  const layer = content.occlusion.layers[index]
+  return layer?.label?.trim() || `Layer ${index + 1}`
+}
+
+function formatReviewCardDue(card: ReviewCardListItem): string {
+  if (card.status === ReviewCardStatus.Suspended) {
+    return 'Paused'
+  }
+  if (card.state === ReviewCardState.New) {
+    return 'New'
+  }
+  if (card.dueAt !== null) {
+    const remaining = card.dueAt - Date.now()
+    if (remaining <= 0) return 'Now'
+    const minutes = Math.ceil(remaining / 60_000)
+    if (minutes < 60) return `in ${minutes}m`
+    const hours = Math.ceil(remaining / 3_600_000)
+    if (hours < 24) return `in ${hours}h`
+    return formatDate(card.dueAt)
+  }
+  if (card.dueStudyDay !== null) {
+    const currentStudyDay = captureStudyMoment().studyDay
+    if (card.dueStudyDay <= currentStudyDay) return 'Today'
+    if (card.dueStudyDay === currentStudyDay + 1) return 'Tomorrow'
+    return formatStudyDay(card.dueStudyDay)
+  }
+  return 'Unscheduled'
+}
+
+function formatStudyDay(studyDay: number): string {
+  const [year, month, day] = studyDayToIsoDate(studyDay)
+    .split('-')
+    .map(Number)
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(year!, month! - 1, day!))
+}
+
+function formatDate(timestamp: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+  }).format(new Date(timestamp))
+}
+
 function formatRecency(updatedAt: number): string {
   const elapsed = Math.max(0, Date.now() - updatedAt)
   const minutes = Math.floor(elapsed / 60_000)
@@ -399,9 +675,7 @@ function formatRecency(updatedAt: number): string {
   if (hours < 24) return `${hours}h`
   const days = Math.floor(hours / 24)
   if (days < 7) return `${days}d`
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }).format(
-    new Date(updatedAt),
-  )
+  return formatDate(updatedAt)
 }
 
 function statusLabel(status: CardContentListItem['reviewStatus']): string {

@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   dismissQuickAdd: vi.fn(),
   emit: vi.fn(),
   ingestClipboardImage: vi.fn(),
+  ingestImageFile: vi.fn(),
   listen: vi.fn(),
 }))
 
@@ -28,6 +29,7 @@ vi.mock('../../../src/lib/native.ts', () => ({
 
 vi.mock('../../../src/media/gateway.ts', () => ({
   ingestClipboardImage: mocks.ingestClipboardImage,
+  ingestImageFile: mocks.ingestImageFile,
 }))
 
 vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
@@ -45,6 +47,7 @@ beforeEach(() => {
   mocks.emit.mockResolvedValue(undefined)
   mocks.listen.mockResolvedValue(() => undefined)
   mocks.ingestClipboardImage.mockReset()
+  mocks.ingestImageFile.mockReset()
 })
 
 test('focuses Front and follows the logical editor and form focus order', async () => {
@@ -191,6 +194,89 @@ test('creates a CLOZE card with canonical variants and a revealed search project
     })
   })
   expect(mocks.dismissQuickAdd).toHaveBeenCalledTimes(1)
+})
+
+test('opens the full image-occlusion editor from paste and saves layered masks', async () => {
+  const user = userEvent.setup()
+  const image = {
+    id: '01980c8e-6c00-7000-8000-000000000301',
+    mimeType: 'image/webp',
+    naturalHeight: 400,
+    naturalWidth: 800,
+    ocrStatus: 'PENDING' as const,
+  }
+  mocks.ingestClipboardImage.mockResolvedValue(image)
+  const { container, getByRole, queryByRole } = render(<QuickAddWindow />)
+  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.mouseDown(getByRole('option', { name: 'Image occlusion' }))
+
+  const picker = getByRole('button', { name: 'Choose an image for occlusion' })
+  fireEvent.paste(picker, {
+    clipboardData: { items: [{ type: 'image/png' }] },
+  })
+  const overlay = await waitFor(() =>
+    getByRole('application', { name: 'Editable image masks' }),
+  )
+  vi.spyOn(overlay, 'getBoundingClientRect').mockReturnValue({
+    bottom: 400,
+    height: 400,
+    left: 0,
+    right: 800,
+    top: 0,
+    width: 800,
+    x: 0,
+    y: 0,
+    toJSON: () => ({}),
+  })
+
+  fireEvent.keyDown(overlay, { key: 'l', metaKey: true })
+  expect(
+    getByRole('dialog', { name: 'Image occlusion shortcuts' }),
+  ).toBeTruthy()
+  fireEvent.keyDown(overlay, { key: 'Escape' })
+  expect(
+    queryByRole('dialog', { name: 'Image occlusion shortcuts' }),
+  ).toBeNull()
+  expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
+
+  fireEvent.pointerDown(overlay, {
+    button: 0,
+    clientX: 80,
+    clientY: 80,
+    pointerId: 1,
+  })
+  fireEvent.pointerMove(overlay, {
+    clientX: 240,
+    clientY: 160,
+    pointerId: 1,
+  })
+  fireEvent.pointerUp(overlay, {
+    clientX: 240,
+    clientY: 160,
+    pointerId: 1,
+  })
+
+  expect(container.querySelectorAll('.occlusion-editor-mask')).toHaveLength(1)
+  const layerLabel = getByRole('textbox', { name: /Layer label/ })
+  await user.click(layerLabel)
+  await user.type(layerLabel, 'fascia')
+  expect(document.activeElement).toBe(layerLabel)
+  expect((layerLabel as HTMLInputElement).value).toBe('fascia')
+  expect(getByRole('button', { name: /1fascia1 mask/ })).toBeTruthy()
+  fireEvent.click(getByRole('button', { name: /Add ⌘↵/ }))
+
+  await waitFor(() => expect(mocks.createCardContent).toHaveBeenCalledTimes(1))
+  const draft = mocks.createCardContent.mock.calls[0]![0]
+  expect(draft.type).toBe(CardContentType.Occlusion)
+  expect(draft.occlusion.sourceImageId).toBe(image.id)
+  expect(draft.occlusion.layers).toHaveLength(1)
+  expect(draft.occlusion.layers[0].masks[0]).toMatchObject({
+    x: 0.1,
+    y: 0.2,
+    width: 0.2,
+    height: 0.2,
+  })
+  expect(draft.occlusion.layers[0].label).toBe('fascia')
 })
 
 test('blocks invalid CLOZE syntax and focuses its Text editor', () => {

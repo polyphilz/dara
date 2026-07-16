@@ -124,6 +124,9 @@ export function DaraSelect<Value extends string>({
   const selectValue = (nextValue: Value) => {
     setOpen(false)
     onSelect(nextValue)
+    if (onReturnFocus) {
+      requestAnimationFrame(onReturnFocus)
+    }
   }
 
   const handleTriggerMouseDown = (event: MouseEvent<HTMLButtonElement>) => {
@@ -217,9 +220,13 @@ export function DaraSelect<Value extends string>({
         type="button"
       >
         <span>{currentLabel}</span>
-        <span aria-hidden="true" className="dara-select-chevron">
-          ⌄
-        </span>
+        <svg
+          aria-hidden="true"
+          className="dara-select-chevron"
+          viewBox="0 0 10 6"
+        >
+          <path d="M1 1 5 5 9 1" />
+        </svg>
       </button>
       {open &&
         position &&

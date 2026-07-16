@@ -448,6 +448,11 @@ body {
   text-align: center;
 }
 
+.main-window .card-browser-load-more {
+  margin: 0 14px 14px;
+  background: var(--surface);
+}
+
 .card-browser-detail {
   position: relative;
   min-width: 0;
@@ -475,6 +480,17 @@ body {
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.08em;
+}
+
+.occlusion-mode-badge {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 76%, var(--accent-soft));
+  font-size: 9px;
+  font-weight: 700;
+  white-space: nowrap;
 }
 
 .card-detail-actions {
@@ -534,6 +550,77 @@ body {
 
 .card-detail-content .source {
   margin-top: 0;
+}
+
+.review-card-siblings {
+  display: grid;
+  gap: 7px;
+}
+
+.main-window .review-card-sibling {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) minmax(62px, auto) minmax(82px, auto);
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 8px 10px;
+  border-color: var(--line);
+  background: color-mix(in srgb, var(--surface) 82%, var(--accent-soft));
+  text-align: left;
+}
+
+.main-window .review-card-sibling:hover:not(:disabled),
+.main-window .review-card-sibling-selected,
+.main-window .review-card-sibling-selected:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.review-card-sibling-number {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 7px;
+  color: #fff;
+  background: var(--accent);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.review-card-sibling-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.review-card-sibling-name small {
+  margin-left: 7px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent-soft) 65%, var(--surface));
+  font-size: 9px;
+}
+
+.review-card-sibling-date {
+  display: grid;
+  gap: 3px;
+  color: var(--ink);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.review-card-sibling-date small {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .card-browser-placeholder {

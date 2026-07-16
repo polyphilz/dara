@@ -6,6 +6,7 @@ import type {
   SchedulerConfigV1,
   SchedulerLogV1,
 } from '../scheduling/index.ts'
+import type { ImageRecord } from '../media/image-reference.ts'
 
 export const ReviewCardStatus = {
   Active: 'ACTIVE',
@@ -35,6 +36,7 @@ export type MutationDisposition =
 export const CardContentType = {
   Basic: 'BASIC',
   Cloze: 'CLOZE',
+  Occlusion: 'OCCLUSION',
 } as const
 
 export type CardContentType =
@@ -57,7 +59,57 @@ export interface ClozeCardContent extends CardContentBase {
   type: typeof CardContentType.Cloze
 }
 
-export type CardContent = BasicCardContent | ClozeCardContent
+export const OcclusionMode = {
+  HideOneGuessOne: 'HIDE_ONE_GUESS_ONE',
+  HideAllGuessOne: 'HIDE_ALL_GUESS_ONE',
+} as const
+
+export type OcclusionMode =
+  (typeof OcclusionMode)[keyof typeof OcclusionMode]
+
+export const OcclusionMaskColor = {
+  White: 'WHITE',
+  Black: 'BLACK',
+} as const
+
+export type OcclusionMaskColor =
+  (typeof OcclusionMaskColor)[keyof typeof OcclusionMaskColor]
+
+export const OcclusionLayerVariantPrefix = 'layer:'
+
+export type OcclusionSourceImage = ImageRecord
+
+export interface OcclusionMask {
+  id: string
+  x: number
+  y: number
+  width: number
+  height: number
+  color: OcclusionMaskColor
+}
+
+export interface OcclusionMaskLayer {
+  id: string
+  label: string | null
+  masks: OcclusionMask[]
+}
+
+export interface OcclusionDefinition {
+  id: string
+  sourceImage: OcclusionSourceImage
+  mode: OcclusionMode
+  layers: OcclusionMaskLayer[]
+}
+
+export interface OcclusionCardContent extends CardContentBase {
+  type: typeof CardContentType.Occlusion
+  occlusion: OcclusionDefinition
+}
+
+export type CardContent =
+  | BasicCardContent
+  | ClozeCardContent
+  | OcclusionCardContent
 
 export type BasicCardContentDraft = Pick<
   BasicCardContent,
@@ -72,7 +124,28 @@ export type ClozeCardContentDraft = Pick<
   variantKeys: string[]
 }
 
-export type CardContentDraft = BasicCardContentDraft | ClozeCardContentDraft
+export interface OcclusionMaskDraft extends OcclusionMask {}
+
+export interface OcclusionMaskLayerDraft extends OcclusionMaskLayer {}
+
+export interface OcclusionDefinitionDraft {
+  id: string
+  sourceImageId: string
+  mode: OcclusionMode
+  layers: OcclusionMaskLayerDraft[]
+}
+
+export type OcclusionCardContentDraft = Pick<
+  OcclusionCardContent,
+  'type' | 'frontMd' | 'backMd' | 'source'
+> & {
+  occlusion: OcclusionDefinitionDraft
+}
+
+export type CardContentDraft =
+  | BasicCardContentDraft
+  | ClozeCardContentDraft
+  | OcclusionCardContentDraft
 
 export const CardContentReviewStatus = {
   Active: 'ACTIVE',
@@ -93,8 +166,19 @@ export type ReviewQueueSelectionKind =
 
 export interface CardContentListItem {
   cardContent: CardContent
+  reviewCards: ReviewCardListItem[]
   reviewStatus: CardContentReviewStatus
   lifecycleUpdatedAt: number
+}
+
+export interface ReviewCardListItem {
+  id: string
+  status: ReviewCardStatus
+  variantKey: string
+  state: ReviewCardState
+  dueAt: number | null
+  dueStudyDay: number | null
+  lastReviewAt: number | null
 }
 
 export interface ReviewCardSummary {
@@ -183,6 +267,7 @@ export interface UpdateCardContentInput {
 export interface SearchCardContentInput {
   query: string
   limit: number
+  offset: number
 }
 
 export interface SetCardContentSuspendedInput {

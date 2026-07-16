@@ -6,8 +6,13 @@ import { parseDaraMarkdown } from '../../../src/markdown/markdown-conversion.ts'
 import {
   CardContentReviewStatus,
   CardContentType,
+  OcclusionMaskColor,
+  OcclusionMode,
+  ReviewCardStatus,
   type CardContentListItem,
 } from '../../../src/review/contracts.ts'
+import { ImageOcrStatus } from '../../../src/media/image-reference.ts'
+import { ReviewCardState } from '../../../src/scheduling/index.ts'
 
 const mocks = vi.hoisted(() => ({
   deleteCardContent: vi.fn(),
@@ -38,6 +43,17 @@ const activeItem: CardContentListItem = {
     source: 'EE notes',
   },
   lifecycleUpdatedAt: 3_000,
+  reviewCards: [
+    {
+      id: '01980c8e-6c00-7000-8000-000000000102',
+      status: ReviewCardStatus.Active,
+      variantKey: 'basic',
+      state: ReviewCardState.New,
+      dueAt: null,
+      dueStudyDay: null,
+      lastReviewAt: null,
+    },
+  ],
   reviewStatus: CardContentReviewStatus.Active,
 }
 
@@ -52,6 +68,101 @@ const clozeItem: CardContentListItem = {
     source: 'Geography notes',
   },
   lifecycleUpdatedAt: 3_000,
+  reviewCards: [
+    {
+      id: '01980c8e-6c00-7000-8000-000000000202',
+      status: ReviewCardStatus.Active,
+      variantKey: 'cloze:1',
+      state: ReviewCardState.New,
+      dueAt: null,
+      dueStudyDay: null,
+      lastReviewAt: null,
+    },
+    {
+      id: '01980c8e-6c00-7000-8000-000000000203',
+      status: ReviewCardStatus.Active,
+      variantKey: 'cloze:2',
+      state: ReviewCardState.New,
+      dueAt: null,
+      dueStudyDay: null,
+      lastReviewAt: null,
+    },
+  ],
+  reviewStatus: CardContentReviewStatus.Active,
+}
+
+const occlusionItem: CardContentListItem = {
+  cardContent: {
+    id: '01980c8e-6c00-7000-8000-000000000301',
+    createdAt: 1_000,
+    updatedAt: 2_000,
+    type: CardContentType.Occlusion,
+    frontMd: '',
+    backMd: '',
+    source: null,
+    occlusion: {
+      id: '01980c8e-6c00-7000-8000-000000000302',
+      sourceImage: {
+        id: '01980c8e-6c00-7000-8000-000000000303',
+        mimeType: 'image/webp',
+        naturalWidth: 1_000,
+        naturalHeight: 500,
+        ocrStatus: ImageOcrStatus.Ready,
+      },
+      mode: OcclusionMode.HideOneGuessOne,
+      layers: [
+        {
+          id: '01980c8e-6c00-7000-8000-000000000304',
+          label: 'Output',
+          masks: [
+            {
+              id: '01980c8e-6c00-7000-8000-000000000305',
+              x: 0.1,
+              y: 0.1,
+              width: 0.2,
+              height: 0.1,
+              color: OcclusionMaskColor.White,
+            },
+          ],
+        },
+        {
+          id: '01980c8e-6c00-7000-8000-000000000306',
+          label: 'Input',
+          masks: [
+            {
+              id: '01980c8e-6c00-7000-8000-000000000307',
+              x: 0.7,
+              y: 0.75,
+              width: 0.2,
+              height: 0.15,
+              color: OcclusionMaskColor.Black,
+            },
+          ],
+        },
+      ],
+    },
+  },
+  lifecycleUpdatedAt: 3_000,
+  reviewCards: [
+    {
+      id: '01980c8e-6c00-7000-8000-000000000308',
+      status: ReviewCardStatus.Active,
+      variantKey: 'layer:01980c8e-6c00-7000-8000-000000000304',
+      state: ReviewCardState.Review,
+      dueAt: null,
+      dueStudyDay: 99_999,
+      lastReviewAt: 1_000,
+    },
+    {
+      id: '01980c8e-6c00-7000-8000-000000000309',
+      status: ReviewCardStatus.Active,
+      variantKey: 'layer:01980c8e-6c00-7000-8000-000000000306',
+      state: ReviewCardState.New,
+      dueAt: null,
+      dueStudyDay: null,
+      lastReviewAt: null,
+    },
+  ],
   reviewStatus: CardContentReviewStatus.Active,
 }
 
@@ -74,7 +185,11 @@ test('searches immediately and toggles the selected authored item with Command-J
   )
 
   await waitFor(() => {
-    expect(mocks.searchCardContent).toHaveBeenCalledWith({ query: '', limit: 75 })
+    expect(mocks.searchCardContent).toHaveBeenCalledWith({
+      query: '',
+      limit: 51,
+      offset: 0,
+    })
   })
   expect(getByText('Why is copper conductive?')).toBeTruthy()
 
@@ -88,7 +203,8 @@ test('searches immediately and toggles the selected authored item with Command-J
   await waitFor(() => {
     expect(mocks.searchCardContent).toHaveBeenLastCalledWith({
       query: 'conduct',
-      limit: 75,
+      limit: 51,
+      offset: 0,
     })
   })
 
@@ -141,6 +257,14 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
       updatedAt: 2_001,
       frontMd: 'The {{c1::capital}} of France is Paris in {{c3::Europe}}.',
     },
+    reviewCards: [
+      clozeItem.reviewCards[0]!,
+      {
+        ...clozeItem.reviewCards[1]!,
+        id: '01980c8e-6c00-7000-8000-000000000204',
+        variantKey: 'cloze:3',
+      },
+    ],
   })
   const onCardContentChanged = vi.fn()
   const { getAllByText, getByRole, queryByRole, queryByText } = render(
@@ -151,11 +275,14 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
   )
 
   await waitFor(() => {
-    expect(getAllByText('The capital of France is Paris.').length).toBeGreaterThan(0)
+    expect(getAllByText('The [...] of France is Paris.').length).toBeGreaterThan(0)
   })
   expect(getByRole('button', { name: /Edit/ })).toBeTruthy()
   expect(queryByText(/\{\{c1::/)).toBeNull()
   expect(getByRole('article').textContent).toContain('A geography prompt.')
+
+  fireEvent.click(getByRole('button', { name: /Cloze 2.*Due/ }))
+  expect(getAllByText('The capital of France is [city].').length).toBeGreaterThan(0)
 
   fireEvent.click(getByRole('button', { name: /Edit/ }))
   expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
@@ -181,6 +308,82 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
     })
   })
   expect(onCardContentChanged).toHaveBeenCalledTimes(1)
+})
+
+test('shows every occlusion review sibling and previews the selected layer', async () => {
+  mocks.searchCardContent.mockResolvedValue([occlusionItem])
+  const { container, getByRole, getByText } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+
+  await waitFor(() => expect(getByText('Image occlusion · 2 layers')).toBeTruthy())
+  expect(getByText('Hide one, guess one').classList).toContain(
+    'occlusion-mode-badge',
+  )
+  const reviewCards = getByRole('group', { name: 'Review cards' })
+  expect(reviewCards.querySelectorAll('button')).toHaveLength(2)
+  expect(getByRole('button', { name: /Output.*Due.*Last reviewed/ })).toBeTruthy()
+  expect(getByRole('button', { name: /Input.*Due.*New.*Last reviewed.*Never/ })).toBeTruthy()
+  expect(
+    container.querySelector('.occlusion-review-mask')?.getAttribute('x'),
+  ).toBe('100')
+
+  fireEvent.click(getByRole('button', { name: /Input.*Due/ }))
+
+  expect(
+    container.querySelector('.occlusion-review-mask')?.getAttribute('x'),
+  ).toBe('700')
+})
+
+test('returns from edit mode when Browse is invoked again', async () => {
+  const onQueueChanged = vi.fn()
+  const { getByLabelText, getByRole, queryByRole, rerender } = render(
+    <CardBrowser navigationToken={0} onQueueChanged={onQueueChanged} />,
+  )
+  await waitFor(() => expect(getByLabelText('Search cards')).toBeTruthy())
+  fireEvent.keyDown(getByLabelText('Search cards'), { key: 'Enter' })
+  expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
+
+  rerender(
+    <CardBrowser navigationToken={1} onQueueChanged={onQueueChanged} />,
+  )
+
+  expect(queryByRole('heading', { name: 'Edit card' })).toBeNull()
+  expect(getByLabelText('Search cards')).toBeTruthy()
+})
+
+test('loads Browse results incrementally beyond the first page', async () => {
+  const items = Array.from({ length: 52 }, (_, index) => ({
+    ...activeItem,
+    cardContent: {
+      ...activeItem.cardContent,
+      id: `card-${index}`,
+      frontMd: `Card ${index}`,
+    },
+    reviewCards: activeItem.reviewCards.map((card) => ({
+      ...card,
+      id: `review-${index}`,
+    })),
+  }))
+  mocks.searchCardContent.mockImplementation(
+    ({ offset }: { offset: number }) =>
+      Promise.resolve(offset === 0 ? items.slice(0, 51) : items.slice(offset)),
+  )
+  const { getAllByRole, getByRole } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+
+  const loadMore = await waitFor(() =>
+    getByRole('button', { name: 'Load more' }),
+  )
+  expect(getAllByRole('option')).toHaveLength(50)
+  fireEvent.click(loadMore)
+  await waitFor(() => expect(getAllByRole('option')).toHaveLength(52))
+  expect(mocks.searchCardContent).toHaveBeenLastCalledWith({
+    query: '',
+    limit: 51,
+    offset: 50,
+  })
 })
 
 function replaceEditorDocument(element: HTMLElement, value: string) {

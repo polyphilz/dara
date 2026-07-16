@@ -7,14 +7,14 @@ use std::{
 };
 
 use image::{imageops::FilterType, GenericImageView, ImageDecoder, ImageReader, Limits};
-use tauri::{http, AppHandle, Manager, State};
+use tauri::{http, ipc::InvokeBody, ipc::Request, AppHandle, Manager, State};
 
 use crate::database::{
     commands::CommandError, CanonicalImage, Database, DatabaseClient, DatabaseError,
     ImageOcrStatus, ImageRecord, OcrJob,
 };
 
-const MAX_CLIPBOARD_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_SOURCE_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_DECODED_IMAGE_DIMENSION: u32 = 32_768;
 const MAX_CANONICAL_IMAGE_EDGE: u32 = 1_600;
 const WEBP_QUALITY: f32 = 80.0;
@@ -63,6 +63,41 @@ pub async fn ingest_clipboard_image(
     ocr: State<'_, OcrCoordinator>,
 ) -> Result<ImageRecord, CommandError> {
     let raw = read_clipboard_image(&app).await?;
+    ingest_image(raw, &database, &ocr).await
+}
+
+#[tauri::command]
+pub async fn ingest_image_bytes(
+    request: Request<'_>,
+    database: State<'_, Database>,
+    ocr: State<'_, OcrCoordinator>,
+) -> Result<ImageRecord, CommandError> {
+    let raw = match request.body() {
+        InvokeBody::Raw(bytes) => bytes.clone(),
+        InvokeBody::Json(_) => {
+            return Err(CommandError::from(DatabaseError::InvalidInput(
+                "image upload requires a binary payload".into(),
+            )))
+        }
+    };
+    if raw.is_empty() {
+        return Err(CommandError::from(DatabaseError::InvalidInput(
+            "the selected image is empty".into(),
+        )));
+    }
+    if raw.len() > MAX_SOURCE_IMAGE_BYTES {
+        return Err(CommandError::from(DatabaseError::InvalidInput(
+            "the selected image is larger than 64 MiB".into(),
+        )));
+    }
+    ingest_image(raw, &database, &ocr).await
+}
+
+async fn ingest_image(
+    raw: Vec<u8>,
+    database: &Database,
+    ocr: &OcrCoordinator,
+) -> Result<ImageRecord, CommandError> {
     let client = database.client();
     let image = tauri::async_runtime::spawn_blocking(move || canonicalize_image(&raw))
         .await
@@ -159,7 +194,7 @@ fn read_clipboard_image_on_main_thread() -> Result<Vec<u8>, DatabaseError> {
     }] {
         if let Some(data) = pasteboard.dataForType(pasteboard_type) {
             let bytes = data.to_vec();
-            if bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+            if bytes.len() > MAX_SOURCE_IMAGE_BYTES {
                 return Err(DatabaseError::InvalidInput(
                     "the pasted image is larger than 64 MiB".into(),
                 ));
@@ -233,7 +268,7 @@ fn canonicalize_image(bytes: &[u8]) -> Result<CanonicalImage, CommandError> {
 
 fn invalid_image(reason: String) -> CommandError {
     CommandError::from(DatabaseError::InvalidInput(format!(
-        "could not process the pasted image: {reason}"
+        "could not process the image: {reason}"
     )))
 }
 

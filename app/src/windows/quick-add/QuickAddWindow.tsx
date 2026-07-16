@@ -18,7 +18,9 @@ export function QuickAddWindow() {
     const target = event.target
     if (
       target instanceof Element &&
-      (target.closest('.formula-dialog, .dara-select-popover') ||
+      (target.closest(
+        '.formula-dialog, .dara-select-popover, .occlusion-layer-panel, .occlusion-editor-legend-open',
+      ) ||
         target.closest(".dara-select-trigger[aria-expanded='true']"))
     ) {
       return
