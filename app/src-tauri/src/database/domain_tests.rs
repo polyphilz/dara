@@ -13,8 +13,8 @@ use super::{
         ReviewCardStatus, ReviewEventType, ReviewFact, SchedulerLogV1, SearchCardContentInput,
         SetCardContentSuspendedInput, UpdateCardContentInput,
     },
-    initialize, Database, DatabaseError, DatabasePaths, InitializationOptions, RecordGradeInput,
-    ReviewContext, UndoLastGradeInput,
+    initialize, CanonicalImage, Database, DatabaseError, DatabasePaths, InitializationOptions,
+    RecordGradeInput, ReviewContext, UndoLastGradeInput,
 };
 
 const FIXTURE_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -211,6 +211,298 @@ fn creates_a_basic_card_and_loads_its_scheduling_context() {
     assert_eq!(
         row.1,
         "What is the capital of France?\n\u{1e}\nParis\n\u{1e}\nGeography notes"
+    );
+}
+
+#[test]
+fn image_ingestion_deduplicates_and_ocr_fans_out_into_search() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let canonical = CanonicalImage {
+        bytes: b"canonical test webp".to_vec(),
+        natural_width: 800,
+        natural_height: 600,
+    };
+    let first = database
+        .ingest_image(canonical.clone())
+        .expect("first image ingestion");
+    let duplicate = database
+        .ingest_image(canonical)
+        .expect("deduplicated image ingestion");
+    assert_eq!(duplicate, first);
+
+    let token = format!("{{{{image:{};width=75%}}}}", first.id);
+    let context = database
+        .create_card_content(basic_draft(&token, "The mitochondrion", None))
+        .expect("image-only card front");
+    let cloze_front = format!("The {{{{c1::mitochondrion}}}} is shown below.\n\n{token}");
+    let cloze_search = format!("The mitochondrion is shown below.\n\n{token}");
+    let cloze = database
+        .create_card_content(cloze_draft(
+            &cloze_front,
+            "",
+            None,
+            &["cloze:1"],
+            &cloze_search,
+        ))
+        .expect("cloze card with inline image");
+
+    let main = connection::open_read_only(&paths.main, DatabaseKind::Main).expect("main database");
+    let media =
+        connection::open_read_only(&paths.media, DatabaseKind::Media).expect("media database");
+    assert_eq!(
+        main.query_row("SELECT count(*) FROM image", [], |row| row.get::<_, i64>(0))
+            .expect("image count"),
+        1
+    );
+    assert_eq!(
+        media
+            .query_row("SELECT count(*) FROM media_blob", [], |row| row
+                .get::<_, i64>(0))
+            .expect("blob count"),
+        1
+    );
+    assert_eq!(
+        main.query_row(
+            "SELECT count(*) FROM card_content_image WHERE image_id = ?1",
+            [&first.id],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("derived image references"),
+        2
+    );
+    let before_ocr: String = main
+        .query_row(
+            "SELECT body FROM search_document WHERE card_content_id = ?1",
+            [context.card_content.id()],
+            |row| row.get(0),
+        )
+        .expect("search document before OCR");
+    assert!(!before_ocr.contains("{{image:"));
+    assert!(!before_ocr.contains("ATP synthase"));
+    drop(main);
+    drop(media);
+
+    let claimed = database
+        .claim_next_ocr_job(super::media::now_millis().expect("claim time"))
+        .expect("OCR claim")
+        .expect("pending OCR job");
+    assert_eq!(claimed.image_id, first.id);
+    database
+        .complete_image_ocr(
+            &claimed,
+            Ok("ATP synthase inner membrane".into()),
+            super::media::now_millis().expect("completion time"),
+        )
+        .expect("OCR completion");
+    let results = database
+        .search_card_content(SearchCardContentInput {
+            query: "ATP synthase".into(),
+            limit: 10,
+        })
+        .expect("OCR lexical search");
+    let result_ids = results
+        .iter()
+        .map(|result| result.card_content.id())
+        .collect::<Vec<_>>();
+    assert_eq!(results.len(), 2);
+    assert!(result_ids.contains(&context.card_content.id()));
+    assert!(result_ids.contains(&cloze.card_content.id()));
+}
+
+#[test]
+fn image_ocr_queue_retries_with_backoff_and_stops_at_the_attempt_limit() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .ingest_image(CanonicalImage {
+            bytes: b"retryable canonical test webp".to_vec(),
+            natural_width: 640,
+            natural_height: 480,
+        })
+        .expect("image ingestion");
+    let mut claim_at = super::media::now_millis().expect("initial claim time");
+
+    for attempt_count in 1..=super::media::MAX_OCR_ATTEMPTS {
+        let job = database
+            .claim_next_ocr_job(claim_at)
+            .expect("OCR claim")
+            .expect("eligible OCR job");
+        assert_eq!(job.image_id, image.id);
+        assert_eq!(job.attempt_count, attempt_count);
+
+        let running = image_ocr_queue_row(&paths, &image.id);
+        assert_eq!(running.0, super::media::OcrQueueState::Running.as_db_str());
+        assert_eq!(running.1, attempt_count);
+        assert_eq!(running.2, None);
+        assert_eq!(running.3, Some(claim_at));
+
+        let completed_at = claim_at + 1;
+        database
+            .complete_image_ocr(&job, Err("temporary Vision failure".into()), completed_at)
+            .expect("failed OCR completion");
+        let waiting = image_ocr_queue_row(&paths, &image.id);
+        assert_eq!(waiting.1, attempt_count);
+        assert_eq!(waiting.3, None);
+        assert_eq!(waiting.4.as_deref(), Some("temporary Vision failure"));
+
+        if attempt_count < super::media::MAX_OCR_ATTEMPTS {
+            let retry_at =
+                completed_at + super::media::OCR_RETRY_DELAYS_MILLIS[(attempt_count - 1) as usize];
+            assert_eq!(
+                waiting.0,
+                super::media::OcrQueueState::RetryWait.as_db_str()
+            );
+            assert_eq!(waiting.2, Some(retry_at));
+            assert!(database
+                .claim_next_ocr_job(retry_at - 1)
+                .expect("early OCR claim")
+                .is_none());
+            claim_at = retry_at;
+        } else {
+            assert_eq!(waiting.0, super::ImageOcrStatus::Failed.as_db_str());
+            assert_eq!(waiting.2, None);
+        }
+    }
+
+    assert!(database
+        .claim_next_ocr_job(claim_at + 1)
+        .expect("terminal OCR claim")
+        .is_none());
+}
+
+#[test]
+fn image_ocr_queue_recovers_only_abandoned_running_attempts() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let image = database
+        .ingest_image(CanonicalImage {
+            bytes: b"interrupted canonical test webp".to_vec(),
+            natural_width: 720,
+            natural_height: 540,
+        })
+        .expect("image ingestion");
+    let claimed_at = super::media::now_millis().expect("claim time");
+    let first = database
+        .claim_next_ocr_job(claimed_at)
+        .expect("OCR claim")
+        .expect("pending OCR job");
+
+    let untouched = database
+        .recover_interrupted_ocr_jobs(claimed_at - 1, claimed_at + 10)
+        .expect("non-stale recovery");
+    assert_eq!(untouched, super::OcrQueueRecovery::default());
+    assert_eq!(
+        image_ocr_queue_row(&paths, &image.id).0,
+        super::media::OcrQueueState::Running.as_db_str()
+    );
+
+    let recovered_at = claimed_at + 20;
+    let recovered = database
+        .recover_interrupted_ocr_jobs(claimed_at, recovered_at)
+        .expect("stale recovery");
+    assert_eq!(
+        recovered,
+        super::OcrQueueRecovery {
+            requeued: 1,
+            terminally_failed: 0,
+        }
+    );
+    let row = image_ocr_queue_row(&paths, &image.id);
+    assert_eq!(row.0, super::media::OcrQueueState::RetryWait.as_db_str());
+    assert_eq!(row.1, first.attempt_count);
+    assert_eq!(row.2, Some(recovered_at));
+    assert_eq!(row.3, None);
+
+    let mut current = database
+        .claim_next_ocr_job(recovered_at)
+        .expect("recovered OCR claim")
+        .expect("recovered OCR job");
+    assert_eq!(current.image_id, image.id);
+    assert_eq!(current.attempt_count, first.attempt_count + 1);
+
+    let mut current_started_at = recovered_at;
+    while current.attempt_count < super::media::MAX_OCR_ATTEMPTS {
+        let next_recovery_at = current_started_at + 1;
+        let recovery = database
+            .recover_interrupted_ocr_jobs(current_started_at, next_recovery_at)
+            .expect("repeat stale recovery");
+        assert_eq!(recovery.requeued, 1);
+        assert_eq!(recovery.terminally_failed, 0);
+        current = database
+            .claim_next_ocr_job(next_recovery_at)
+            .expect("repeat recovered OCR claim")
+            .expect("repeat recovered OCR job");
+        current_started_at = next_recovery_at;
+    }
+
+    let terminal = database
+        .recover_interrupted_ocr_jobs(current_started_at, current_started_at + 1)
+        .expect("terminal stale recovery");
+    assert_eq!(terminal.requeued, 0);
+    assert_eq!(terminal.terminally_failed, 1);
+    let failed = image_ocr_queue_row(&paths, &image.id);
+    assert_eq!(failed.0, super::ImageOcrStatus::Failed.as_db_str());
+    assert_eq!(failed.1, super::media::MAX_OCR_ATTEMPTS);
+    assert_eq!(failed.2, None);
+    assert_eq!(failed.3, None);
+}
+
+fn image_ocr_queue_row(
+    paths: &DatabasePaths,
+    image_id: &str,
+) -> (String, u32, Option<i64>, Option<i64>, Option<String>) {
+    connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("main database")
+        .query_row(
+            "SELECT ocr_queue_state, ocr_attempt_count, ocr_next_attempt_at,
+                    ocr_started_at, ocr_error
+             FROM image WHERE id = ?1",
+            [image_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .expect("image OCR queue row")
+}
+
+#[test]
+fn malformed_or_missing_image_references_fail_without_creating_a_card() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let missing_id = "01980c8e-6c00-7000-8000-000000000299";
+
+    assert!(matches!(
+        database.create_card_content(basic_draft(
+            &format!("{{{{image:{missing_id};width=50%}}}}"),
+            "answer",
+            None,
+        )),
+        Err(DatabaseError::InvalidInput(_))
+    ));
+    assert!(matches!(
+        database.create_card_content(basic_draft(
+            &format!("prefix {{{{image:{missing_id};width=50%}}}}"),
+            "answer",
+            None,
+        )),
+        Err(DatabaseError::InvalidInput(_))
+    ));
+
+    let connection =
+        connection::open_read_only(&paths.main, DatabaseKind::Main).expect("main database");
+    assert_eq!(
+        connection
+            .query_row("SELECT count(*) FROM card_content", [], |row| row
+                .get::<_, i64>(0))
+            .expect("card count"),
+        0
     );
 }
 

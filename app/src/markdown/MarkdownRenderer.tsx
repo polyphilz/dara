@@ -1,4 +1,5 @@
 import {
+  Children,
   Component,
   useMemo,
   type ErrorInfo,
@@ -7,6 +8,10 @@ import {
 } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import { native } from '../lib/native.ts'
+import {
+  localMediaUrl,
+  parseImageReferenceToken,
+} from '../media/image-reference.ts'
 import { rehypePlugins, remarkPlugins } from './renderer-config.ts'
 import { externalHttpUrl, markdownUrlTransform } from './url-policy.ts'
 
@@ -67,6 +72,27 @@ function rendererComponents(
           {alt ? `Image: ${alt}` : 'External image unavailable'}
         </span>
       )
+    },
+    p({ children }) {
+      const values = Children.toArray(children)
+      const reference =
+        values.length === 1 && typeof values[0] === 'string'
+          ? parseImageReferenceToken(values[0])
+          : null
+      if (reference) {
+        return (
+          <figure
+            className="dara-markdown-image"
+            style={{ width: `${reference.displayWidthPercent}%` }}
+          >
+            <img
+              alt="Pasted card image"
+              src={localMediaUrl(reference.imageId)}
+            />
+          </figure>
+        )
+      }
+      return <p>{children}</p>
     },
     table({ children }) {
       return (

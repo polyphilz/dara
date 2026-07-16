@@ -1,5 +1,6 @@
 mod database;
 mod external;
+mod media;
 mod windows;
 
 use std::path::PathBuf;
@@ -9,6 +10,9 @@ use tauri::{Emitter, Manager, RunEvent};
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .register_uri_scheme_protocol("dara-media", |context, request| {
+            media::protocol_response(context.app_handle(), request)
+        })
         .plugin(tauri_plugin_single_instance::init(
             |app, _arguments, _cwd| {
                 if let Err(error) = windows::macos::show_main(app.clone()) {
@@ -29,6 +33,7 @@ pub fn run() {
             database::commands::set_card_content_suspended,
             database::commands::undo_last_grade,
             database::commands::update_card_content,
+            media::ingest_clipboard_image,
             external::open_external_url,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,
@@ -55,7 +60,9 @@ pub fn run() {
                 database::InitializationOptions::default(),
             )?;
             log::info!("database ready at {}", database.paths().root().display());
+            let ocr = media::OcrCoordinator::start(database.client())?;
             app.manage(database);
+            app.manage(ocr);
 
             windows::setup(app)?;
             Ok(())

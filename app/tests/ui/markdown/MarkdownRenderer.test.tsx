@@ -114,6 +114,30 @@ test('task-list checkboxes are presentational only', () => {
   expect((getByRole('checkbox') as HTMLInputElement).disabled).toBe(true)
 })
 
+test('canonical Dara image blocks use the local-media protocol', () => {
+  const imageId = '01980c8e-6c00-7000-8000-000000000201'
+  const { container, getByRole } = render(
+    <MarkdownRenderer source={`{{image:${imageId};width=60%}}`} />,
+  )
+
+  expect(
+    getByRole('img', { name: 'Pasted card image' }).getAttribute('src'),
+  ).toBe(`dara-media://localhost/image/${imageId}`)
+  expect(
+    (container.querySelector('.dara-markdown-image') as HTMLElement | null)
+      ?.style.width,
+  ).toBe('60%')
+})
+
+test('image-looking tokens remain literal inside code', () => {
+  const imageId = '01980c8e-6c00-7000-8000-000000000201'
+  const source = `\`{{image:${imageId};width=60%}}\``
+  const { container, queryByRole } = render(<MarkdownRenderer source={source} />)
+
+  expect(queryByRole('img')).toBeNull()
+  expect(container.querySelector('code')?.textContent).toContain('{{image:')
+})
+
 test('the external URL policy accepts only absolute HTTP(S) destinations', () => {
   expect(externalHttpUrl('https://example.com/path')).toBe(
     'https://example.com/path',

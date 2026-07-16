@@ -139,6 +139,63 @@
   margin: 0.55em 0;
 }
 
+.dara-editor-image {
+  position: relative;
+  min-width: 10%;
+  max-width: 100%;
+  margin: 0.75em 0;
+  border-radius: 8px;
+}
+
+.dara-editor-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  user-select: none;
+}
+
+.dara-editor-image:hover,
+.dara-editor-image-selected,
+.dara-editor-image-resizing {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.dara-editor-image-resize-handle {
+  position: absolute;
+  right: -7px;
+  bottom: -7px;
+  width: 15px;
+  height: 15px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: nwse-resize;
+  opacity: 0;
+  transition: opacity 100ms ease;
+}
+
+.dara-editor-image:hover .dara-editor-image-resize-handle,
+.dara-editor-image-selected .dara-editor-image-resize-handle,
+.dara-editor-image-resizing .dara-editor-image-resize-handle {
+  opacity: 1;
+}
+
+.rich-text-editor[aria-disabled='true'] .dara-editor-image-resize-handle {
+  display: none;
+}
+
+.dara-editor-image-pending {
+  margin: 0.75em 0;
+  padding: 18px;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  text-align: center;
+}
+
 .dara-rich-text-content blockquote {
   padding-left: 12px;
   border-left: 3px solid var(--line);

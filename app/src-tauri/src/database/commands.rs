@@ -51,6 +51,13 @@ impl From<DatabaseError> for CommandError {
     }
 }
 
+impl CommandError {
+    pub(crate) fn with_context(mut self, context: String) -> Self {
+        self.message = format!("{}: {context}", self.message);
+        self
+    }
+}
+
 type CommandResult<T> = std::result::Result<T, CommandError>;
 
 #[tauri::command]

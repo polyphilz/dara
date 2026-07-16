@@ -117,8 +117,11 @@ fn validate_history(
         );
     }
 
+    let mut available = available.iter().collect::<Vec<_>>();
+    available.sort_by_key(|migration| migration.version());
+
     for (position, applied_migration) in applied.iter().enumerate() {
-        let expected = &available[position];
+        let expected = available[position];
         if applied_migration.version() != expected.version()
             || applied_migration.name() != expected.name()
             || applied_migration.checksum() != expected.checksum()
@@ -145,5 +148,5 @@ fn incompatible<T>(kind: DatabaseKind, reason: String) -> Result<T> {
 }
 
 fn latest_version(runner: &Runner) -> Option<i32> {
-    runner.get_migrations().last().map(Migration::version)
+    runner.get_migrations().iter().map(Migration::version).max()
 }

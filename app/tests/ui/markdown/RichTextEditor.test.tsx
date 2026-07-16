@@ -1,6 +1,6 @@
 import { StrictMode, createRef, useState } from 'react'
 import { EditorView as CodeMirrorView } from '@codemirror/view'
-import { AllSelection, TextSelection } from 'prosemirror-state'
+import { AllSelection, NodeSelection, TextSelection } from 'prosemirror-state'
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
 import {
@@ -283,6 +283,89 @@ test('Strict Mode creates no duplicate transaction', () => {
   const view = editorView(getByRole('textbox', { name: 'Front' }))
   act(() => view.dispatch(view.state.tr.insertText('x')))
   expect(onChange).toHaveBeenCalledTimes(1)
+})
+
+test('loads a canonical image token as a resizable block node', () => {
+  const imageId = '01980c8e-6c00-7000-8000-000000000201'
+  const { container, textbox, view } = controlledEditor(
+    `Before\n\n{{image:${imageId};width=70%}}\n\nAfter`,
+  )
+
+  const image = container.querySelector<HTMLImageElement>('.dara-editor-image img')
+  expect(image?.src).toBe(`dara-media://localhost/image/${imageId}`)
+  expect(image?.closest('figure')?.style.width).toBe('70%')
+
+  const imagePosition = view.state.doc.child(0).nodeSize
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(NodeSelection.create(view.state.doc, imagePosition)),
+    )
+  })
+  fireEvent.keyDown(textbox, { altKey: true, key: 'ArrowLeft' })
+  expect(serializeDaraMarkdown(view.state.doc)).toContain(
+    `{{image:${imageId};width=65%}}`,
+  )
+})
+
+test('image paste stays pending until durable ingestion returns an image ID', async () => {
+  const imageId = '01980c8e-6c00-7000-8000-000000000202'
+  type PendingRecord = {
+    id: string
+    mimeType: string
+    naturalHeight: number
+    naturalWidth: number
+    ocrStatus: 'PENDING'
+  }
+  let resolveImage!: (record: PendingRecord) => void
+  const ingestImage = vi.fn(
+    () =>
+      new Promise<PendingRecord>((resolve) => {
+        resolveImage = resolve
+      }),
+  )
+  const pending = vi.fn()
+  function Harness() {
+    const [value, setValue] = useState('Question')
+    return (
+      <RichTextEditor
+        ariaLabel="Editor"
+        ingestImage={ingestImage}
+        onChange={setValue}
+        onPendingMediaChange={pending}
+        value={value}
+      />
+    )
+  }
+  const rendered = render(<Harness />)
+  const textbox = rendered.getByRole('textbox', { name: 'Editor' })
+  const view = editorView(textbox)
+
+  fireEvent.paste(textbox, {
+    clipboardData: { items: [{ type: 'image/png' }] },
+  })
+  expect(ingestImage).toHaveBeenCalledTimes(1)
+  expect(
+    rendered.getByRole('status', { name: 'Processing pasted image' }),
+  ).toBeTruthy()
+  expect(pending).toHaveBeenLastCalledWith(true)
+
+  await act(async () => {
+    resolveImage({
+      id: imageId,
+      mimeType: 'image/webp',
+      naturalHeight: 600,
+      naturalWidth: 800,
+      ocrStatus: 'PENDING',
+    })
+    await Promise.resolve()
+  })
+
+  expect(rendered.queryByRole('status')).toBeNull()
+  expect(rendered.container.querySelector('.dara-editor-image img')).not.toBeNull()
+  expect(serializeDaraMarkdown(view.state.doc)).toContain(
+    `{{image:${imageId};width=100%}}`,
+  )
+  expect(pending).toHaveBeenLastCalledWith(false)
 })
 
 describe('keyboard structure', () => {

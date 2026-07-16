@@ -57,6 +57,8 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
     const [source, setSource] = useState(initialContent?.source ?? '')
     const [error, setError] = useState<string | null>(null)
     const [saving, setSaving] = useState(false)
+    const [primaryMediaPending, setPrimaryMediaPending] = useState(false)
+    const [secondaryMediaPending, setSecondaryMediaPending] = useState(false)
 
     const focusPrimary = useCallback(() => {
       requestAnimationFrame(() => primaryRef.current?.focus())
@@ -87,10 +89,16 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
       setBack(initialContent?.backMd ?? '')
       setSource(initialContent?.source ?? '')
       setError(null)
+      setPrimaryMediaPending(false)
+      setSecondaryMediaPending(false)
     }, [initialContent])
 
     const save = async () => {
       if (saving) {
+        return
+      }
+      if (primaryMediaPending || secondaryMediaPending) {
+        setError('Wait for the pasted image to finish processing before saving.')
         return
       }
 
@@ -178,6 +186,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
     }
 
     const editing = initialContent !== undefined
+    const mediaPending = primaryMediaPending || secondaryMediaPending
     const quick = variant === CardFormVariant.Quick
     const primaryLabel = cardType === CardContentType.Basic ? 'Front' : 'Text'
     const secondaryLabel = cardType === CardContentType.Basic ? 'Back' : 'Extra'
@@ -205,7 +214,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
             <span>Card type</span>
             <DaraSelect
               ariaLabel="Card type"
-              disabled={saving}
+              disabled={saving || mediaPending}
               menuHeight={80}
               menuWidth={128}
               onSelect={(nextCardType) => {
@@ -227,6 +236,13 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
             disabled={saving}
             key={`primary-${cardType}`}
             onChange={setFront}
+            onMediaError={(cause) => setError(errorMessage(cause))}
+            onPendingMediaChange={(pending) => {
+              setPrimaryMediaPending(pending)
+              if (pending) {
+                setError(null)
+              }
+            }}
             placeholder={
               cardType === CardContentType.Basic
                 ? 'Question'
@@ -252,6 +268,13 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
             disabled={saving}
             key={`secondary-${cardType}`}
             onChange={setBack}
+            onMediaError={(cause) => setError(errorMessage(cause))}
+            onPendingMediaChange={(pending) => {
+              setSecondaryMediaPending(pending)
+              if (pending) {
+                setError(null)
+              }
+            }}
             placeholder={
               cardType === CardContentType.Basic
                 ? 'Answer'
@@ -289,11 +312,19 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
           <div>
             <button
               className="save-button"
-              disabled={saving}
+              disabled={saving || mediaPending}
               onClick={() => void save()}
               type="button"
             >
-              {saving ? (editing ? 'Saving…' : 'Adding…') : editing ? 'Save' : 'Add'}{' '}
+              {mediaPending
+                ? 'Processing image…'
+                : saving
+                  ? editing
+                    ? 'Saving…'
+                    : 'Adding…'
+                  : editing
+                    ? 'Save'
+                    : 'Add'}{' '}
               <kbd>⌘↵</kbd>
             </button>
             <button

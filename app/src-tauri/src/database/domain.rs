@@ -15,6 +15,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+use super::media;
 use super::{DatabaseError, Result};
 
 const EVENT_SCHEMA_VERSION: i64 = 1;
@@ -24,7 +25,7 @@ const SUPPORTED_SCHEDULER_ALGORITHM_VERSION: i64 = 6;
 const SUPPORTED_SCHEDULER_LIBRARY_VERSION: &str = "5.4.1";
 const SUPPORTED_SCHEDULER_CONFIG_SCHEMA_VERSION: i64 = 1;
 // An explicit, non-token field boundary keeps the aggregate deterministic.
-const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
+pub(super) const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
 const BASIC_VARIANT_KEY: &str = "basic";
 const CLOZE_VARIANT_PREFIX: &str = "cloze:";
 const CARD_CONTENT_LIST_SELECT: &str = "
@@ -516,10 +517,18 @@ pub(super) fn create_card_content(
     let now = now_millis()?;
     let content_id = Uuid::now_v7().to_string();
     let fields = draft_fields(&input);
-    let search_body = search_body(fields.search_md, fields.back_md, fields.source);
-    let content_hash = Sha256::digest(search_body.as_bytes());
+    let image_references = media::parse_card_image_references(fields.front_md, fields.back_md)?;
 
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    media::validate_active_image_references(&transaction, &image_references)?;
+    let search_body = search_body(
+        &transaction,
+        fields.search_md,
+        fields.back_md,
+        fields.source,
+        &image_references,
+    )?;
+    let content_hash = Sha256::digest(search_body.as_bytes());
     transaction.execute(
         "INSERT INTO card_content (
             id, created_at, updated_at, deleted_at, type, front_md, back_md, source
@@ -540,6 +549,7 @@ pub(super) fn create_card_content(
     }
     let first_review_card_id = first_review_card_id
         .ok_or_else(|| DatabaseError::InvalidInput("card has no review variants".into()))?;
+    media::sync_card_content_images(&transaction, &content_id, &image_references)?;
     transaction.execute(
         "INSERT INTO search_document (card_content_id, body, content_hash, updated_at)
          VALUES (?1, ?2, ?3, ?4)",
@@ -573,6 +583,8 @@ pub(super) fn update_card_content(
             "card type cannot be changed after creation".into(),
         ));
     }
+    let image_references = media::parse_card_image_references(fields.front_md, fields.back_md)?;
+    media::validate_active_image_references(&transaction, &image_references)?;
 
     let now = now_millis()?;
     let updated_at = next_updated_at(current.updated_at(), now)?;
@@ -601,8 +613,10 @@ pub(super) fn update_card_content(
         fields.search_md,
         fields.back_md,
         fields.source,
+        &image_references,
         updated_at,
     )?;
+    media::sync_card_content_images(&transaction, &input.id, &image_references)?;
     reconcile_review_card_variants(&transaction, &input.id, fields.variant_keys, updated_at)?;
     transaction.commit()?;
     load_card_content_list_item(connection, &input.id)
@@ -760,6 +774,10 @@ pub(super) fn delete_card_content(
          SET updated_at = ?1, deleted_at = ?2
          WHERE card_content_id = ?3 AND deleted_at IS NULL",
         params![lifecycle_updated_at, now, input.card_content_id],
+    )?;
+    transaction.execute(
+        "DELETE FROM card_content_image WHERE card_content_id = ?1",
+        [&input.card_content_id],
     )?;
     // Search documents are derived rather than tombstoned. No embedding rows are
     // produced before the complete-search milestone, so vector invalidation remains deferred.
@@ -1001,14 +1019,18 @@ fn validate_card_content(input: &CardContentDraft) -> Result<()> {
         CardContentDraft::Basic {
             front_md, back_md, ..
         } => {
-            if markdown_plain_text(front_md).trim().is_empty() {
+            if markdown_plain_text(front_md).trim().is_empty()
+                && !media::contains_image_reference(front_md)?
+            {
                 return Err(DatabaseError::InvalidInput(
-                    "frontMd must contain visible text".into(),
+                    "frontMd must contain visible content".into(),
                 ));
             }
-            if markdown_plain_text(back_md).trim().is_empty() {
+            if markdown_plain_text(back_md).trim().is_empty()
+                && !media::contains_image_reference(back_md)?
+            {
                 return Err(DatabaseError::InvalidInput(
-                    "backMd must contain visible text".into(),
+                    "backMd must contain visible content".into(),
                 ));
             }
         }
@@ -1173,14 +1195,22 @@ fn reconcile_review_card_variants(
     Ok(())
 }
 
-fn search_body(front_md: &str, back_md: &str, source: Option<&str>) -> String {
+fn search_body(
+    transaction: &Transaction<'_>,
+    front_md: &str,
+    back_md: &str,
+    source: Option<&str>,
+    image_references: &[media::ImageReference],
+) -> Result<String> {
     let front = markdown_plain_text(front_md);
     let back = markdown_plain_text(back_md);
     let mut fields = vec![front, back];
     if let Some(source) = source.map(str::trim).filter(|source| !source.is_empty()) {
         fields.push(source.to_owned());
     }
-    fields.join(SEARCH_FIELD_SEPARATOR)
+    let authored_body = fields.join(SEARCH_FIELD_SEPARATOR);
+    let ocr_texts = media::referenced_ocr_texts(transaction, image_references)?;
+    Ok(media::search_body_with_ocr(&authored_body, &ocr_texts))
 }
 
 fn markdown_plain_text(markdown: &str) -> String {
@@ -1192,19 +1222,22 @@ fn markdown_plain_text(markdown: &str) -> String {
     let mut output = String::new();
     for event in MarkdownParser::new_ext(markdown, options) {
         match event {
-            MarkdownEvent::Text(text)
-            | MarkdownEvent::Code(text)
+            MarkdownEvent::Text(text) => {
+                if media::parse_image_reference_token(&text)
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    continue;
+                }
+                push_plain_text(&mut output, &text);
+            }
+            MarkdownEvent::Code(text)
             | MarkdownEvent::Html(text)
             | MarkdownEvent::InlineHtml(text)
             | MarkdownEvent::InlineMath(text)
             | MarkdownEvent::DisplayMath(text) => {
-                if !output.is_empty()
-                    && !output.chars().last().is_some_and(char::is_whitespace)
-                    && !text.chars().next().is_some_and(char::is_whitespace)
-                {
-                    output.push(' ');
-                }
-                output.push_str(&text);
+                push_plain_text(&mut output, &text);
             }
             MarkdownEvent::SoftBreak | MarkdownEvent::HardBreak | MarkdownEvent::Rule => {
                 if !output.ends_with('\n') {
@@ -1222,15 +1255,26 @@ fn markdown_plain_text(markdown: &str) -> String {
     output.trim().to_owned()
 }
 
+fn push_plain_text(output: &mut String, text: &str) {
+    if !output.is_empty()
+        && !output.chars().last().is_some_and(char::is_whitespace)
+        && !text.chars().next().is_some_and(char::is_whitespace)
+    {
+        output.push(' ');
+    }
+    output.push_str(text);
+}
+
 fn rebuild_search_document(
     transaction: &Transaction<'_>,
     card_content_id: &str,
     front_md: &str,
     back_md: &str,
     source: Option<&str>,
+    image_references: &[media::ImageReference],
     updated_at: i64,
 ) -> Result<()> {
-    let body = search_body(front_md, back_md, source);
+    let body = search_body(transaction, front_md, back_md, source, image_references)?;
     let content_hash = Sha256::digest(body.as_bytes());
     let changed = transaction.execute(
         "UPDATE search_document

@@ -18,6 +18,10 @@ import remarkParse from 'remark-parse'
 import remarkStringify from 'remark-stringify'
 import { unified } from 'unified'
 import { normalizeCodeLanguageLabel } from './languages.ts'
+import {
+  parseImageReferenceToken,
+  serializeImageReference,
+} from '../media/image-reference.ts'
 
 const markdownParser = unified()
   .use(remarkParse)
@@ -87,6 +91,17 @@ function blockFromMarkdown(
 ): ProseMirrorNode[] {
   switch (node.type) {
     case 'paragraph':
+      if (node.children.length === 1 && node.children[0]?.type === 'text') {
+        const image = parseImageReferenceToken(node.children[0].value)
+        if (image) {
+          return [
+            schema.nodes.dara_image!.create({
+              displayWidthPercent: image.displayWidthPercent,
+              imageId: image.imageId,
+            }),
+          ]
+        }
+      }
       return [
         schema.nodes.paragraph!.create(
           null,
@@ -378,6 +393,23 @@ function blockToMarkdown(
       ]
     case 'table':
       return [tableToMarkdown(node)]
+    case 'dara_image':
+      return [
+        {
+          type: 'paragraph',
+          children: [
+            {
+              type: 'text',
+              value: serializeImageReference({
+                displayWidthPercent: node.attrs.displayWidthPercent,
+                imageId: node.attrs.imageId,
+              }),
+            },
+          ],
+        },
+      ]
+    case 'dara_image_pending':
+      return []
     default:
       throw new Error(`Cannot serialize editor node ${node.type.name}`)
   }

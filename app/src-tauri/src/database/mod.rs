@@ -3,6 +3,7 @@ mod connection;
 mod domain;
 mod embedding_index;
 mod error;
+mod media;
 mod migrations;
 mod paths;
 mod queue;
@@ -30,6 +31,10 @@ pub use domain::{
     UpdateCardContentInput,
 };
 pub use error::{DatabaseError, Result};
+pub(crate) use media::now_millis;
+pub use media::{
+    CanonicalImage, ImageOcrStatus, ImageRecord, MediaPayload, OcrJob, OcrQueueRecovery,
+};
 pub use paths::DatabasePaths;
 pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
 pub use stats::{HomeStats, LoadHomeStatsInput};
@@ -124,6 +129,37 @@ impl Database {
     #[cfg(test)]
     fn load_home_stats(&self, input: LoadHomeStatsInput) -> Result<HomeStats> {
         self.client.load_home_stats(input)
+    }
+
+    #[cfg(test)]
+    fn ingest_image(&self, image: CanonicalImage) -> Result<ImageRecord> {
+        self.client.ingest_image(image)
+    }
+
+    #[cfg(test)]
+    fn claim_next_ocr_job(&self, now: i64) -> Result<Option<OcrJob>> {
+        self.client.claim_next_ocr_job(now)
+    }
+
+    #[cfg(test)]
+    fn complete_image_ocr(
+        &self,
+        job: &OcrJob,
+        result: std::result::Result<String, String>,
+        now: i64,
+    ) -> Result<()> {
+        self.client
+            .complete_image_ocr(job.image_id.clone(), job.attempt_count, result, now)
+    }
+
+    #[cfg(test)]
+    fn recover_interrupted_ocr_jobs(
+        &self,
+        stale_started_at_or_before: i64,
+        now: i64,
+    ) -> Result<OcrQueueRecovery> {
+        self.client
+            .recover_interrupted_ocr_jobs(stale_started_at_or_before, now)
     }
 
     #[cfg(test)]
@@ -237,7 +273,7 @@ pub fn initialize(
 
 fn writer_loop(
     mut main: Connection,
-    media: Connection,
+    mut media: Connection,
     _paths: DatabasePaths,
     receiver: Receiver<WriterMessage>,
 ) {
@@ -275,6 +311,41 @@ fn writer_loop(
             }
             WriterMessage::LoadHomeStats { input, reply } => {
                 let _ = reply.send(stats::load_home_stats(&main, input));
+            }
+            WriterMessage::IngestImage { image, reply } => {
+                let _ = reply.send(media::ingest_image(&mut main, &mut media, image));
+            }
+            WriterMessage::LoadMediaPayload { image_id, reply } => {
+                let _ = reply.send(media::load_media_payload(&main, &media, &image_id));
+            }
+            WriterMessage::ClaimNextOcrJob { now, reply } => {
+                let _ = reply.send(media::claim_next_ocr_job(&mut main, &media, now));
+            }
+            WriterMessage::CompleteImageOcr {
+                image_id,
+                expected_attempt_count,
+                result,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(media::complete_image_ocr(
+                    &mut main,
+                    &image_id,
+                    expected_attempt_count,
+                    result,
+                    now,
+                ));
+            }
+            WriterMessage::RecoverInterruptedOcrJobs {
+                stale_started_at_or_before,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(media::recover_interrupted_ocr_jobs(
+                    &mut main,
+                    stale_started_at_or_before,
+                    now,
+                ));
             }
             WriterMessage::Shutdown => break,
         }

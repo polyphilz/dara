@@ -8,8 +8,9 @@ use tempfile::TempDir;
 use super::{
     connection::{self, DatabaseKind, FileState, MAIN_APPLICATION_ID, MEDIA_APPLICATION_ID},
     domain::{CardContentType, ReviewCardState, ReviewCardStatus, ReviewEventType},
-    embedding_index, initialize, migrations, snapshot, DatabaseError, DatabasePaths,
-    InitializationOptions,
+    embedding_index, initialize,
+    media::OcrQueueState,
+    migrations, snapshot, DatabaseError, DatabasePaths, ImageOcrStatus, InitializationOptions,
 };
 
 const BASIC_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -120,7 +121,18 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 2);
+    assert_eq!(history_rows, 4);
+}
+
+#[test]
+fn applied_durable_image_ocr_migration_checksum_stays_stable() {
+    let runner = migrations::main_runner();
+    let migration = runner
+        .get_migrations()
+        .iter()
+        .find(|migration| migration.version() == 3)
+        .expect("V3 migration");
+    assert_eq!(migration.checksum(), 8_411_579_165_145_044_789);
 }
 
 #[test]
@@ -327,7 +339,12 @@ fn trigram_search_migration_rebuilds_existing_documents() {
     let (_directory, paths) = test_paths();
     create_identified_unmigrated_pair(&paths);
     let mut main = open_existing(&paths.main, DatabaseKind::Main);
-    let v1 = migrations::main_runner().get_migrations()[0].clone();
+    let v1 = migrations::main_runner()
+        .get_migrations()
+        .iter()
+        .find(|migration| migration.version() == 1)
+        .expect("V1 migration")
+        .clone();
     Runner::new(&[v1])
         .set_grouped(true)
         .run(&mut main)
@@ -351,6 +368,109 @@ fn trigram_search_migration_rebuilds_existing_documents() {
         )
         .expect("substring query after rebuild");
     assert_eq!(match_count, 1);
+}
+
+#[test]
+fn durable_ocr_migration_queues_unrecognized_images_and_preserves_existing_text() {
+    let (_directory, paths) = test_paths();
+    create_identified_unmigrated_pair(&paths);
+    let mut main = open_existing(&paths.main, DatabaseKind::Main);
+    let available = migrations::main_runner().get_migrations().clone();
+    let first_two = [1, 2]
+        .map(|version| {
+            available
+                .iter()
+                .find(|migration| migration.version() == version)
+                .unwrap_or_else(|| panic!("V{version} migration"))
+                .clone()
+        })
+        .to_vec();
+    Runner::new(&first_two)
+        .set_grouped(true)
+        .run(&mut main)
+        .expect("V1 and V2 schema");
+
+    main.execute(
+        "INSERT INTO image (
+            id, created_at, updated_at, deleted_at, sha256, mime_type,
+            natural_width, natural_height, ocr_text
+         ) VALUES (?1, 100, 120, NULL, zeroblob(32), 'image/webp', 10, 20, '')",
+        [IMAGE_ID],
+    )
+    .expect("unrecognized image");
+    main.execute(
+        "INSERT INTO image (
+            id, created_at, updated_at, deleted_at, sha256, mime_type,
+            natural_width, natural_height, ocr_text
+         ) VALUES (
+            '01980c8e-6c00-7000-8000-000000000106', 100, 130, NULL,
+            randomblob(32), 'image/webp', 10, 20, 'existing OCR'
+         )",
+        [],
+    )
+    .expect("recognized image");
+
+    migrations::run_main(&mut main).expect("durable OCR migration");
+    let pending = main
+        .query_row(
+            "SELECT ocr_status, ocr_queue_state, ocr_attempt_count, ocr_next_attempt_at,
+                    ocr_started_at, ocr_error
+             FROM image WHERE id = ?1",
+            [IMAGE_ID],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                ))
+            },
+        )
+        .expect("pending migrated image");
+    assert_eq!(
+        pending,
+        (
+            ImageOcrStatus::Pending.as_db_str().into(),
+            OcrQueueState::Pending.as_db_str().into(),
+            0,
+            Some(120),
+            None,
+            None,
+        )
+    );
+    let ready = main
+        .query_row(
+            "SELECT ocr_status, ocr_queue_state, ocr_attempt_count, ocr_next_attempt_at,
+                    ocr_started_at, ocr_error, ocr_text
+             FROM image WHERE id = '01980c8e-6c00-7000-8000-000000000106'",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u32>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                    row.get::<_, Option<String>>(5)?,
+                    row.get::<_, String>(6)?,
+                ))
+            },
+        )
+        .expect("ready migrated image");
+    assert_eq!(
+        ready,
+        (
+            ImageOcrStatus::Ready.as_db_str().into(),
+            OcrQueueState::Ready.as_db_str().into(),
+            0,
+            None,
+            None,
+            None,
+            "existing OCR".into(),
+        )
+    );
 }
 
 #[test]
@@ -554,7 +674,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 3, 'future', applied_on, '0'
+         SELECT 5, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -575,17 +695,17 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V3__grouped_good.sql",
+            "V5__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
-        .expect("V3 migration"),
+        .expect("V5 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V4__grouped_failure.sql",
+            "V6__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
-        .expect("V4 migration"),
+        .expect("V6 migration"),
     );
     let runner = Runner::new(&all).set_grouped(true);
     assert!(runner.run(&mut main).is_err());
@@ -594,9 +714,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V2")
+            .expect("V4")
             .version(),
-        2
+        4
     );
 }
 
@@ -640,7 +760,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(2));
+    assert_eq!(launch.manifest.main.migration_head, Some(4));
     drop(database);
 
     let base = launch.manifest.created_at;
@@ -728,11 +848,17 @@ fn foreign_keys_mask_bounds_and_fts_rebuild_are_enforced() {
     main.execute(
         "INSERT INTO image (
             id, created_at, updated_at, deleted_at, sha256, mime_type,
-            natural_width, natural_height, ocr_text
-         ) VALUES (?1, 100, 100, NULL, ?2, 'image/webp', 100, 100, '')",
+            natural_width, natural_height, ocr_text, ocr_next_attempt_at
+         ) VALUES (?1, 100, 100, NULL, ?2, 'image/webp', 100, 100, '', 100)",
         params![IMAGE_ID, &hash],
     )
     .expect("image");
+    assert!(main
+        .execute(
+            "UPDATE image SET ocr_queue_state = ?1 WHERE id = ?2",
+            params![OcrQueueState::Running.as_db_str(), IMAGE_ID],
+        )
+        .is_err());
     main.execute(
         "INSERT INTO card_occlusion_content (
             id, created_at, updated_at, deleted_at, card_content_id, source_image_id, mode
@@ -785,8 +911,8 @@ fn media_reconciliation_detects_missing_or_corrupt_blobs_and_tolerates_extras() 
     main.execute(
         "INSERT INTO image (
             id, created_at, updated_at, deleted_at, sha256, mime_type,
-            natural_width, natural_height, ocr_text
-         ) VALUES (?1, 100, 100, NULL, ?2, 'image/webp', 10, 20, '')",
+            natural_width, natural_height, ocr_text, ocr_next_attempt_at
+         ) VALUES (?1, 100, 100, NULL, ?2, 'image/webp', 10, 20, '', 100)",
         params![IMAGE_ID, &hash],
     )
     .expect("image metadata second");
@@ -800,8 +926,8 @@ fn media_reconciliation_detects_missing_or_corrupt_blobs_and_tolerates_extras() 
     main.execute(
         "INSERT INTO image (
             id, created_at, updated_at, deleted_at, sha256, mime_type,
-            natural_width, natural_height, ocr_text
-         ) VALUES (?1, 100, 100, NULL, zeroblob(32), 'image/webp', 10, 20, '')",
+            natural_width, natural_height, ocr_text, ocr_next_attempt_at
+         ) VALUES (?1, 100, 100, NULL, zeroblob(32), 'image/webp', 10, 20, '', 100)",
         [IMAGE_ID],
     )
     .expect("dangling image metadata");

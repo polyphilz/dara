@@ -55,7 +55,18 @@ import {
 } from 'react'
 import { DaraInput } from '../components/DaraInput.tsx'
 import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
+import { ingestClipboardImage } from '../media/gateway.ts'
+import {
+  ImageDisplayWidthStep,
+  initialImageDisplayWidth,
+  type ImageRecord,
+} from '../media/image-reference.ts'
 import { daraEditorSchema } from './editor-schema.ts'
+import {
+  imageNodeView,
+  pendingImageNodeView,
+  resizeSelectedImage,
+} from './ImageNodeView.ts'
 import {
   registerRichTextEditorView,
   unregisterRichTextEditorView,
@@ -74,7 +85,10 @@ export interface RichTextEditorHandle {
 interface RichTextEditorProps {
   ariaLabel: string
   disabled?: boolean
+  ingestImage?: () => Promise<ImageRecord>
   onChange: (value: string) => void
+  onMediaError?: (error: unknown) => void
+  onPendingMediaChange?: (pending: boolean) => void
   placeholder?: string
   value: string
 }
@@ -91,17 +105,30 @@ interface LinkDialogState {
 
 const externalValueUpdate = 'dara-external-value-update'
 let codeBlockNodeViewPromise: Promise<NodeViewConstructor> | null = null
+let pendingImageRequestSequence = 0
 
 export const RichTextEditor = forwardRef<
   RichTextEditorHandle,
   RichTextEditorProps
 >(function RichTextEditor(
-  { ariaLabel, disabled = false, onChange, placeholder, value },
+  {
+    ariaLabel,
+    disabled = false,
+    ingestImage = ingestClipboardImage,
+    onChange,
+    onMediaError,
+    onPendingMediaChange,
+    placeholder,
+    value,
+  },
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
+  const ingestImageRef = useRef(ingestImage)
+  const onMediaErrorRef = useRef(onMediaError)
+  const onPendingMediaChangeRef = useRef(onPendingMediaChange)
   const disabledRef = useRef(disabled)
   const openMathDialogRef = useRef(
     (_display: boolean, _formula: string, _position?: number) => undefined,
@@ -115,6 +142,9 @@ export const RichTextEditor = forwardRef<
   const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null)
 
   onChangeRef.current = onChange
+  ingestImageRef.current = ingestImage
+  onMediaErrorRef.current = onMediaError
+  onPendingMediaChangeRef.current = onPendingMediaChange
   disabledRef.current = disabled
   openMathDialogRef.current = (display, formula, position) => {
     setLinkDialog(null)
@@ -167,6 +197,7 @@ export const RichTextEditor = forwardRef<
         const nextState = view.state.apply(transaction)
         view.updateState(nextState)
         updateEmptyState(view)
+        notifyPendingMedia(nextState.doc, onPendingMediaChangeRef.current)
         void installCodeBlockNodeView(view)
         renderToolbar()
         if (
@@ -177,7 +208,28 @@ export const RichTextEditor = forwardRef<
         }
       },
       editable: () => !disabledRef.current,
+      handleDOMEvents: {
+        paste(editorView, event) {
+          const clipboardEvent = event as ClipboardEvent
+          if (
+            disabledRef.current ||
+            !clipboardContainsImage(clipboardEvent.clipboardData)
+          ) {
+            return false
+          }
+          clipboardEvent.preventDefault()
+          beginImagePaste(
+            editorView,
+            ingestImageRef.current,
+            onMediaErrorRef,
+            viewRef,
+          )
+          return true
+        },
+      },
       nodeViews: {
+        dara_image: imageNodeView,
+        dara_image_pending: pendingImageNodeView,
         math_display: (node, editorView, getPos) =>
           mathNodeView(
             node,
@@ -201,10 +253,12 @@ export const RichTextEditor = forwardRef<
     registerRichTextEditorView(view)
     view.dom.dataset.placeholder = initialPlaceholderRef.current ?? ''
     updateEmptyState(view)
+    notifyPendingMedia(view.state.doc, onPendingMediaChangeRef.current)
     void installCodeBlockNodeView(view)
     renderToolbar()
 
     return () => {
+      onPendingMediaChangeRef.current?.(false)
       viewRef.current = null
       unregisterRichTextEditorView(view)
       view.destroy()
@@ -289,6 +343,103 @@ export const RichTextEditor = forwardRef<
   )
 })
 
+function clipboardContainsImage(data: DataTransfer | null): boolean {
+  if (!data) {
+    return false
+  }
+  return Array.from(data.items).some((item) => item.type.startsWith('image/'))
+}
+
+function beginImagePaste(
+  view: EditorView,
+  ingestImage: () => Promise<ImageRecord>,
+  onMediaErrorRef: { current: ((error: unknown) => void) | undefined },
+  viewRef: { current: EditorView | null },
+) {
+  pendingImageRequestSequence += 1
+  const requestId = `image-paste-${pendingImageRequestSequence}`
+  const pendingNode = daraEditorSchema.nodes.dara_image_pending!.create({
+    requestId,
+  })
+  view.dispatch(
+    view.state.tr.replaceSelectionWith(pendingNode, false).scrollIntoView(),
+  )
+
+  void ingestImage().then(
+    (record) => {
+      if (viewRef.current !== view) {
+        return
+      }
+      const position = pendingImagePosition(view.state.doc, requestId)
+      if (position === null) {
+        return
+      }
+      const imageNode = daraEditorSchema.nodes.dara_image!.create({
+        displayWidthPercent: initialImageDisplayWidth(
+          record.naturalWidth,
+          view.dom.clientWidth,
+        ),
+        imageId: record.id,
+      })
+      const transaction = view.state.tr.replaceWith(
+        position,
+        position + view.state.doc.nodeAt(position)!.nodeSize,
+        imageNode,
+      )
+      transaction.setSelection(NodeSelection.create(transaction.doc, position))
+      view.dispatch(transaction.scrollIntoView())
+    },
+    (error: unknown) => {
+      if (viewRef.current === view) {
+        const position = pendingImagePosition(view.state.doc, requestId)
+        if (position !== null) {
+          const node = view.state.doc.nodeAt(position)
+          if (node) {
+            view.dispatch(view.state.tr.delete(position, position + node.nodeSize))
+          }
+        }
+      }
+      onMediaErrorRef.current?.(error)
+    },
+  )
+}
+
+function pendingImagePosition(
+  document: ProseMirrorNode,
+  requestId: string,
+): number | null {
+  let position: number | null = null
+  document.descendants((node, nodePosition) => {
+    if (
+      node.type.name === 'dara_image_pending' &&
+      node.attrs.requestId === requestId
+    ) {
+      position = nodePosition
+      return false
+    }
+    return position === null
+  })
+  return position
+}
+
+function notifyPendingMedia(
+  document: ProseMirrorNode,
+  callback: ((pending: boolean) => void) | undefined,
+) {
+  if (!callback) {
+    return
+  }
+  let pending = false
+  document.descendants((node) => {
+    if (node.type.name === 'dara_image_pending') {
+      pending = true
+      return false
+    }
+    return !pending
+  })
+  callback(pending)
+}
+
 function editorKeyBindings(openLink: (view: EditorView) => void): Record<string, Command> {
   const listItem = daraEditorSchema.nodes.list_item!
   const hardBreak = insertHardBreak()
@@ -308,6 +459,8 @@ function editorKeyBindings(openLink: (view: EditorView) => void): Record<string,
       return true
     },
     'Mod-Shift-x': toggleMark(daraEditorSchema.marks.strike!),
+    'Alt-ArrowLeft': resizeSelectedImage(-ImageDisplayWidthStep),
+    'Alt-ArrowRight': resizeSelectedImage(ImageDisplayWidthStep),
     'Mod-z': undo,
     'Mod-y': redo,
     'Mod-Shift-z': redo,

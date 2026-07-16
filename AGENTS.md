@@ -1,5 +1,12 @@
 # Repository guidance
 
+## Local development database
+
+- Any development work that reads from or writes to a Dara database must use a repository-local testing database under `app/.data/`. This includes manual SQL inspection, migration work, smoke tests, benchmarks, development scripts, and direct application launches.
+- Use `app/.data/local/` by default. Running `pnpm tauri dev` from `app/` already sets `DARA_DATA_DIR="$PWD/.data/local"`. When invoking Cargo, the Dara binary, or another database-aware tool directly, set `DARA_DATA_DIR` explicitly to `app/.data/local` or to an isolated task-specific directory beneath `app/.data/`.
+- Do not allow development commands to fall back to Dara's platform data directory or otherwise read or mutate a non-testing user database. Automated tests may continue to use their isolated temporary database directories.
+- Treat existing files under `app/.data/` as test data that may still be useful to the developer: do not delete, reset, or replace them unless the user explicitly requests it. For destructive migration experiments, first copy the database pair to a separate task-specific directory under `app/.data/` and work on the copy.
+
 ## UI consistency and existing patterns
 
 - Before adding or styling an interactive control, search the repository for existing controls with the same role or interaction model. Inspect their component code, styles, states, keyboard behavior, and tests. The closest established Dara control is the default design reference; do not treat a new feature as a blank-slate styling exercise.

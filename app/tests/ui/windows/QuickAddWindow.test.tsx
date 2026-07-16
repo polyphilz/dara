@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   createCardContent: vi.fn(),
   dismissQuickAdd: vi.fn(),
   emit: vi.fn(),
+  ingestClipboardImage: vi.fn(),
   listen: vi.fn(),
 }))
 
@@ -23,6 +24,10 @@ vi.mock('../../../src/lib/native.ts', () => ({
   native: {
     dismissQuickAdd: mocks.dismissQuickAdd,
   },
+}))
+
+vi.mock('../../../src/media/gateway.ts', () => ({
+  ingestClipboardImage: mocks.ingestClipboardImage,
 }))
 
 vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
@@ -39,6 +44,7 @@ beforeEach(() => {
   mocks.dismissQuickAdd.mockResolvedValue(undefined)
   mocks.emit.mockResolvedValue(undefined)
   mocks.listen.mockResolvedValue(() => undefined)
+  mocks.ingestClipboardImage.mockReset()
 })
 
 test('focuses Front and follows the logical editor and form focus order', async () => {
@@ -93,6 +99,49 @@ test('persists canonical Markdown, trims source, and clears all values after suc
   })
   expect(mocks.emit).toHaveBeenCalledWith('card-created')
   expect(mocks.dismissQuickAdd).toHaveBeenCalledTimes(1)
+})
+
+test('blocks card creation while a pasted image is being persisted', async () => {
+  const imageId = '01980c8e-6c00-7000-8000-000000000202'
+  let resolveImage!: (record: {
+    id: string
+    mimeType: string
+    naturalHeight: number
+    naturalWidth: number
+    ocrStatus: 'PENDING'
+  }) => void
+  mocks.ingestClipboardImage.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        resolveImage = resolve
+      }),
+  )
+  const { getByRole } = render(<QuickAddWindow />)
+  const front = getByRole('textbox', { name: 'Front' })
+  replaceEditorDocument(front, 'Question')
+  replaceEditorDocument(getByRole('textbox', { name: 'Back' }), 'Answer')
+
+  fireEvent.paste(front, {
+    clipboardData: { items: [{ type: 'image/png' }] },
+  })
+  const processing = getByRole('button', { name: /Processing image/ })
+  expect((processing as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(processing)
+  expect(mocks.createCardContent).not.toHaveBeenCalled()
+
+  await act(async () => {
+    resolveImage({
+      id: imageId,
+      mimeType: 'image/webp',
+      naturalHeight: 600,
+      naturalWidth: 800,
+      ocrStatus: 'PENDING',
+    })
+    await Promise.resolve()
+  })
+  expect((getByRole('button', { name: /Add/ }) as HTMLButtonElement).disabled).toBe(
+    false,
+  )
 })
 
 test('normalizes whitespace-only source to null and Mod-Enter saves from Source', async () => {

@@ -132,6 +132,47 @@ const strike: MarkSpec = {
   toDOM: (): DOMOutputSpec => ['del', 0],
 }
 
+const daraImage: NodeSpec = {
+  atom: true,
+  attrs: {
+    displayWidthPercent: { validate: 'number' },
+    imageId: { validate: 'string' },
+  },
+  group: 'block',
+  parseDOM: [
+    {
+      tag: 'figure[data-dara-image-id]',
+      getAttrs(dom) {
+        const element = dom as HTMLElement
+        return {
+          displayWidthPercent: Number(element.dataset.displayWidthPercent),
+          imageId: element.dataset.daraImageId ?? '',
+        }
+      },
+    },
+  ],
+  selectable: true,
+  toDOM(node): DOMOutputSpec {
+    return [
+      'figure',
+      {
+        'data-dara-image-id': node.attrs.imageId,
+        'data-display-width-percent': String(node.attrs.displayWidthPercent),
+      },
+    ]
+  },
+}
+
+const pendingDaraImage: NodeSpec = {
+  atom: true,
+  attrs: { requestId: { validate: 'string' } },
+  group: 'block',
+  selectable: true,
+  toDOM(): DOMOutputSpec {
+    return ['div', { 'data-dara-image-pending': 'true' }, 'Processing image…']
+  },
+}
+
 let nodes = basicSchema.spec.nodes.remove('image')
 nodes = nodes.update('code_block', codeBlock)
 nodes = addListNodes(nodes, 'paragraph block*', 'block')
@@ -155,6 +196,8 @@ nodes = nodes.append(
 )
 nodes = nodes.addBefore('text', 'math_inline', mathInline)
 nodes = nodes.addBefore('text', 'math_display', mathDisplay)
+nodes = nodes.addBefore('text', 'dara_image', daraImage)
+nodes = nodes.addBefore('text', 'dara_image_pending', pendingDaraImage)
 
 export const daraEditorSchema = new Schema({
   marks: basicSchema.spec.marks.append({ strike }),

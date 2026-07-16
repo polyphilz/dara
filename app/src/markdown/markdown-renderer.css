@@ -23,6 +23,18 @@
   margin-block: 0.8em;
 }
 
+.dara-markdown-image {
+  max-width: 100%;
+  margin-block: 0.9em;
+}
+
+.dara-markdown-image img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 10px;
+}
+
 .dara-markdown h1,
 .dara-markdown h2,
 .dara-markdown h3,

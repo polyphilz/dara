@@ -1,10 +1,11 @@
 use std::sync::mpsc::{self, Sender, SyncSender};
 
 use super::{
-    CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput, HomeStats,
-    LoadHomeStatsInput, RecordGradeInput, Result, ReviewContext, ReviewMutationResult,
-    ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
-    SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
+    CanonicalImage, CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput,
+    HomeStats, ImageRecord, LoadHomeStatsInput, MediaPayload, OcrJob, OcrQueueRecovery,
+    RecordGradeInput, Result, ReviewContext, ReviewMutationResult, ReviewQueueSelection,
+    SearchCardContentInput, SelectNextReviewCardInput, SetCardContentSuspendedInput,
+    UndoLastGradeInput, UpdateCardContentInput,
 };
 
 pub(super) enum WriterMessage {
@@ -47,6 +48,30 @@ pub(super) enum WriterMessage {
     LoadHomeStats {
         input: LoadHomeStatsInput,
         reply: SyncSender<Result<HomeStats>>,
+    },
+    IngestImage {
+        image: CanonicalImage,
+        reply: SyncSender<Result<ImageRecord>>,
+    },
+    LoadMediaPayload {
+        image_id: String,
+        reply: SyncSender<Result<MediaPayload>>,
+    },
+    ClaimNextOcrJob {
+        now: i64,
+        reply: SyncSender<Result<Option<OcrJob>>>,
+    },
+    CompleteImageOcr {
+        image_id: String,
+        expected_attempt_count: u32,
+        result: std::result::Result<String, String>,
+        now: i64,
+        reply: SyncSender<Result<()>>,
+    },
+    RecoverInterruptedOcrJobs {
+        stale_started_at_or_before: i64,
+        now: i64,
+        reply: SyncSender<Result<OcrQueueRecovery>>,
     },
     Shutdown,
 }
@@ -170,6 +195,76 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::LoadHomeStats { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn ingest_image(&self, image: CanonicalImage) -> Result<ImageRecord> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::IngestImage { image, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn load_media_payload(&self, image_id: String) -> Result<MediaPayload> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadMediaPayload { image_id, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn claim_next_ocr_job(&self, now: i64) -> Result<Option<OcrJob>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::ClaimNextOcrJob { now, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn complete_image_ocr(
+        &self,
+        image_id: String,
+        expected_attempt_count: u32,
+        result: std::result::Result<String, String>,
+        now: i64,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::CompleteImageOcr {
+                image_id,
+                expected_attempt_count,
+                result,
+                now,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn recover_interrupted_ocr_jobs(
+        &self,
+        stale_started_at_or_before: i64,
+        now: i64,
+    ) -> Result<OcrQueueRecovery> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::RecoverInterruptedOcrJobs {
+                stale_started_at_or_before,
+                now,
+                reply,
+            })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()
