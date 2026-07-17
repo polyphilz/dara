@@ -5,7 +5,7 @@ use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSRunningApplication, NSWindow,
     NSWindowCollectionBehavior, NSWorkspace,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuBuilder, MenuItemBuilder, MenuItemKind, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -13,15 +13,25 @@ use tauri::{
     App, AppHandle, Emitter, Manager, PhysicalPosition, State, WebviewUrl, WebviewWindowBuilder,
     WindowEvent,
 };
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+use crate::database::{
+    commands::{run_writer, CommandError, CommandResult},
+    validate_complete_bindings, AdoptLegacyZoomInput, DaraCommand, Database, KeyboardBinding,
+    SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
+    DEFAULT_QUICK_ADD_ACCELERATOR, DEFAULT_REVIEW_ACCELERATOR,
+};
 
 const MAIN_LABEL: &str = "main";
 const QUICK_ADD_LABEL: &str = "quick-add";
-const QUICK_ADD_SHORTCUT_LABEL: &str = "⌃⌥⌘D";
-const REVIEW_SHORTCUT_LABEL: &str = "⌃⌥⌘R";
 const TRAY_ID: &str = "dara-tray";
 const EDIT_MENU_TEXT: &str = "Edit";
 const VIEW_MENU_TEXT: &str = "View";
+const SETTINGS_MENU_ID: &str = "open-settings";
+const SETTINGS_CHANGED_EVENT: &str = "settings-changed";
+const OPEN_SETTINGS_EVENT: &str = "open-settings";
+const OPEN_REVIEW_EVENT: &str = "open-review";
 const ZOOM_COMMAND_EVENT: &str = "app-zoom-command";
 const BROWSE_COMMAND_EVENT: &str = "browse-command";
 
@@ -74,6 +84,7 @@ impl BrowseCommand {
 #[derive(Clone, Copy)]
 enum TrayMenuAction {
     ShowMain,
+    ShowSettings,
     ShowQuickAdd,
     Quit,
 }
@@ -82,6 +93,7 @@ impl TrayMenuAction {
     const fn id(self) -> &'static str {
         match self {
             Self::ShowMain => "show-main",
+            Self::ShowSettings => "show-settings",
             Self::ShowQuickAdd => "show-quick-add",
             Self::Quit => "quit",
         }
@@ -90,6 +102,8 @@ impl TrayMenuAction {
     fn from_id(id: &str) -> Option<Self> {
         if id == Self::ShowMain.id() {
             Some(Self::ShowMain)
+        } else if id == Self::ShowSettings.id() {
+            Some(Self::ShowSettings)
         } else if id == Self::ShowQuickAdd.id() {
             Some(Self::ShowQuickAdd)
         } else if id == Self::Quit.id() {
@@ -112,11 +126,27 @@ impl Default for SpikeStatus {
     fn default() -> Self {
         Self {
             quick_add_ready: false,
-            quick_add_shortcut: QUICK_ADD_SHORTCUT_LABEL.into(),
-            review_shortcut: REVIEW_SHORTCUT_LABEL.into(),
+            quick_add_shortcut: shortcut_label(DEFAULT_QUICK_ADD_ACCELERATOR),
+            review_shortcut: shortcut_label(DEFAULT_REVIEW_ACCELERATOR),
             shortcut_errors: Vec::new(),
         }
     }
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsSnapshot {
+    #[serde(flatten)]
+    stored: StoredSettings,
+    launch_at_login: bool,
+    launch_at_login_error: Option<String>,
+    shortcut_errors: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetLaunchAtLoginInput {
+    enabled: bool,
 }
 
 #[derive(Default)]
@@ -145,20 +175,32 @@ enum DismissFocus {
     PreserveCurrent,
 }
 
-pub fn setup(app: &mut App) -> tauri::Result<()> {
+pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-    app.manage(SpikeState::default());
+    let state = SpikeState::default();
+    update_shortcut_status(&state, &settings.keyboard_bindings, Vec::new());
+    app.manage(state);
 
     install_application_menu(app)?;
     create_quick_add_window(app.handle())?;
-    install_tray(app)?;
-    register_shortcuts(app.handle());
+    install_tray(app, &settings.keyboard_bindings)?;
+    register_shortcuts(app.handle(), &settings.keyboard_bindings);
 
     Ok(())
 }
 
 fn install_application_menu(app: &mut App) -> tauri::Result<()> {
     let menu = Menu::default(app.handle())?;
+    if let Some(application_menu) = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(submenu) => Some(submenu),
+        _ => None,
+    }) {
+        let settings = MenuItemBuilder::with_id(SETTINGS_MENU_ID, "Settings…")
+            .accelerator("CmdOrCtrl+,")
+            .build(app)?;
+        let separator = PredefinedMenuItem::separator(app)?;
+        application_menu.append_items(&[&separator, &settings])?;
+    }
     if let Some(edit_menu) = menu.items()?.into_iter().find_map(|item| match item {
         MenuItemKind::Submenu(submenu)
             if submenu.text().ok().as_deref() == Some(EDIT_MENU_TEXT) =>
@@ -202,6 +244,12 @@ fn install_application_menu(app: &mut App) -> tauri::Result<()> {
     }
 
     app.on_menu_event(|app, event| {
+        if event.id().as_ref() == SETTINGS_MENU_ID {
+            if let Err(error) = dispatch_to_main_thread(app, "show settings", show_settings_inner) {
+                log::error!("failed to show Settings: {error}");
+            }
+            return;
+        }
         if let Some(command) = AppZoomCommand::from_menu_id(event.id().as_ref()) {
             let target = [QUICK_ADD_LABEL, MAIN_LABEL]
                 .into_iter()
@@ -274,16 +322,24 @@ fn create_quick_add_window(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-fn install_tray(app: &App) -> tauri::Result<()> {
-    let menu = MenuBuilder::new(app)
+fn tray_menu(app: &AppHandle, bindings: &[KeyboardBinding]) -> tauri::Result<Menu<tauri::Wry>> {
+    let quick_add_label = binding_for(bindings, DaraCommand::QuickAdd)
+        .map(|binding| shortcut_label(&binding.accelerator))
+        .unwrap_or_else(|| shortcut_label(DEFAULT_QUICK_ADD_ACCELERATOR));
+    MenuBuilder::new(app)
         .text(TrayMenuAction::ShowMain.id(), "Open Dara")
+        .text(TrayMenuAction::ShowSettings.id(), "Settings…")
         .text(
             TrayMenuAction::ShowQuickAdd.id(),
-            format!("Quick Add  {QUICK_ADD_SHORTCUT_LABEL}"),
+            format!("Quick Add  {quick_add_label}"),
         )
         .separator()
         .text(TrayMenuAction::Quit.id(), "Quit Dara")
-        .build()?;
+        .build()
+}
+
+fn install_tray(app: &App, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
+    let menu = tray_menu(app.handle(), bindings)?;
 
     let mut tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
@@ -298,6 +354,13 @@ fn install_tray(app: &App) -> tauri::Result<()> {
                         dispatch_to_main_thread(app, "show main window", show_main_inner)
                     {
                         log::error!("failed to show main window: {error}");
+                    }
+                }
+                Some(TrayMenuAction::ShowSettings) => {
+                    if let Err(error) =
+                        dispatch_to_main_thread(app, "show settings", show_settings_inner)
+                    {
+                        log::error!("failed to show Settings: {error}");
                     }
                 }
                 Some(TrayMenuAction::ShowQuickAdd) => {
@@ -320,45 +383,50 @@ fn install_tray(app: &App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn register_shortcuts(app: &AppHandle) {
-    let modifiers = Modifiers::CONTROL | Modifiers::ALT | Modifiers::SUPER;
-    let quick_add = Shortcut::new(Some(modifiers), Code::KeyD);
-    let review = Shortcut::new(Some(modifiers), Code::KeyR);
-
-    if let Err(error) = app
-        .global_shortcut()
-        .on_shortcut(quick_add, |app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                if let Err(error) =
-                    dispatch_to_main_thread(app, "show quick add", show_quick_add_inner)
-                {
-                    log::error!("quick-add shortcut failed: {error}");
-                }
-            }
-        })
-    {
-        record_shortcut_error(
-            app,
-            format!("Could not register {QUICK_ADD_SHORTCUT_LABEL}: {error}"),
-        );
+fn register_shortcuts(app: &AppHandle, bindings: &[KeyboardBinding]) {
+    for binding in bindings {
+        if let Err(error) = register_binding(app, binding) {
+            record_shortcut_error(
+                app,
+                format!(
+                    "Could not register {}: {error}",
+                    shortcut_label(&binding.accelerator)
+                ),
+            );
+        }
     }
+}
 
-    if let Err(error) = app
-        .global_shortcut()
-        .on_shortcut(review, |app, _shortcut, event| {
-            if event.state() == ShortcutState::Pressed {
-                if let Err(error) =
-                    dispatch_to_main_thread(app, "show main window", show_main_inner)
-                {
-                    log::error!("review shortcut failed: {error}");
+fn register_binding(app: &AppHandle, binding: &KeyboardBinding) -> Result<(), String> {
+    let shortcut = binding
+        .accelerator
+        .parse::<Shortcut>()
+        .map_err(|error| format!("invalid shortcut: {error}"))?;
+    match binding.command {
+        DaraCommand::QuickAdd => app
+            .global_shortcut()
+            .on_shortcut(shortcut, |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    if let Err(error) =
+                        dispatch_to_main_thread(app, "show quick add", show_quick_add_inner)
+                    {
+                        log::error!("quick-add shortcut failed: {error}");
+                    }
                 }
-            }
-        })
-    {
-        record_shortcut_error(
-            app,
-            format!("Could not register {REVIEW_SHORTCUT_LABEL}: {error}"),
-        );
+            })
+            .map_err(|error| error.to_string()),
+        DaraCommand::Review => app
+            .global_shortcut()
+            .on_shortcut(shortcut, |app, _shortcut, event| {
+                if event.state() == ShortcutState::Pressed {
+                    if let Err(error) =
+                        dispatch_to_main_thread(app, "show review", show_review_inner)
+                    {
+                        log::error!("review shortcut failed: {error}");
+                    }
+                }
+            })
+            .map_err(|error| error.to_string()),
     }
 }
 
@@ -370,6 +438,279 @@ fn record_shortcut_error(app: &AppHandle, message: String) {
         .expect("spike status poisoned")
         .shortcut_errors
         .push(message);
+}
+
+fn update_shortcut_status(
+    state: &SpikeState,
+    bindings: &[KeyboardBinding],
+    shortcut_errors: Vec<String>,
+) {
+    let mut status = state.status.lock().expect("spike status poisoned");
+    status.quick_add_shortcut = binding_for(bindings, DaraCommand::QuickAdd)
+        .map(|binding| shortcut_label(&binding.accelerator))
+        .unwrap_or_else(|| shortcut_label(DEFAULT_QUICK_ADD_ACCELERATOR));
+    status.review_shortcut = binding_for(bindings, DaraCommand::Review)
+        .map(|binding| shortcut_label(&binding.accelerator))
+        .unwrap_or_else(|| shortcut_label(DEFAULT_REVIEW_ACCELERATOR));
+    status.shortcut_errors = shortcut_errors;
+}
+
+fn binding_for(bindings: &[KeyboardBinding], command: DaraCommand) -> Option<&KeyboardBinding> {
+    bindings.iter().find(|binding| binding.command == command)
+}
+
+fn shortcut_label(accelerator: &str) -> String {
+    let Ok(shortcut) = accelerator.parse::<Shortcut>() else {
+        return accelerator.to_owned();
+    };
+    let mut label = String::new();
+    if shortcut.mods.contains(Modifiers::CONTROL) {
+        label.push('⌃');
+    }
+    if shortcut.mods.contains(Modifiers::ALT) {
+        label.push('⌥');
+    }
+    if shortcut.mods.contains(Modifiers::SHIFT) {
+        label.push('⇧');
+    }
+    if shortcut.mods.contains(Modifiers::SUPER) {
+        label.push('⌘');
+    }
+    let key = shortcut.key.to_string();
+    label.push_str(
+        key.strip_prefix("Key")
+            .or_else(|| key.strip_prefix("Digit"))
+            .unwrap_or(&key),
+    );
+    label
+}
+
+fn settings_snapshot(app: &AppHandle, stored: StoredSettings) -> SettingsSnapshot {
+    let (launch_at_login, launch_at_login_error) = match app.autolaunch().is_enabled() {
+        Ok(enabled) => (enabled, None),
+        Err(error) => (
+            false,
+            Some(format!("Could not read login-item status: {error}")),
+        ),
+    };
+    let shortcut_errors = app
+        .state::<SpikeState>()
+        .status
+        .lock()
+        .expect("spike status poisoned")
+        .shortcut_errors
+        .clone();
+    SettingsSnapshot {
+        stored,
+        launch_at_login,
+        launch_at_login_error,
+        shortcut_errors,
+    }
+}
+
+fn emit_settings(app: &AppHandle, snapshot: &SettingsSnapshot) {
+    if let Err(error) = app.emit(SETTINGS_CHANGED_EVENT, snapshot.clone()) {
+        log::error!("failed to broadcast settings: {error}");
+    }
+}
+
+#[tauri::command]
+pub async fn load_settings(
+    app: AppHandle,
+    database: State<'_, Database>,
+) -> CommandResult<SettingsSnapshot> {
+    let client = database.client();
+    let stored = run_writer(move || client.load_settings()).await?;
+    Ok(settings_snapshot(&app, stored))
+}
+
+#[tauri::command]
+pub async fn set_appearance(
+    app: AppHandle,
+    database: State<'_, Database>,
+    input: SetAppearanceInput,
+) -> CommandResult<SettingsSnapshot> {
+    let client = database.client();
+    let stored = run_writer(move || client.set_appearance(input)).await?;
+    let snapshot = settings_snapshot(&app, stored);
+    emit_settings(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn set_zoom_percent(
+    app: AppHandle,
+    database: State<'_, Database>,
+    input: SetZoomPercentInput,
+) -> CommandResult<SettingsSnapshot> {
+    let client = database.client();
+    let stored = run_writer(move || client.set_zoom_percent(input)).await?;
+    let snapshot = settings_snapshot(&app, stored);
+    emit_settings(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn adopt_legacy_zoom(
+    app: AppHandle,
+    database: State<'_, Database>,
+    input: AdoptLegacyZoomInput,
+) -> CommandResult<SettingsSnapshot> {
+    let client = database.client();
+    let stored = run_writer(move || client.adopt_legacy_zoom(input)).await?;
+    let snapshot = settings_snapshot(&app, stored);
+    emit_settings(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn set_launch_at_login(
+    app: AppHandle,
+    database: State<'_, Database>,
+    input: SetLaunchAtLoginInput,
+) -> CommandResult<SettingsSnapshot> {
+    let manager = app.autolaunch();
+    let result = if input.enabled {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    result.map_err(|error| {
+        CommandError::invalid_input(format!("Could not change launch-at-login: {error}"))
+    })?;
+    let client = database.client();
+    let stored = run_writer(move || client.load_settings()).await?;
+    let snapshot = settings_snapshot(&app, stored);
+    emit_settings(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn set_keyboard_bindings(
+    app: AppHandle,
+    database: State<'_, Database>,
+    input: SetKeyboardBindingsInput,
+) -> CommandResult<SettingsSnapshot> {
+    let candidate = input
+        .keyboard_bindings
+        .iter()
+        .map(|binding| KeyboardBinding {
+            command: binding.command,
+            accelerator: binding.accelerator.clone(),
+        })
+        .collect::<Vec<_>>();
+    validate_complete_bindings(&candidate).map_err(CommandError::from)?;
+
+    let client = database.client();
+    let current = run_writer({
+        let client = client.clone();
+        move || client.load_settings()
+    })
+    .await?;
+    if current.revision != input.expected_revision {
+        return Err(CommandError::from(
+            crate::database::DatabaseError::StaleSettings(format!(
+                "settings revision is {}, expected {}",
+                current.revision, input.expected_revision
+            )),
+        ));
+    }
+
+    replace_runtime_shortcuts(&app, &current.keyboard_bindings, &candidate)
+        .map_err(CommandError::invalid_input)?;
+    if let Err(error) = update_tray_menu(&app, &candidate) {
+        restore_runtime_shortcuts(&app, &candidate, &current.keyboard_bindings);
+        return Err(CommandError::invalid_input(format!(
+            "Could not update shortcut labels: {error}"
+        )));
+    }
+
+    let stored = match run_writer(move || client.set_keyboard_bindings(input)).await {
+        Ok(stored) => stored,
+        Err(error) => {
+            restore_runtime_shortcuts(&app, &candidate, &current.keyboard_bindings);
+            if let Err(menu_error) = update_tray_menu(&app, &current.keyboard_bindings) {
+                log::error!("failed to restore tray shortcut labels: {menu_error}");
+            }
+            return Err(error);
+        }
+    };
+    update_shortcut_status(
+        app.state::<SpikeState>().inner(),
+        &stored.keyboard_bindings,
+        Vec::new(),
+    );
+    let snapshot = settings_snapshot(&app, stored);
+    emit_settings(&app, &snapshot);
+    Ok(snapshot)
+}
+
+fn replace_runtime_shortcuts(
+    app: &AppHandle,
+    current: &[KeyboardBinding],
+    candidate: &[KeyboardBinding],
+) -> Result<(), String> {
+    unregister_bindings(app, current)?;
+    let mut registered = Vec::new();
+    for binding in candidate {
+        if let Err(error) = register_binding(app, binding) {
+            let _ = unregister_bindings(app, &registered);
+            for old in current {
+                if let Err(restore_error) = register_binding(app, old) {
+                    log::error!("failed to restore {}: {restore_error}", old.accelerator);
+                }
+            }
+            return Err(format!(
+                "{} is unavailable: {error}",
+                shortcut_label(&binding.accelerator)
+            ));
+        }
+        registered.push(binding.clone());
+    }
+    Ok(())
+}
+
+fn restore_runtime_shortcuts(
+    app: &AppHandle,
+    candidate: &[KeyboardBinding],
+    current: &[KeyboardBinding],
+) {
+    if let Err(error) = unregister_bindings(app, candidate) {
+        log::error!("failed to unregister candidate shortcuts: {error}");
+    }
+    for binding in current {
+        if let Err(error) = register_binding(app, binding) {
+            record_shortcut_error(
+                app,
+                format!(
+                    "Could not restore {}: {error}",
+                    shortcut_label(&binding.accelerator)
+                ),
+            );
+        }
+    }
+}
+
+fn unregister_bindings(app: &AppHandle, bindings: &[KeyboardBinding]) -> Result<(), String> {
+    for binding in bindings {
+        if app
+            .global_shortcut()
+            .is_registered(binding.accelerator.as_str())
+        {
+            app.global_shortcut()
+                .unregister(binding.accelerator.as_str())
+                .map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn update_tray_menu(app: &AppHandle, bindings: &[KeyboardBinding]) -> Result<(), String> {
+    let menu = tray_menu(app, bindings).map_err(|error| error.to_string())?;
+    let tray = app
+        .tray_by_id(TRAY_ID)
+        .ok_or_else(|| "tray icon is unavailable".to_string())?;
+    tray.set_menu(Some(menu)).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -562,6 +903,18 @@ pub fn show_main(app: AppHandle) -> Result<(), String> {
 fn show_main_inner(app: &AppHandle) -> Result<(), String> {
     dismiss_quick_add_inner(app, DismissFocus::PreserveCurrent)?;
     activate_main_window(app)
+}
+
+fn show_settings_inner(app: &AppHandle) -> Result<(), String> {
+    show_main_inner(app)?;
+    app.emit_to(MAIN_LABEL, OPEN_SETTINGS_EVENT, ())
+        .map_err(|error| format!("could not open Settings: {error}"))
+}
+
+fn show_review_inner(app: &AppHandle) -> Result<(), String> {
+    show_main_inner(app)?;
+    app.emit_to(MAIN_LABEL, OPEN_REVIEW_EVENT, ())
+        .map_err(|error| format!("could not open Review: {error}"))
 }
 
 fn activate_main_window(app: &AppHandle) -> Result<(), String> {

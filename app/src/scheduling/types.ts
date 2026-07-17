@@ -73,6 +73,10 @@ export interface SchedulerConfigV1 {
   config: SchedulerConfigJsonV1
 }
 
+export interface SchedulerConfigRecord extends SchedulerConfigV1 {
+  id: string
+}
+
 export interface SchedulerLogV1 {
   stateBefore: ReviewCardState
   dueAtBefore: number | null

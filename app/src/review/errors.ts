@@ -2,6 +2,7 @@ export const CommandErrorCode = {
   InvalidInput: 'invalidInput',
   NotFound: 'notFound',
   StaleReviewContext: 'staleReviewContext',
+  StaleSchedulerReplay: 'staleSchedulerReplay',
   StaleCardContent: 'staleCardContent',
   IdempotencyConflict: 'idempotencyConflict',
   DatabaseUnavailable: 'databaseUnavailable',

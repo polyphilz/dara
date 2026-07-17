@@ -61,6 +61,15 @@ pub enum DatabaseError {
     #[error("review context is stale: {0}")]
     StaleReviewContext(String),
 
+    #[error("scheduler replay is stale: {0}")]
+    StaleSchedulerReplay(String),
+
+    #[error("settings are stale: {0}")]
+    StaleSettings(String),
+
+    #[error("stored settings are invalid: {0}")]
+    InvalidStoredSettings(String),
+
     #[error("card content is stale: {0}")]
     StaleCardContent(String),
 

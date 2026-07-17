@@ -24,6 +24,8 @@ const MAX_JSON_SAFE_INTEGER: i64 = 9_007_199_254_740_991;
 const SUPPORTED_SCHEDULER_ALGORITHM_VERSION: i64 = 6;
 const SUPPORTED_SCHEDULER_LIBRARY_VERSION: &str = "5.4.1";
 const SUPPORTED_SCHEDULER_CONFIG_SCHEMA_VERSION: i64 = 1;
+const MIN_USER_DESIRED_RETENTION: f64 = 0.70;
+const MAX_USER_DESIRED_RETENTION: f64 = 0.99;
 // An explicit, non-token field boundary keeps the aggregate deterministic.
 pub(super) const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
 const BASIC_VARIANT_KEY: &str = "basic";
@@ -471,8 +473,8 @@ pub struct SchedulerLogV1 {
     pub learning_steps_before: Option<i64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SchedulerConfigRecord {
     pub id: String,
     pub algorithm: SchedulerAlgorithm,
@@ -483,7 +485,7 @@ pub struct SchedulerConfigRecord {
     pub config: Value,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum SchedulerAlgorithm {
     Fsrs,
@@ -505,10 +507,73 @@ impl SchedulerAlgorithm {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum SchedulerLibrary {
     #[serde(rename = "ts-fsrs")]
     TsFsrs,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum SchedulerReplayInstallOperation {
+    Repair,
+    ActivateConfig,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchedulerReplayCard {
+    pub review_card_id: String,
+    pub expected_updated_at: i64,
+    pub expected_card_sequence: i64,
+    pub expected_scheduler_config_id: String,
+    pub stored_cache: Option<ReviewCardCache>,
+    pub stored_cache_error: Option<String>,
+    pub review_history: Vec<ReviewFact>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchedulerReplaySnapshot {
+    pub source_active_scheduler_config_id: String,
+    pub target_scheduler_config: SchedulerConfigRecord,
+    pub target_is_new: bool,
+    pub cards: Vec<SchedulerReplayCard>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PrepareDesiredRetentionReplayInput {
+    pub desired_retention: f64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct StagedSchedulerReplayCard {
+    pub review_card_id: String,
+    pub expected_updated_at: i64,
+    pub expected_card_sequence: i64,
+    pub expected_scheduler_config_id: String,
+    pub install: bool,
+    pub cache: ReviewCardCache,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InstallSchedulerReplayInput {
+    pub operation: SchedulerReplayInstallOperation,
+    pub source_active_scheduler_config_id: String,
+    pub target_scheduler_config: SchedulerConfigRecord,
+    pub cards: Vec<StagedSchedulerReplayCard>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SchedulerReplayInstallReport {
+    pub operation: SchedulerReplayInstallOperation,
+    pub active_scheduler_config_id: String,
+    pub evaluated_cards: usize,
+    pub installed_cards: usize,
 }
 
 impl SchedulerLibrary {
@@ -2368,6 +2433,522 @@ fn load_stored_card(connection: &Connection, review_card_id: &str) -> Result<Sto
         })
 }
 
+pub(super) fn load_scheduler_replay_snapshot(
+    connection: &Connection,
+) -> Result<SchedulerReplaySnapshot> {
+    let active = load_active_scheduler_config(connection)?;
+    load_scheduler_replay_snapshot_for_target(connection, active.clone(), active, false)
+}
+
+pub(super) fn prepare_desired_retention_replay(
+    connection: &Connection,
+    input: PrepareDesiredRetentionReplayInput,
+) -> Result<SchedulerReplaySnapshot> {
+    validate_user_desired_retention(input.desired_retention)?;
+    let active = load_active_scheduler_config(connection)?;
+    if desired_retention(&active.config)? == input.desired_retention {
+        return Err(DatabaseError::InvalidInput(
+            "desired retention already has that value".into(),
+        ));
+    }
+    let mut target = active.clone();
+    target.id = Uuid::now_v7().to_string();
+    set_desired_retention(&mut target.config, input.desired_retention)?;
+    load_scheduler_replay_snapshot_for_target(connection, active, target, true)
+}
+
+pub(super) fn install_scheduler_replay(
+    connection: &mut Connection,
+    input: InstallSchedulerReplayInput,
+) -> Result<SchedulerReplayInstallReport> {
+    validate_uuid_v7(
+        &input.source_active_scheduler_config_id,
+        "sourceActiveSchedulerConfigId",
+    )?;
+    validate_uuid_v7(
+        &input.target_scheduler_config.id,
+        "targetSchedulerConfig.id",
+    )?;
+
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let active = load_active_scheduler_config(&transaction)?;
+    if active.id != input.source_active_scheduler_config_id {
+        return Err(DatabaseError::StaleSchedulerReplay(format!(
+            "active scheduler config is {}, expected {}",
+            active.id, input.source_active_scheduler_config_id
+        )));
+    }
+    validate_replay_target(&active, &input.target_scheduler_config, input.operation)?;
+
+    let current_ids = load_non_new_review_card_ids(&transaction)?;
+    let staged_ids = input
+        .cards
+        .iter()
+        .map(|card| card.review_card_id.clone())
+        .collect::<HashSet<_>>();
+    if staged_ids.len() != input.cards.len() {
+        return Err(DatabaseError::InvalidInput(
+            "scheduler replay contains duplicate review card IDs".into(),
+        ));
+    }
+    if staged_ids != current_ids {
+        return Err(DatabaseError::StaleSchedulerReplay(
+            "the set of reviewed cards changed while schedules were recalculated".into(),
+        ));
+    }
+    if input.operation == SchedulerReplayInstallOperation::ActivateConfig
+        && input.cards.iter().any(|card| !card.install)
+    {
+        return Err(DatabaseError::InvalidInput(
+            "activating a scheduler config requires every reviewed card cache".into(),
+        ));
+    }
+
+    for card in &input.cards {
+        validate_staged_scheduler_card(&transaction, card)?;
+    }
+
+    let now = now_millis()?;
+    if input.operation == SchedulerReplayInstallOperation::ActivateConfig {
+        let config_json = serde_json::to_string(&input.target_scheduler_config.config)?;
+        transaction.execute(
+            "INSERT INTO scheduler_config (
+                id, created_at, algorithm, algorithm_version,
+                scheduler_library, library_version, config_schema_version,
+                config_json
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                input.target_scheduler_config.id,
+                now,
+                input.target_scheduler_config.algorithm.as_db_str(),
+                input.target_scheduler_config.algorithm_version,
+                input.target_scheduler_config.scheduler_library.as_db_str(),
+                input.target_scheduler_config.library_version,
+                input.target_scheduler_config.config_schema_version,
+                config_json,
+            ],
+        )?;
+    }
+
+    let mut installed_cards = 0_usize;
+    for card in &input.cards {
+        if !card.install {
+            continue;
+        }
+        let updated_at = next_updated_at(card.expected_updated_at, now)?;
+        update_replayed_card_cache(
+            &transaction,
+            card,
+            updated_at,
+            &input.target_scheduler_config.id,
+        )?;
+        installed_cards += 1;
+    }
+
+    if input.operation == SchedulerReplayInstallOperation::ActivateConfig {
+        let changed = transaction.execute(
+            "UPDATE app_settings
+             SET updated_at = max(updated_at + 1, ?1),
+                 active_scheduler_config_id = ?2
+             WHERE singleton_id = 1 AND active_scheduler_config_id = ?3",
+            params![
+                now,
+                input.target_scheduler_config.id,
+                input.source_active_scheduler_config_id,
+            ],
+        )?;
+        if changed != 1 {
+            return Err(DatabaseError::StaleSchedulerReplay(
+                "the active scheduler config changed before installation".into(),
+            ));
+        }
+    }
+
+    transaction.commit()?;
+    Ok(SchedulerReplayInstallReport {
+        operation: input.operation,
+        active_scheduler_config_id: input.target_scheduler_config.id,
+        evaluated_cards: input.cards.len(),
+        installed_cards,
+    })
+}
+
+fn load_scheduler_replay_snapshot_for_target(
+    connection: &Connection,
+    active: SchedulerConfigRecord,
+    target: SchedulerConfigRecord,
+    target_is_new: bool,
+) -> Result<SchedulerReplaySnapshot> {
+    let mut statement = connection.prepare(
+        "SELECT
+            card.id, card.updated_at, card.scheduler_config_id,
+            card.state, card.due_at, card.due_study_day,
+            card.last_review_at, card.reps, card.lapses,
+            card.scheduler_state_schema_version, card.scheduler_state_json,
+            coalesce((
+                SELECT max(event.card_sequence)
+                FROM review_event AS event
+                WHERE event.review_card_id = card.id
+            ), 0)
+         FROM review_card AS card
+         WHERE card.state <> ?1
+         ORDER BY card.id",
+    )?;
+    let rows = statement.query_map([ReviewCardState::New.as_db_str()], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, i64>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, Option<i64>>(4)?,
+            row.get::<_, Option<i64>>(5)?,
+            row.get::<_, Option<i64>>(6)?,
+            row.get::<_, i64>(7)?,
+            row.get::<_, i64>(8)?,
+            row.get::<_, Option<i64>>(9)?,
+            row.get::<_, Option<String>>(10)?,
+            row.get::<_, i64>(11)?,
+        ))
+    })?;
+
+    let mut cards = Vec::new();
+    for row in rows {
+        let row = row?;
+        let history = load_replay_review_history(connection, &row.0)?;
+        if history.is_empty() {
+            return Err(DatabaseError::CorruptReviewData(format!(
+                "non-new review card {} has no non-revoked reviews",
+                row.0
+            )));
+        }
+        let cache = replay_stored_cache(
+            &row.0, &row.3, row.4, row.5, row.6, row.7, row.8, row.9, row.10,
+        );
+        let (stored_cache, stored_cache_error) = match cache {
+            Ok(cache) => (Some(cache), None),
+            Err(error) => (None, Some(error.to_string())),
+        };
+        cards.push(SchedulerReplayCard {
+            review_card_id: row.0,
+            expected_updated_at: row.1,
+            expected_scheduler_config_id: row.2,
+            expected_card_sequence: row.11,
+            stored_cache,
+            stored_cache_error,
+            review_history: history,
+        });
+    }
+
+    Ok(SchedulerReplaySnapshot {
+        source_active_scheduler_config_id: active.id,
+        target_scheduler_config: target,
+        target_is_new,
+        cards,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn replay_stored_cache(
+    review_card_id: &str,
+    state: &str,
+    due_at: Option<i64>,
+    due_study_day: Option<i64>,
+    last_review_at: Option<i64>,
+    reps: i64,
+    lapses: i64,
+    scheduler_state_schema_version: Option<i64>,
+    scheduler_state_json: Option<String>,
+) -> Result<ReviewCardCache> {
+    let state = ReviewCardState::from_db(state)?;
+    let scheduler_state = scheduler_state_from_stored_pair(
+        review_card_id,
+        scheduler_state_schema_version,
+        scheduler_state_json.as_deref(),
+    )?;
+    let cache = ReviewCardCache {
+        state,
+        due_at,
+        due_study_day,
+        last_review_at,
+        reps,
+        lapses,
+        scheduler_state,
+    };
+    validate_cache(&cache).map_err(DatabaseError::CorruptReviewData)?;
+    Ok(cache)
+}
+
+fn load_replay_review_history(
+    connection: &Connection,
+    review_card_id: &str,
+) -> Result<Vec<ReviewFact>> {
+    let mut statement = connection.prepare(
+        "SELECT
+            event.reviewed_at, event.study_day, event.timezone_id,
+            event.utc_offset_minutes, event.grade
+         FROM review_event AS event
+         WHERE event.review_card_id = ?1
+           AND event.event_type = ?2
+           AND NOT EXISTS (
+               SELECT 1
+               FROM review_event AS revoke
+               WHERE revoke.event_type = ?3
+                 AND revoke.target_event_id = event.id
+           )
+         ORDER BY event.card_sequence",
+    )?;
+    let rows = statement.query_map(
+        params![
+            review_card_id,
+            ReviewEventType::Review.as_db_str(),
+            ReviewEventType::Revoke.as_db_str(),
+        ],
+        |row| {
+            Ok(ReviewFact {
+                reviewed_at: row.get(0)?,
+                study_day: row.get(1)?,
+                timezone_id: row.get(2)?,
+                utc_offset_minutes: row.get(3)?,
+                grade: row.get(4)?,
+            })
+        },
+    )?;
+    let history = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+    for review in &history {
+        validate_review_fact(review).map_err(|error| {
+            DatabaseError::CorruptReviewData(format!(
+                "review card {review_card_id} contains an invalid review fact: {error}"
+            ))
+        })?;
+    }
+    Ok(history)
+}
+
+fn load_non_new_review_card_ids(connection: &Connection) -> Result<HashSet<String>> {
+    let mut statement =
+        connection.prepare("SELECT id FROM review_card WHERE state <> ?1 ORDER BY id")?;
+    let ids = statement
+        .query_map([ReviewCardState::New.as_db_str()], |row| row.get(0))?
+        .collect::<rusqlite::Result<HashSet<_>>>()?;
+    Ok(ids)
+}
+
+fn validate_staged_scheduler_card(
+    connection: &Connection,
+    card: &StagedSchedulerReplayCard,
+) -> Result<()> {
+    validate_uuid_v7(&card.review_card_id, "cards[].reviewCardId")?;
+    validate_uuid_v7(
+        &card.expected_scheduler_config_id,
+        "cards[].expectedSchedulerConfigId",
+    )?;
+    validate_non_negative_safe(card.expected_updated_at, "cards[].expectedUpdatedAt")?;
+    validate_non_negative_safe(card.expected_card_sequence, "cards[].expectedCardSequence")?;
+    validate_cache(&card.cache).map_err(DatabaseError::InvalidInput)?;
+    if card.cache.state == ReviewCardState::New {
+        return Err(DatabaseError::InvalidInput(
+            "a reviewed card replay cannot produce a NEW cache".into(),
+        ));
+    }
+
+    let stored = connection
+        .query_row(
+            "SELECT
+                updated_at, scheduler_config_id,
+                coalesce((
+                    SELECT max(event.card_sequence)
+                    FROM review_event AS event
+                    WHERE event.review_card_id = review_card.id
+                ), 0)
+             FROM review_card
+             WHERE id = ?1 AND state <> ?2",
+            params![card.review_card_id, ReviewCardState::New.as_db_str()],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or_else(|| {
+            DatabaseError::StaleSchedulerReplay(format!(
+                "review card {} is no longer reviewed",
+                card.review_card_id
+            ))
+        })?;
+    if stored.0 != card.expected_updated_at
+        || stored.1 != card.expected_scheduler_config_id
+        || stored.2 != card.expected_card_sequence
+    {
+        return Err(DatabaseError::StaleSchedulerReplay(format!(
+            "review card {} changed while schedules were recalculated",
+            card.review_card_id
+        )));
+    }
+
+    let history = load_replay_review_history(connection, &card.review_card_id)?;
+    validate_replayed_history(&card.cache, &history)?;
+    Ok(())
+}
+
+fn validate_replayed_history(cache: &ReviewCardCache, history: &[ReviewFact]) -> Result<()> {
+    let review_count = i64::try_from(history.len())
+        .map_err(|_| DatabaseError::InvalidInput("review count overflow".into()))?;
+    if cache.reps != review_count {
+        return Err(DatabaseError::InvalidInput(format!(
+            "replayed cache has {} reps but review history has {review_count}",
+            cache.reps
+        )));
+    }
+    if cache.last_review_at != history.last().map(|review| review.reviewed_at) {
+        return Err(DatabaseError::InvalidInput(
+            "replayed cache lastReviewAt does not match review history".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_replay_target(
+    active: &SchedulerConfigRecord,
+    target: &SchedulerConfigRecord,
+    operation: SchedulerReplayInstallOperation,
+) -> Result<()> {
+    match operation {
+        SchedulerReplayInstallOperation::Repair => {
+            if target != active {
+                return Err(DatabaseError::InvalidInput(
+                    "a cache repair must use the active scheduler config".into(),
+                ));
+            }
+        }
+        SchedulerReplayInstallOperation::ActivateConfig => {
+            if target.id == active.id {
+                return Err(DatabaseError::InvalidInput(
+                    "a scheduler config change requires a new config ID".into(),
+                ));
+            }
+            if target.algorithm != active.algorithm
+                || target.algorithm_version != active.algorithm_version
+                || target.scheduler_library != active.scheduler_library
+                || target.library_version != active.library_version
+                || target.config_schema_version != active.config_schema_version
+            {
+                return Err(DatabaseError::InvalidInput(
+                    "desired retention cannot change scheduler implementation metadata".into(),
+                ));
+            }
+            let desired_retention = desired_retention(&target.config)?;
+            validate_user_desired_retention(desired_retention)?;
+            let mut expected = active.config.clone();
+            set_desired_retention(&mut expected, desired_retention)?;
+            if target.config != expected {
+                return Err(DatabaseError::InvalidInput(
+                    "desired retention is the only supported scheduler setting change".into(),
+                ));
+            }
+            if target.config == active.config {
+                return Err(DatabaseError::InvalidInput(
+                    "desired retention already has that value".into(),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn desired_retention(config: &Value) -> Result<f64> {
+    config
+        .as_object()
+        .and_then(|object| object.get("desiredRetention"))
+        .and_then(Value::as_f64)
+        .filter(|value| value.is_finite())
+        .ok_or_else(|| {
+            DatabaseError::UnsupportedSchedulerConfig(
+                "config JSON has no finite desiredRetention".into(),
+            )
+        })
+}
+
+fn set_desired_retention(config: &mut Value, value: f64) -> Result<()> {
+    let object = config.as_object_mut().ok_or_else(|| {
+        DatabaseError::UnsupportedSchedulerConfig("config JSON must be an object".into())
+    })?;
+    if !object.contains_key("desiredRetention") {
+        return Err(DatabaseError::UnsupportedSchedulerConfig(
+            "config JSON has no desiredRetention".into(),
+        ));
+    }
+    object.insert("desiredRetention".into(), Value::from(value));
+    Ok(())
+}
+
+fn validate_user_desired_retention(value: f64) -> Result<()> {
+    let percent = value * 100.0;
+    if !value.is_finite()
+        || !(MIN_USER_DESIRED_RETENTION..=MAX_USER_DESIRED_RETENTION).contains(&value)
+        || (percent - percent.round()).abs() > f64::EPSILON * 100.0
+    {
+        return Err(DatabaseError::InvalidInput(format!(
+            "desiredRetention must be a whole percentage between {MIN_USER_DESIRED_RETENTION:.2} and {MAX_USER_DESIRED_RETENTION:.2}"
+        )));
+    }
+    Ok(())
+}
+
+fn update_replayed_card_cache(
+    connection: &Connection,
+    staged: &StagedSchedulerReplayCard,
+    updated_at: i64,
+    scheduler_config_id: &str,
+) -> Result<()> {
+    let scheduler_state = staged.cache.scheduler_state.as_ref().ok_or_else(|| {
+        DatabaseError::InvalidInput("a reviewed cache requires scheduler state".into())
+    })?;
+    let scheduler_state_json = serde_json::to_string(scheduler_state)?;
+    let changed = connection.execute(
+        "UPDATE review_card
+         SET updated_at = ?1,
+             state = ?2,
+             due_at = ?3,
+             due_study_day = ?4,
+             last_review_at = ?5,
+             reps = ?6,
+             lapses = ?7,
+             scheduler_config_id = ?8,
+             scheduler_state_schema_version = ?9,
+             scheduler_state_json = ?10
+         WHERE id = ?11
+           AND updated_at = ?12
+           AND scheduler_config_id = ?13
+           AND state <> ?14",
+        params![
+            updated_at,
+            staged.cache.state.as_db_str(),
+            staged.cache.due_at,
+            staged.cache.due_study_day,
+            staged.cache.last_review_at,
+            staged.cache.reps,
+            staged.cache.lapses,
+            scheduler_config_id,
+            SCHEDULER_STATE_SCHEMA_VERSION,
+            scheduler_state_json,
+            staged.review_card_id,
+            staged.expected_updated_at,
+            staged.expected_scheduler_config_id,
+            ReviewCardState::New.as_db_str(),
+        ],
+    )?;
+    if changed != 1 {
+        return Err(DatabaseError::StaleSchedulerReplay(format!(
+            "review card {} changed before installation",
+            staged.review_card_id
+        )));
+    }
+    Ok(())
+}
+
 fn load_active_scheduler_config(connection: &Connection) -> Result<SchedulerConfigRecord> {
     let tuple = connection.query_row(
         "SELECT
@@ -2517,27 +3098,11 @@ fn load_event(connection: &Connection, event_id: &str) -> Result<Option<StoredEv
 }
 
 fn cache_from_stored(stored: &StoredCard) -> Result<ReviewCardCache> {
-    let scheduler_state = match (
+    let scheduler_state = scheduler_state_from_stored_pair(
+        &stored.card_id,
         stored.scheduler_state_schema_version,
         stored.scheduler_state_json.as_deref(),
-    ) {
-        (None, None) => None,
-        (Some(SCHEDULER_STATE_SCHEMA_VERSION), Some(json)) => {
-            Some(serde_json::from_str(json).map_err(|error| {
-                DatabaseError::CorruptReviewData(format!(
-                    "card {} scheduler state: {error}",
-                    stored.card_id
-                ))
-            })?)
-        }
-        (schema, json) => {
-            return Err(DatabaseError::CorruptReviewData(format!(
-                "card {} has unsupported scheduler state pair {schema:?}/{:?}",
-                stored.card_id,
-                json.is_some()
-            )));
-        }
-    };
+    )?;
     Ok(ReviewCardCache {
         state: stored.state,
         due_at: stored.due_at,
@@ -2547,6 +3112,31 @@ fn cache_from_stored(stored: &StoredCard) -> Result<ReviewCardCache> {
         lapses: stored.lapses,
         scheduler_state,
     })
+}
+
+fn scheduler_state_from_stored_pair(
+    review_card_id: &str,
+    scheduler_state_schema_version: Option<i64>,
+    scheduler_state_json: Option<&str>,
+) -> Result<Option<SchedulerStateV1>> {
+    Ok(
+        match (scheduler_state_schema_version, scheduler_state_json) {
+            (None, None) => None,
+            (Some(SCHEDULER_STATE_SCHEMA_VERSION), Some(json)) => {
+                Some(serde_json::from_str(json).map_err(|error| {
+                    DatabaseError::CorruptReviewData(format!(
+                        "card {review_card_id} scheduler state: {error}"
+                    ))
+                })?)
+            }
+            (schema, json) => {
+                return Err(DatabaseError::CorruptReviewData(format!(
+                    "card {review_card_id} has unsupported scheduler state pair {schema:?}/{:?}",
+                    json.is_some()
+                )));
+            }
+        },
+    )
 }
 
 fn update_card_cache(

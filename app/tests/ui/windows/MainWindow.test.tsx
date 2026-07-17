@@ -19,6 +19,7 @@ import { invalidateHomeStats } from '../../../src/windows/main/home-stats-cache.
 const mocks = vi.hoisted(() => ({
   createCardContent: vi.fn(),
   loadHomeStats: vi.fn(),
+  loadSettings: vi.fn(),
   listen: vi.fn(),
   notifyCardCreated: vi.fn(),
   notifyClockChanged: vi.fn(),
@@ -57,6 +58,17 @@ vi.mock('../../../src/media/gateway.ts', () => ({
   ingestClipboardImage: vi.fn(),
   ingestImageFile: vi.fn(),
   renewMediaLease: mocks.renewMediaLease,
+}))
+
+vi.mock('../../../src/settings/gateway.ts', () => ({
+  tauriSettingsGateway: {
+    adoptLegacyZoom: vi.fn(),
+    loadSettings: mocks.loadSettings,
+    setAppearance: vi.fn(),
+    setKeyboardBindings: vi.fn(),
+    setLaunchAtLogin: vi.fn(),
+    setZoomPercent: vi.fn(),
+  },
 }))
 
 vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
@@ -111,6 +123,20 @@ beforeEach(() => {
     reviewedToday: 7,
     queue: { new: 2, learning: 3, review: 4 },
     nextLearningDueAt: null,
+  })
+  mocks.loadSettings.mockResolvedValue({
+    appearance: 'SYSTEM',
+    desiredRetention: 0.9,
+    keyboardBindings: [
+      { accelerator: 'control+alt+super+KeyD', command: 'QUICK_ADD' },
+      { accelerator: 'control+alt+super+KeyR', command: 'REVIEW' },
+    ],
+    launchAtLogin: false,
+    launchAtLoginError: null,
+    legacyZoomMigrated: true,
+    revision: 1,
+    shortcutErrors: [],
+    zoomPercent: 100,
   })
   mocks.listen.mockResolvedValue(() => undefined)
   mocks.renewMediaLease.mockResolvedValue(0)
@@ -236,7 +262,7 @@ test('renders the selected CLOZE variant in the review question', async () => {
   expect(mocks.reveal).toHaveBeenCalledTimes(1)
 })
 
-test('uses the same Home, Add, and Browse navigation on every surface', async () => {
+test('uses the same navigation with Settings rightmost on every surface', async () => {
   const { findByText, getByRole } = render(<MainWindow />)
   await findByText('7')
 
@@ -245,7 +271,7 @@ test('uses the same Home, Add, and Browse navigation on every surface', async ()
     Array.from(navigation.querySelectorAll('button'), (button) =>
       button.textContent?.trim(),
     )
-  expect(navigationButtons()).toEqual(['Home', 'Add', 'Browse'])
+  expect(navigationButtons()).toEqual(['Home', 'Add', 'Browse', 'Settings'])
 
   fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
   expect(getByRole('navigation', { name: 'Main navigation' })).toBe(navigation)
@@ -255,7 +281,19 @@ test('uses the same Home, Add, and Browse navigation on every surface', async ()
 
   fireEvent.click(getByRole('button', { name: 'Add' }))
   expect(getByRole('navigation', { name: 'Main navigation' })).toBe(navigation)
-  expect(navigationButtons()).toEqual(['Home', 'Add', 'Browse'])
+  expect(navigationButtons()).toEqual(['Home', 'Add', 'Browse', 'Settings'])
+})
+
+test('opens Settings from the header and Command-comma', async () => {
+  const { findByRole, getByRole } = render(<MainWindow />)
+
+  fireEvent.click(getByRole('button', { name: 'Settings' }))
+  expect(await findByRole('heading', { name: 'Settings' })).toBeTruthy()
+
+  fireEvent.click(getByRole('button', { name: 'Home' }))
+  fireEvent.keyDown(window, { code: 'Comma', key: ',', metaKey: true })
+  expect(await findByRole('heading', { name: 'Settings' })).toBeTruthy()
+  expect(mocks.loadSettings).toHaveBeenCalled()
 })
 
 test('keeps the rendered home dashboard mounted while reviewing', async () => {

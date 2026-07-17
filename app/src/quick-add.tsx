@@ -9,9 +9,13 @@ import './windows/shared/basic-card-form.css'
 import './windows/quick-add/quick-add-window.css'
 import { QuickAddWindow } from './windows/quick-add/QuickAddWindow.tsx'
 import { installAppZoom } from './zoom/app-zoom.ts'
+import { installAppAppearance } from './settings/index.ts'
 
 void installAppZoom().catch((error: unknown) => {
   console.error('Could not initialize app zoom', error)
+})
+void installAppAppearance().catch((error: unknown) => {
+  console.error('Could not initialize app appearance', error)
 })
 
 createRoot(document.getElementById('root')!).render(

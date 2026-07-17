@@ -139,7 +139,9 @@ export const OcclusionEditor = forwardRef<
   const [legendOpen, setLegendOpen] = useState(false)
 
   const focus = useCallback(() => {
-    requestAnimationFrame(() => overlayRef.current?.focus())
+    requestAnimationFrame(() =>
+      overlayRef.current?.focus({ preventScroll: true }),
+    )
   }, [])
   const focusLayerInspector = useCallback(() => {
     requestAnimationFrame(() => layerLabelRef.current?.focus())

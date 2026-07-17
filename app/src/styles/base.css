@@ -14,6 +14,7 @@
   --surface: rgba(255, 255, 255, 0.84);
   --accent: #b24f2e;
   --accent-soft: rgba(178, 79, 46, 0.1);
+  --activity-cell-stroke: #d8d3cc;
 }
 
 * {
@@ -37,8 +38,21 @@ button {
   color: inherit;
 }
 
+:root[data-appearance='DARK'] {
+  color: #f2efe9;
+  background: #191817;
+  --ink: #f2efe9;
+  --muted: #aaa49a;
+  --line: rgba(255, 255, 255, 0.13);
+  --surface: rgba(35, 33, 31, 0.9);
+  --accent: #e0835f;
+  --accent-soft: rgba(224, 131, 95, 0.12);
+  --activity-cell-stroke: #3b3834;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-appearance]),
+  :root[data-appearance='SYSTEM'] {
     color: #f2efe9;
     background: #191817;
     --ink: #f2efe9;
@@ -47,5 +61,6 @@ button {
     --surface: rgba(35, 33, 31, 0.9);
     --accent: #e0835f;
     --accent-soft: rgba(224, 131, 95, 0.12);
+    --activity-cell-stroke: #3b3834;
   }
 }

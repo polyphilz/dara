@@ -1,8 +1,32 @@
 import type { Activity } from 'react-activity-calendar'
 import type { DailyReviewActivity } from '../../review/index.ts'
+import { Appearance } from '../../settings/types.ts'
 
 const MILLISECONDS_PER_DAY = 86_400_000
 const MAX_ACTIVITY_LEVEL = 4
+
+export const ActivityColorScheme = {
+  Dark: 'dark',
+  Light: 'light',
+} as const
+
+export type ActivityColorScheme =
+  (typeof ActivityColorScheme)[keyof typeof ActivityColorScheme]
+
+export function resolveActivityColorScheme(
+  appearance: Appearance,
+  systemPrefersDark: boolean,
+): ActivityColorScheme {
+  if (appearance === Appearance.Dark) {
+    return ActivityColorScheme.Dark
+  }
+  if (appearance === Appearance.Light) {
+    return ActivityColorScheme.Light
+  }
+  return systemPrefersDark
+    ? ActivityColorScheme.Dark
+    : ActivityColorScheme.Light
+}
 
 export function buildActivityCalendarData(
   activity: DailyReviewActivity[],

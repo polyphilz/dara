@@ -381,8 +381,27 @@
   opacity: 0.45;
 }
 
+:root[data-appearance='DARK'] .rich-text-editor {
+  --code-block-background: #25282c;
+  --code-block-border: rgba(196, 205, 214, 0.28);
+  --code-block-ink: #f0f2f4;
+  --code-block-label-background: rgba(255, 255, 255, 0.055);
+  --code-block-muted: #aeb5bd;
+  --code-block-selection: rgba(112, 148, 180, 0.32);
+  --code-syntax-comment: #8e969f;
+  --code-syntax-function: #c6a77e;
+  --code-syntax-invalid: #dc8a8a;
+  --code-syntax-keyword: #d6a3c9;
+  --code-syntax-number: #8fb8d1;
+  --code-syntax-property: #a9bdd0;
+  --code-syntax-punctuation: #b0b5bb;
+  --code-syntax-string: #d4b47c;
+  --code-syntax-type: #91b59f;
+  background: rgba(16, 15, 14, 0.52);
+}
+
 @media (prefers-color-scheme: dark) {
-  .rich-text-editor {
+  :root:not([data-appearance='LIGHT']) .rich-text-editor {
     --code-block-background: #25282c;
     --code-block-border: rgba(196, 205, 214, 0.28);
     --code-block-ink: #f0f2f4;

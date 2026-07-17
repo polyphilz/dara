@@ -5,6 +5,29 @@ export {
   parseSchedulerConfig,
 } from './config.ts'
 export {
+  changeDesiredRetention,
+  checkSchedulingData,
+  calculateSchedulerReplay,
+  repairSchedulingData,
+  SchedulerMaintenanceOperation,
+  SchedulerReplayDifferenceKind,
+  SchedulerReplayInstallOperation,
+  tauriSchedulerMaintenanceGateway,
+} from './maintenance.ts'
+export type {
+  CalculatedSchedulerReplay,
+  InstallSchedulerReplayInput,
+  SchedulerMaintenanceGateway,
+  SchedulerMaintenanceReport,
+  SchedulerRecalculationOptions,
+  SchedulerRecalculationProgress,
+  SchedulerReplayCard,
+  SchedulerReplayDifference,
+  SchedulerReplayInstallReport,
+  SchedulerReplaySnapshot,
+  StagedSchedulerReplayCard,
+} from './maintenance.ts'
+export {
   createNewReviewCardCache,
   fuzzSeed,
   previewReview,
@@ -26,6 +49,7 @@ export type {
   ScheduleResult,
   ScheduleReviewInput,
   SchedulerConfigJsonV1,
+  SchedulerConfigRecord,
   SchedulerConfigV1,
   SchedulerLogV1,
   SchedulerStateV1,

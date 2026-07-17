@@ -7,6 +7,7 @@ mod media;
 mod migrations;
 mod paths;
 mod queue;
+mod settings;
 #[allow(dead_code)]
 pub mod snapshot;
 mod stats;
@@ -26,9 +27,10 @@ use rusqlite::Connection;
 
 pub use connection::register_sqlite_vec;
 pub use domain::{
-    CardContentDraft, CardContentListItem, DeleteCardContentInput, RecordGradeInput, ReviewContext,
-    ReviewMutationResult, SearchCardContentInput, SetCardContentSuspendedInput, UndoLastGradeInput,
-    UpdateCardContentInput,
+    CardContentDraft, CardContentListItem, DeleteCardContentInput, InstallSchedulerReplayInput,
+    PrepareDesiredRetentionReplayInput, RecordGradeInput, ReviewContext, ReviewMutationResult,
+    SchedulerReplayInstallReport, SchedulerReplaySnapshot, SearchCardContentInput,
+    SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
 };
 pub use embedding_index::{SearchMaintenanceOperation, SearchMaintenanceReport};
 pub use error::{DatabaseError, Result};
@@ -39,6 +41,12 @@ pub use media::{
 };
 pub use paths::DatabasePaths;
 pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
+pub(crate) use settings::validate_complete_bindings;
+pub use settings::{
+    AdoptLegacyZoomInput, DaraCommand, KeyboardBinding, SetAppearanceInput,
+    SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings, DEFAULT_QUICK_ADD_ACCELERATOR,
+    DEFAULT_REVIEW_ACCELERATOR,
+};
 pub use stats::{HomeStats, LoadHomeStatsInput};
 pub use writer::DatabaseClient;
 use writer::WriterMessage;
@@ -136,6 +144,52 @@ impl Database {
     #[cfg(test)]
     fn load_home_stats(&self, input: LoadHomeStatsInput) -> Result<HomeStats> {
         self.client.load_home_stats(input)
+    }
+
+    #[cfg(test)]
+    fn load_scheduler_replay_snapshot(&self) -> Result<SchedulerReplaySnapshot> {
+        self.client.load_scheduler_replay_snapshot()
+    }
+
+    #[cfg(test)]
+    fn prepare_desired_retention_replay(
+        &self,
+        input: PrepareDesiredRetentionReplayInput,
+    ) -> Result<SchedulerReplaySnapshot> {
+        self.client.prepare_desired_retention_replay(input)
+    }
+
+    #[cfg(test)]
+    fn install_scheduler_replay(
+        &self,
+        input: InstallSchedulerReplayInput,
+    ) -> Result<SchedulerReplayInstallReport> {
+        self.client.install_scheduler_replay(input)
+    }
+
+    #[cfg(test)]
+    fn load_settings(&self) -> Result<StoredSettings> {
+        self.client.load_settings()
+    }
+
+    #[cfg(test)]
+    fn set_appearance(&self, input: SetAppearanceInput) -> Result<StoredSettings> {
+        self.client.set_appearance(input)
+    }
+
+    #[cfg(test)]
+    fn set_zoom_percent(&self, input: SetZoomPercentInput) -> Result<StoredSettings> {
+        self.client.set_zoom_percent(input)
+    }
+
+    #[cfg(test)]
+    fn adopt_legacy_zoom(&self, input: AdoptLegacyZoomInput) -> Result<StoredSettings> {
+        self.client.adopt_legacy_zoom(input)
+    }
+
+    #[cfg(test)]
+    fn set_keyboard_bindings(&self, input: SetKeyboardBindingsInput) -> Result<StoredSettings> {
+        self.client.set_keyboard_bindings(input)
     }
 
     #[cfg(test)]
@@ -403,6 +457,30 @@ fn writer_loop(
             WriterMessage::LoadHomeStats { input, reply } => {
                 let _ = reply.send(stats::load_home_stats(&main, input));
             }
+            WriterMessage::LoadSchedulerReplaySnapshot { reply } => {
+                let _ = reply.send(domain::load_scheduler_replay_snapshot(&main));
+            }
+            WriterMessage::PrepareDesiredRetentionReplay { input, reply } => {
+                let _ = reply.send(domain::prepare_desired_retention_replay(&main, input));
+            }
+            WriterMessage::InstallSchedulerReplay { input, reply } => {
+                let _ = reply.send(domain::install_scheduler_replay(&mut main, input));
+            }
+            WriterMessage::LoadSettings { reply } => {
+                let _ = reply.send(settings::load_settings(&main));
+            }
+            WriterMessage::SetAppearance { input, reply } => {
+                let _ = reply.send(settings::set_appearance(&mut main, input));
+            }
+            WriterMessage::SetZoomPercent { input, reply } => {
+                let _ = reply.send(settings::set_zoom_percent(&mut main, input));
+            }
+            WriterMessage::AdoptLegacyZoom { input, reply } => {
+                let _ = reply.send(settings::adopt_legacy_zoom(&mut main, input));
+            }
+            WriterMessage::SetKeyboardBindings { input, reply } => {
+                let _ = reply.send(settings::set_keyboard_bindings(&mut main, input));
+            }
             WriterMessage::IngestImage {
                 image,
                 lease_id,
@@ -490,5 +568,7 @@ fn checkpoint_pair(main: &Connection, media: &Connection) -> Result<()> {
 mod domain_tests;
 #[cfg(test)]
 mod queue_tests;
+#[cfg(test)]
+mod settings_tests;
 #[cfg(test)]
 mod tests;

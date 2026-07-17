@@ -1,9 +1,12 @@
 import { expect, test } from 'vitest'
 import {
+  ActivityColorScheme,
   activityLevel,
   buildActivityCalendarData,
+  resolveActivityColorScheme,
   studyDayToIsoDate,
 } from '../../../src/windows/main/home-activity.ts'
+import { Appearance } from '../../../src/settings/types.ts'
 
 test('scales review counts and preserves the requested calendar boundaries', () => {
   expect(
@@ -28,4 +31,16 @@ test('keeps activity levels within the calendar scale', () => {
   expect(activityLevel(2, 10)).toBe(1)
   expect(activityLevel(5, 10)).toBe(2)
   expect(activityLevel(10, 10)).toBe(4)
+})
+
+test('uses the selected appearance instead of the system scheme', () => {
+  expect(resolveActivityColorScheme(Appearance.Light, true)).toBe(
+    ActivityColorScheme.Light,
+  )
+  expect(resolveActivityColorScheme(Appearance.Dark, false)).toBe(
+    ActivityColorScheme.Dark,
+  )
+  expect(resolveActivityColorScheme(Appearance.System, true)).toBe(
+    ActivityColorScheme.Dark,
+  )
 })

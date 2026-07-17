@@ -1,5 +1,21 @@
-import { emit, listen } from '@tauri-apps/api/event'
+import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
+import { tauriSettingsGateway } from '../settings/gateway.ts'
+import {
+  DEFAULT_ZOOM_PERCENT,
+  MAX_ZOOM_PERCENT,
+  MIN_ZOOM_PERCENT,
+  SETTINGS_CHANGED_EVENT,
+  ZOOM_STEP_PERCENT,
+  type SettingsSnapshot,
+} from '../settings/types.ts'
+
+export {
+  DEFAULT_ZOOM_PERCENT,
+  MAX_ZOOM_PERCENT,
+  MIN_ZOOM_PERCENT,
+  ZOOM_STEP_PERCENT,
+} from '../settings/types.ts'
 
 export const AppZoomCommand = {
   ZoomIn: 'ZOOM_IN',
@@ -10,17 +26,12 @@ export const AppZoomCommand = {
 export type AppZoomCommand =
   (typeof AppZoomCommand)[keyof typeof AppZoomCommand]
 
-export const DEFAULT_ZOOM_PERCENT = 100
-export const MIN_ZOOM_PERCENT = 50
-export const MAX_ZOOM_PERCENT = 200
-export const ZOOM_STEP_PERCENT = 10
-
 const ZOOM_STORAGE_KEY = 'dara.appZoomPercent'
 const ZOOM_COMMAND_EVENT = 'app-zoom-command'
-const ZOOM_CHANGED_EVENT = 'app-zoom-changed'
 const appZoomCommands = new Set<AppZoomCommand>(Object.values(AppZoomCommand))
 
 let currentZoomPercent = DEFAULT_ZOOM_PERCENT
+let currentSettingsRevision = 0
 
 export async function installAppZoom(): Promise<void> {
   const webview = getCurrentWebview()
@@ -33,10 +44,11 @@ export async function installAppZoom(): Promise<void> {
     },
   )
   const stopChangedListener = await listen<unknown>(
-    ZOOM_CHANGED_EVENT,
+    SETTINGS_CHANGED_EVENT,
     (event) => {
-      if (isZoomPercent(event.payload)) {
-        void applyZoomPercent(event.payload, true)
+      if (isSettingsSnapshotZoom(event.payload)) {
+        currentSettingsRevision = event.payload.revision
+        void applyZoomPercent(event.payload.zoomPercent)
       }
     },
   )
@@ -51,7 +63,20 @@ export async function installAppZoom(): Promise<void> {
   }
   window.addEventListener('keydown', handleKeyDown, { capture: true })
 
-  currentZoomPercent = readStoredZoomPercent()
+  let settings = await tauriSettingsGateway.loadSettings()
+  if (!settings.legacyZoomMigrated) {
+    try {
+      settings = await tauriSettingsGateway.adoptLegacyZoom(
+        settings.revision,
+        readStoredZoomPercent(),
+      )
+      removeStoredZoomPercent()
+    } catch {
+      settings = await tauriSettingsGateway.loadSettings()
+    }
+  }
+  currentSettingsRevision = settings.revision
+  currentZoomPercent = settings.zoomPercent
   await webview.setZoom(currentZoomPercent / 100)
 
   window.addEventListener(
@@ -105,26 +130,29 @@ export function zoomCommandForKeyboardEvent(
 
 async function executeZoomCommand(
   command: AppZoomCommand,
-  broadcast: boolean,
+  _broadcast: boolean,
 ): Promise<void> {
   const next = zoomPercentForCommand(currentZoomPercent, command)
-  await applyZoomPercent(next, true)
-  if (broadcast) {
-    await emit(ZOOM_CHANGED_EVENT, next)
+  try {
+    const settings = await tauriSettingsGateway.setZoomPercent(
+      currentSettingsRevision,
+      next,
+    )
+    currentSettingsRevision = settings.revision
+    await applyZoomPercent(settings.zoomPercent)
+  } catch (error) {
+    const settings = await tauriSettingsGateway.loadSettings()
+    currentSettingsRevision = settings.revision
+    await applyZoomPercent(settings.zoomPercent)
+    console.error('Could not update app zoom', error)
   }
 }
 
-async function applyZoomPercent(
-  percent: number,
-  persist: boolean,
-): Promise<void> {
+async function applyZoomPercent(percent: number): Promise<void> {
   const next = normalizeZoomPercent(percent)
   if (next !== currentZoomPercent) {
     currentZoomPercent = next
     await getCurrentWebview().setZoom(next / 100)
-  }
-  if (persist) {
-    storeZoomPercent(next)
   }
 }
 
@@ -139,11 +167,11 @@ function readStoredZoomPercent(): number {
   }
 }
 
-function storeZoomPercent(percent: number): void {
+function removeStoredZoomPercent(): void {
   try {
-    window.localStorage.setItem(ZOOM_STORAGE_KEY, String(percent))
+    window.localStorage.removeItem(ZOOM_STORAGE_KEY)
   } catch {
-    // Zoom still works for this session if persistence is unavailable.
+    // The database is authoritative even if legacy cleanup is unavailable.
   }
 }
 
@@ -159,12 +187,20 @@ function isAppZoomCommand(value: unknown): value is AppZoomCommand {
   return typeof value === 'string' && appZoomCommands.has(value as AppZoomCommand)
 }
 
-function isZoomPercent(value: unknown): value is number {
+function isSettingsSnapshotZoom(
+  value: unknown,
+): value is Pick<SettingsSnapshot, 'revision' | 'zoomPercent'> {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const candidate = value as { revision?: unknown; zoomPercent?: unknown }
   return (
-    typeof value === 'number' &&
-    Number.isFinite(value) &&
-    value >= MIN_ZOOM_PERCENT &&
-    value <= MAX_ZOOM_PERCENT &&
-    value % ZOOM_STEP_PERCENT === 0
+    typeof candidate.revision === 'number' &&
+    Number.isInteger(candidate.revision) &&
+    typeof candidate.zoomPercent === 'number' &&
+    Number.isFinite(candidate.zoomPercent) &&
+    candidate.zoomPercent >= MIN_ZOOM_PERCENT &&
+    candidate.zoomPercent <= MAX_ZOOM_PERCENT &&
+    candidate.zoomPercent % ZOOM_STEP_PERCENT === 0
   )
 }

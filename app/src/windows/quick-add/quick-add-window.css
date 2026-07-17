@@ -32,8 +32,16 @@ body,
   min-height: 118px;
 }
 
+:root[data-appearance='DARK'] .quick-add-card {
+  border-color: rgba(255, 255, 255, 0.14);
+  background: rgba(34, 32, 30, 0.97);
+  box-shadow:
+    0 26px 64px rgba(0, 0, 0, 0.42),
+    0 3px 12px rgba(0, 0, 0, 0.3);
+}
+
 @media (prefers-color-scheme: dark) {
-  .quick-add-card {
+  :root:not([data-appearance='LIGHT']) .quick-add-card {
     border-color: rgba(255, 255, 255, 0.14);
     background: rgba(34, 32, 30, 0.97);
     box-shadow:

@@ -23,14 +23,21 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .invoke_handler(tauri::generate_handler![
             database::commands::create_card_content,
             database::commands::delete_card_content,
             database::commands::load_home_stats,
             database::commands::load_review_context,
+            database::commands::load_scheduler_replay_snapshot,
             database::commands::maintain_media,
             database::commands::maintain_search,
             database::commands::record_grade,
+            database::commands::prepare_desired_retention_replay,
+            database::commands::install_scheduler_replay,
             database::commands::renew_media_lease,
             database::commands::search_card_content,
             database::commands::search_status,
@@ -43,6 +50,12 @@ pub fn run() {
             external::open_external_url,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,
+            windows::macos::load_settings,
+            windows::macos::set_appearance,
+            windows::macos::set_keyboard_bindings,
+            windows::macos::set_launch_at_login,
+            windows::macos::set_zoom_percent,
+            windows::macos::adopt_legacy_zoom,
             windows::macos::show_main,
             windows::macos::show_quick_add,
         ])
@@ -73,11 +86,12 @@ pub fn run() {
                 &resource_dir,
             )?;
             let ocr = media::OcrCoordinator::start(database.client())?;
+            let startup_settings = database.client().load_settings()?;
             app.manage(database);
             app.manage(search);
             app.manage(ocr);
 
-            windows::setup(app)?;
+            windows::setup(app, startup_settings)?;
             Ok(())
         })
         .on_window_event(windows::handle_window_event)

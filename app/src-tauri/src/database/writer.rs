@@ -6,11 +6,14 @@ use super::embedding_index::{
 };
 use super::snapshot::CreatedSnapshot;
 use super::{
-    CanonicalImage, CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput,
-    HomeStats, ImageRecord, LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob,
-    OcrQueueRecovery, RecordGradeInput, Result, ReviewContext, ReviewMutationResult,
-    ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
-    SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
+    AdoptLegacyZoomInput, CanonicalImage, CardContentDraft, CardContentListItem, DatabaseError,
+    DeleteCardContentInput, HomeStats, ImageRecord, InstallSchedulerReplayInput,
+    LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob, OcrQueueRecovery,
+    PrepareDesiredRetentionReplayInput, RecordGradeInput, Result, ReviewContext,
+    ReviewMutationResult, ReviewQueueSelection, SchedulerReplayInstallReport,
+    SchedulerReplaySnapshot, SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
+    SetCardContentSuspendedInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
+    UndoLastGradeInput, UpdateCardContentInput,
 };
 
 pub(super) enum WriterMessage {
@@ -79,6 +82,36 @@ pub(super) enum WriterMessage {
     LoadHomeStats {
         input: LoadHomeStatsInput,
         reply: SyncSender<Result<HomeStats>>,
+    },
+    LoadSchedulerReplaySnapshot {
+        reply: SyncSender<Result<SchedulerReplaySnapshot>>,
+    },
+    PrepareDesiredRetentionReplay {
+        input: PrepareDesiredRetentionReplayInput,
+        reply: SyncSender<Result<SchedulerReplaySnapshot>>,
+    },
+    InstallSchedulerReplay {
+        input: InstallSchedulerReplayInput,
+        reply: SyncSender<Result<SchedulerReplayInstallReport>>,
+    },
+    LoadSettings {
+        reply: SyncSender<Result<StoredSettings>>,
+    },
+    SetAppearance {
+        input: SetAppearanceInput,
+        reply: SyncSender<Result<StoredSettings>>,
+    },
+    SetZoomPercent {
+        input: SetZoomPercentInput,
+        reply: SyncSender<Result<StoredSettings>>,
+    },
+    AdoptLegacyZoom {
+        input: AdoptLegacyZoomInput,
+        reply: SyncSender<Result<StoredSettings>>,
+    },
+    SetKeyboardBindings {
+        input: SetKeyboardBindingsInput,
+        reply: SyncSender<Result<StoredSettings>>,
     },
     IngestImage {
         image: CanonicalImage,
@@ -336,6 +369,92 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::LoadHomeStats { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn load_scheduler_replay_snapshot(&self) -> Result<SchedulerReplaySnapshot> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadSchedulerReplaySnapshot { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn prepare_desired_retention_replay(
+        &self,
+        input: PrepareDesiredRetentionReplayInput,
+    ) -> Result<SchedulerReplaySnapshot> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::PrepareDesiredRetentionReplay { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn install_scheduler_replay(
+        &self,
+        input: InstallSchedulerReplayInput,
+    ) -> Result<SchedulerReplayInstallReport> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::InstallSchedulerReplay { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn load_settings(&self) -> Result<StoredSettings> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadSettings { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn set_appearance(&self, input: SetAppearanceInput) -> Result<StoredSettings> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SetAppearance { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn set_zoom_percent(&self, input: SetZoomPercentInput) -> Result<StoredSettings> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SetZoomPercent { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn adopt_legacy_zoom(&self, input: AdoptLegacyZoomInput) -> Result<StoredSettings> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::AdoptLegacyZoom { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn set_keyboard_bindings(&self, input: SetKeyboardBindingsInput) -> Result<StoredSettings> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SetKeyboardBindings { input, reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

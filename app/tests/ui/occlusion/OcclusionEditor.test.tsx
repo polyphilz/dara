@@ -66,6 +66,7 @@ test('builds multiple layers and multiple masks per layer with local undo', asyn
   ).toBeNull()
   await vi.waitFor(() => expect(document.activeElement).toBe(newLayer))
   const overlay = getByRole('application', { name: 'Editable image masks' })
+  const overlayFocus = vi.spyOn(overlay, 'focus')
   vi.spyOn(overlay, 'getBoundingClientRect').mockReturnValue({
     bottom: 400,
     height: 400,
@@ -77,6 +78,11 @@ test('builds multiple layers and multiple masks per layer with local undo', asyn
     y: 0,
     toJSON: () => ({}),
   })
+
+  fireEvent.click(newLayer)
+  await vi.waitFor(() =>
+    expect(overlayFocus).toHaveBeenCalledWith({ preventScroll: true }),
+  )
 
   draw(overlay, 80, 80, 240, 160, 1)
   expect(current.layers).toHaveLength(1)

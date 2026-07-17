@@ -278,6 +278,17 @@ test('submits hybrid search on Enter and handles window-level Browse shortcuts',
   expect(onQueueChanged).toHaveBeenCalledTimes(1)
 })
 
+test('does not submit an empty search on Enter', async () => {
+  const { getByLabelText } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+
+  await waitFor(() => expect(mocks.searchCardContent).toHaveBeenCalledTimes(1))
+  fireEvent.keyDown(getByLabelText('Search cards'), { key: 'Enter' })
+
+  expect(mocks.searchCardContent).toHaveBeenCalledTimes(1)
+})
+
 test('clearing a submitted query immediately restores the all-cards view', async () => {
   const { getByLabelText, getByText } = render(
     <CardBrowser onQueueChanged={vi.fn()} />,

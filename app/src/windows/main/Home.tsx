@@ -3,7 +3,11 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import { errorMessage } from '../../review/errors.ts'
 import type { HomeStats, LoadHomeStatsInput } from '../../review/index.ts'
 import { captureStudyMoment } from '../../scheduling/index.ts'
-import { buildActivityCalendarData } from './home-activity.ts'
+import { Appearance } from '../../settings/index.ts'
+import {
+  buildActivityCalendarData,
+  resolveActivityColorScheme,
+} from './home-activity.ts'
 import {
   getHomeStats,
   invalidateHomeStats,
@@ -12,8 +16,9 @@ import {
 
 const ACTIVITY_DAY_COUNT = 365
 const MAX_TIMER_DELAY = 2_147_000_000
+const SYSTEM_DARK_COLOR_SCHEME_QUERY = '(prefers-color-scheme: dark)'
 const ACTIVITY_THEME = {
-  light: ['#e8e3dc', '#fcebd7', '#f8d1a3', '#f2b66b', '#ee9c40'],
+  light: ['#e8e3dc', '#f6d6b0', '#f4c385', '#f1ae5b', '#ee9c40'],
   dark: ['#302d29', '#6c4a2b', '#9a612a', '#c77c32', '#ee9c40'],
 }
 
@@ -32,6 +37,7 @@ export const Home = memo(function Home({
   )
   const [error, setError] = useState<string | null>(null)
   const [reloadToken, setReloadToken] = useState(0)
+  const calendarColorScheme = useActivityColorScheme()
 
   useEffect(() => {
     let disposed = false
@@ -100,6 +106,7 @@ export const Home = memo(function Home({
             blockMargin={3}
             blockRadius={3}
             blockSize={10}
+            colorScheme={calendarColorScheme}
             data={activity}
             fontSize={11}
             labels={{
@@ -158,6 +165,42 @@ export const Home = memo(function Home({
     </section>
   )
 })
+
+function useActivityColorScheme() {
+  const [colorScheme, setColorScheme] = useState(readActivityColorScheme)
+
+  useEffect(() => {
+    const systemScheme = window.matchMedia(SYSTEM_DARK_COLOR_SCHEME_QUERY)
+    const refresh = () => setColorScheme(readActivityColorScheme())
+    const appearanceObserver = new MutationObserver(refresh)
+    appearanceObserver.observe(document.documentElement, {
+      attributeFilter: ['data-appearance'],
+      attributes: true,
+    })
+    systemScheme.addEventListener('change', refresh)
+    refresh()
+    return () => {
+      appearanceObserver.disconnect()
+      systemScheme.removeEventListener('change', refresh)
+    }
+  }, [])
+
+  return colorScheme
+}
+
+function readActivityColorScheme() {
+  const storedAppearance = document.documentElement.dataset.appearance
+  const appearance =
+    storedAppearance === Appearance.Dark
+      ? Appearance.Dark
+      : storedAppearance === Appearance.Light
+        ? Appearance.Light
+        : Appearance.System
+  return resolveActivityColorScheme(
+    appearance,
+    window.matchMedia(SYSTEM_DARK_COLOR_SCHEME_QUERY).matches,
+  )
+}
 
 function createHomeRequest(): LoadHomeStatsInput {
   const moment = captureStudyMoment()

@@ -97,8 +97,17 @@
   text-align: center;
 }
 
+:root[data-appearance='DARK'] .dara-select-popover {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: #f5f1ea;
+  background: #292624;
+  box-shadow:
+    0 18px 42px rgba(0, 0, 0, 0.46),
+    0 3px 10px rgba(0, 0, 0, 0.3);
+}
+
 @media (prefers-color-scheme: dark) {
-  .dara-select-popover {
+  :root:not([data-appearance='LIGHT']) .dara-select-popover {
     border-color: rgba(255, 255, 255, 0.18);
     color: #f5f1ea;
     background: #292624;

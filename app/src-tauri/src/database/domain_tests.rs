@@ -12,11 +12,13 @@ use super::{
         DeleteCardContentInput, MutationDisposition, OcclusionDefinitionDraft, OcclusionMaskColor,
         OcclusionMaskDraft, OcclusionMaskLayerDraft, OcclusionMode, ReviewCardCache,
         ReviewCardState, ReviewCardStatus, ReviewEventType, ReviewFact, SchedulerLogV1,
-        SearchCardContentInput, SetCardContentSuspendedInput, UpdateCardContentInput,
+        SchedulerReplayInstallOperation, SearchCardContentInput, SetCardContentSuspendedInput,
+        StagedSchedulerReplayCard, UpdateCardContentInput,
     },
     embedding_index::InstallEmbeddingDisposition,
     initialize, CanonicalImage, Database, DatabaseError, DatabasePaths, InitializationOptions,
-    RecordGradeInput, ReviewContext, SearchMaintenanceOperation, UndoLastGradeInput,
+    InstallSchedulerReplayInput, PrepareDesiredRetentionReplayInput, RecordGradeInput,
+    ReviewContext, SearchMaintenanceOperation, UndoLastGradeInput,
 };
 
 const FIXTURE_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -2038,4 +2040,297 @@ fn stale_timestamp_sequence_and_scheduler_config_are_rejected_without_writes() {
         .expect("unchanged context");
     assert_eq!(reloaded.last_card_sequence, 1);
     assert_eq!(reloaded.review_history.len(), 1);
+}
+
+#[test]
+fn scheduler_replay_snapshot_contains_reviewed_cards_and_factual_history() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let initial = database
+        .create_card_content(basic_draft("front", "back", None))
+        .expect("basic card");
+    let graded = database
+        .record_grade(grade_input(&initial, &fixture.steps[0]))
+        .expect("first grade")
+        .context;
+
+    let snapshot = database
+        .load_scheduler_replay_snapshot()
+        .expect("scheduler replay snapshot");
+    assert_eq!(
+        snapshot.source_active_scheduler_config_id,
+        fixture.scheduler_config_id
+    );
+    assert_eq!(snapshot.target_scheduler_config, graded.scheduler_config);
+    assert!(!snapshot.target_is_new);
+    assert_eq!(snapshot.cards.len(), 1);
+    let card = &snapshot.cards[0];
+    assert_eq!(card.review_card_id, graded.review_card.id);
+    assert_eq!(card.expected_updated_at, graded.review_card.updated_at);
+    assert_eq!(card.expected_card_sequence, 1);
+    assert_eq!(
+        card.expected_scheduler_config_id,
+        fixture.scheduler_config_id
+    );
+    assert_eq!(
+        card.stored_cache.as_ref(),
+        Some(&fixture.steps[0].expected_cache)
+    );
+    assert_eq!(card.stored_cache_error, None);
+    assert_eq!(card.review_history, vec![fixture.steps[0].review.clone()]);
+}
+
+#[test]
+fn scheduler_replay_repairs_a_cache_without_changing_review_history() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let initial = database
+        .create_card_content(basic_draft("front", "back", None))
+        .expect("basic card");
+    let graded = database
+        .record_grade(grade_input(&initial, &fixture.steps[0]))
+        .expect("first grade")
+        .context;
+
+    let external = open_existing(&paths);
+    external
+        .execute(
+            "UPDATE review_card
+             SET scheduler_state_json = '{\"stability\":\"invalid\"}',
+                 updated_at = updated_at + 1
+             WHERE id = ?1",
+            [&graded.review_card.id],
+        )
+        .expect("corrupt derived scheduler state");
+    drop(external);
+
+    let snapshot = database
+        .load_scheduler_replay_snapshot()
+        .expect("corrupt snapshot remains replayable");
+    assert_eq!(snapshot.cards[0].stored_cache, None);
+    assert!(snapshot.cards[0].stored_cache_error.is_some());
+    let input = InstallSchedulerReplayInput {
+        operation: SchedulerReplayInstallOperation::Repair,
+        source_active_scheduler_config_id: snapshot.source_active_scheduler_config_id.clone(),
+        target_scheduler_config: snapshot.target_scheduler_config.clone(),
+        cards: vec![StagedSchedulerReplayCard {
+            review_card_id: snapshot.cards[0].review_card_id.clone(),
+            expected_updated_at: snapshot.cards[0].expected_updated_at,
+            expected_card_sequence: snapshot.cards[0].expected_card_sequence,
+            expected_scheduler_config_id: snapshot.cards[0].expected_scheduler_config_id.clone(),
+            install: true,
+            cache: fixture.steps[0].expected_cache.clone(),
+        }],
+    };
+    let report = database
+        .install_scheduler_replay(input)
+        .expect("repair replayed cache");
+    assert_eq!(report.operation, SchedulerReplayInstallOperation::Repair);
+    assert_eq!(report.evaluated_cards, 1);
+    assert_eq!(report.installed_cards, 1);
+
+    let repaired = database
+        .load_review_context(graded.review_card.id.clone())
+        .expect("repaired context");
+    assert_eq!(repaired.cache, fixture.steps[0].expected_cache);
+    assert_eq!(repaired.review_history.len(), 1);
+    assert_eq!(
+        repaired.review_history[0].event_id,
+        fixture.steps[0].event_id
+    );
+}
+
+#[test]
+fn scheduler_replay_rejects_a_card_changed_after_the_snapshot() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let initial = database
+        .create_card_content(basic_draft("front", "back", None))
+        .expect("basic card");
+    let graded = database
+        .record_grade(grade_input(&initial, &fixture.steps[0]))
+        .expect("first grade")
+        .context;
+    let snapshot = database
+        .load_scheduler_replay_snapshot()
+        .expect("scheduler replay snapshot");
+
+    let external = open_existing(&paths);
+    external
+        .execute(
+            "UPDATE review_card SET updated_at = updated_at + 1 WHERE id = ?1",
+            [&graded.review_card.id],
+        )
+        .expect("concurrent card change");
+    drop(external);
+
+    let card = &snapshot.cards[0];
+    let result = database.install_scheduler_replay(InstallSchedulerReplayInput {
+        operation: SchedulerReplayInstallOperation::Repair,
+        source_active_scheduler_config_id: snapshot.source_active_scheduler_config_id,
+        target_scheduler_config: snapshot.target_scheduler_config,
+        cards: vec![StagedSchedulerReplayCard {
+            review_card_id: card.review_card_id.clone(),
+            expected_updated_at: card.expected_updated_at,
+            expected_card_sequence: card.expected_card_sequence,
+            expected_scheduler_config_id: card.expected_scheduler_config_id.clone(),
+            install: true,
+            cache: fixture.steps[0].expected_cache.clone(),
+        }],
+    });
+    assert!(matches!(
+        result,
+        Err(DatabaseError::StaleSchedulerReplay(_))
+    ));
+}
+
+#[test]
+fn desired_retention_replay_switches_config_and_caches_together() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let initial = database
+        .create_card_content(basic_draft("front", "back", None))
+        .expect("basic card");
+    let graded = database
+        .record_grade(grade_input(&initial, &fixture.steps[0]))
+        .expect("first grade")
+        .context;
+    for desired_retention in [0.69, 0.855, 1.0] {
+        assert!(matches!(
+            database.prepare_desired_retention_replay(PrepareDesiredRetentionReplayInput {
+                desired_retention
+            }),
+            Err(DatabaseError::InvalidInput(_))
+        ));
+    }
+    assert!(matches!(
+        database.prepare_desired_retention_replay(PrepareDesiredRetentionReplayInput {
+            desired_retention: 0.9,
+        }),
+        Err(DatabaseError::InvalidInput(_))
+    ));
+    let snapshot = database
+        .prepare_desired_retention_replay(PrepareDesiredRetentionReplayInput {
+            desired_retention: 0.85,
+        })
+        .expect("desired retention replay snapshot");
+    assert!(snapshot.target_is_new);
+    assert_ne!(
+        snapshot.target_scheduler_config.id,
+        fixture.scheduler_config_id
+    );
+    assert_eq!(
+        snapshot.target_scheduler_config.config["desiredRetention"],
+        0.85
+    );
+
+    let target_id = snapshot.target_scheduler_config.id.clone();
+    let card = &snapshot.cards[0];
+    let report = database
+        .install_scheduler_replay(InstallSchedulerReplayInput {
+            operation: SchedulerReplayInstallOperation::ActivateConfig,
+            source_active_scheduler_config_id: snapshot.source_active_scheduler_config_id,
+            target_scheduler_config: snapshot.target_scheduler_config,
+            cards: vec![StagedSchedulerReplayCard {
+                review_card_id: card.review_card_id.clone(),
+                expected_updated_at: card.expected_updated_at,
+                expected_card_sequence: card.expected_card_sequence,
+                expected_scheduler_config_id: card.expected_scheduler_config_id.clone(),
+                install: true,
+                cache: fixture.steps[0].expected_cache.clone(),
+            }],
+        })
+        .expect("activate desired retention");
+    assert_eq!(
+        report.operation,
+        SchedulerReplayInstallOperation::ActivateConfig
+    );
+    assert_eq!(report.active_scheduler_config_id, target_id);
+    assert_eq!(report.installed_cards, 1);
+
+    let reloaded = database
+        .load_review_context(graded.review_card.id.clone())
+        .expect("context under new config");
+    assert_eq!(reloaded.scheduler_config.id, target_id);
+    assert_eq!(
+        reloaded.cache_scheduler_config_id.as_deref(),
+        Some(target_id.as_str())
+    );
+    assert_eq!(reloaded.scheduler_config.config["desiredRetention"], 0.85);
+    assert_eq!(
+        reloaded.review_history[0].scheduler_config_id,
+        fixture.scheduler_config_id
+    );
+}
+
+#[test]
+fn desired_retention_replay_rolls_back_config_and_caches_on_failure() {
+    let fixture = fixture();
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let initial = database
+        .create_card_content(basic_draft("front", "back", None))
+        .expect("basic card");
+    database
+        .record_grade(grade_input(&initial, &fixture.steps[0]))
+        .expect("first grade");
+    let snapshot = database
+        .prepare_desired_retention_replay(PrepareDesiredRetentionReplayInput {
+            desired_retention: 0.85,
+        })
+        .expect("desired retention replay snapshot");
+    let target_id = snapshot.target_scheduler_config.id.clone();
+
+    let external = open_existing(&paths);
+    external
+        .execute_batch(
+            "CREATE TRIGGER test_abort_scheduler_replay
+             BEFORE UPDATE OF scheduler_config_id ON review_card
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected scheduler replay failure');
+             END;",
+        )
+        .expect("scheduler replay failure trigger");
+    drop(external);
+
+    let card = &snapshot.cards[0];
+    let result = database.install_scheduler_replay(InstallSchedulerReplayInput {
+        operation: SchedulerReplayInstallOperation::ActivateConfig,
+        source_active_scheduler_config_id: snapshot.source_active_scheduler_config_id,
+        target_scheduler_config: snapshot.target_scheduler_config,
+        cards: vec![StagedSchedulerReplayCard {
+            review_card_id: card.review_card_id.clone(),
+            expected_updated_at: card.expected_updated_at,
+            expected_card_sequence: card.expected_card_sequence,
+            expected_scheduler_config_id: card.expected_scheduler_config_id.clone(),
+            install: true,
+            cache: fixture.steps[0].expected_cache.clone(),
+        }],
+    });
+    assert!(matches!(result, Err(DatabaseError::Sqlite(_))));
+
+    let external = open_existing(&paths);
+    external
+        .execute_batch("DROP TRIGGER test_abort_scheduler_replay")
+        .expect("drop scheduler replay failure trigger");
+    let active: String = external
+        .query_row(
+            "SELECT active_scheduler_config_id FROM app_settings WHERE singleton_id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .expect("active config after rollback");
+    let target_count: i64 = external
+        .query_row(
+            "SELECT count(*) FROM scheduler_config WHERE id = ?1",
+            [&target_id],
+            |row| row.get(0),
+        )
+        .expect("candidate config count after rollback");
+    assert_eq!(active, fixture.scheduler_config_id);
+    assert_eq!(target_count, 0);
 }

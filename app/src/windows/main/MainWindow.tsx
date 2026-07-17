@@ -29,6 +29,7 @@ import { CardBrowser } from './CardBrowser.tsx'
 import { Home } from './Home.tsx'
 import { invalidateHomeStats } from './home-stats-cache.ts'
 import { MainNavigation } from './MainNavigation.tsx'
+import { Settings } from './Settings.tsx'
 
 const grades = [
   { grade: 1, label: 'Again' },
@@ -44,6 +45,7 @@ const MainWindowMode = {
   Review: 'REVIEW',
   Browse: 'BROWSE',
   Create: 'CREATE',
+  Settings: 'SETTINGS',
 } as const
 
 type MainWindowMode =
@@ -54,6 +56,8 @@ export function MainWindow() {
   const [browseNavigationToken, setBrowseNavigationToken] = useState(0)
   const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
   const [homeRefreshToken, setHomeRefreshToken] = useState(0)
+  const [settingsNavigationToken, setSettingsNavigationToken] = useState(0)
+  const [settingsBusy, setSettingsBusy] = useState(false)
   const refreshHomeStats = useCallback(() => {
     invalidateHomeStats()
     setHomeRefreshToken((value) => value + 1)
@@ -239,19 +243,72 @@ export function MainWindow() {
     setBrowseNavigationToken((value) => value + 1)
   }, [])
   const showReview = useCallback(() => {
+    if (settingsBusy) {
+      return
+    }
     setMode(MainWindowMode.Review)
     void controller.refresh()
-  }, [controller])
+  }, [controller, settingsBusy])
+  const showSettings = useCallback(() => {
+    if (settingsBusy) {
+      return
+    }
+    setMode(MainWindowMode.Settings)
+    setSettingsNavigationToken((value) => value + 1)
+  }, [settingsBusy])
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.metaKey &&
+        !event.altKey &&
+        !event.ctrlKey &&
+        !event.shiftKey &&
+        event.code === 'Comma'
+      ) {
+        event.preventDefault()
+        showSettings()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+
+    let disposed = false
+    const listeners = Promise.all([
+      listen('open-settings', showSettings),
+      listen('open-review', showReview),
+    ]).then((unlisteners) => {
+      if (disposed) {
+        unlisteners.forEach((unlisten) => unlisten())
+        return []
+      }
+      return unlisteners
+    })
+    return () => {
+      disposed = true
+      window.removeEventListener('keydown', handleKeyDown)
+      void listeners.then((unlisteners) => {
+        unlisteners.forEach((unlisten) => unlisten())
+      })
+    }
+  }, [showReview, showSettings])
+
+  const schedulingChanged = useCallback(() => {
+    void controller.refresh()
+    refreshHomeStats()
+    setBrowseRefreshToken((value) => value + 1)
+  }, [controller, refreshHomeStats])
 
   return (
     <main
-      className={`main-window${mode === MainWindowMode.Home ? ' main-window-home' : ''}${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}`}
+      className={`main-window${mode === MainWindowMode.Home ? ' main-window-home' : ''}${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}${mode === MainWindowMode.Settings ? ' main-window-settings' : ''}`}
     >
       <header className="main-header">
         <MainNavigation
+          disabled={settingsBusy}
           onAdd={showCreate}
           onBrowse={showBrowse}
           onHome={showHome}
+          onSettings={showSettings}
         />
       </header>
 
@@ -281,6 +338,13 @@ export function MainWindow() {
         />
       ) : mode === MainWindowMode.Review ? (
         <ReviewContent controller={controller} state={state} />
+      ) : mode === MainWindowMode.Settings ? (
+        <Settings
+          navigationToken={settingsNavigationToken}
+          onBusyChange={setSettingsBusy}
+          onSchedulingChanged={schedulingChanged}
+          reviewSaveInFlight={state.phase === ReviewControllerPhase.Submitting}
+        />
       ) : null}
     </main>
   )

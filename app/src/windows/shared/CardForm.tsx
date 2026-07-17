@@ -487,7 +487,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
                 event.preventDefault()
               }
             }}
-            placeholder="Book, article, lecture…"
+            placeholder="URL, book title, lecture…"
             type="text"
             value={source}
           />

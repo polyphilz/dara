@@ -5,25 +5,29 @@ use crate::search::{SearchCardContentResult, SearchService, SemanticSearchStatus
 
 use super::{
     CardContentDraft, CardContentListItem, Database, DatabaseError, DeleteCardContentInput,
-    HomeStats, LoadHomeStatsInput, MediaMaintenanceReport, RecordGradeInput, ReviewContext,
-    ReviewMutationResult, ReviewQueueSelection, SearchCardContentInput, SearchMaintenanceOperation,
-    SearchMaintenanceReport, SelectNextReviewCardInput, SetCardContentSuspendedInput,
-    UndoLastGradeInput, UpdateCardContentInput, MEDIA_ORPHAN_GRACE_MILLIS,
+    HomeStats, InstallSchedulerReplayInput, LoadHomeStatsInput, MediaMaintenanceReport,
+    PrepareDesiredRetentionReplayInput, RecordGradeInput, ReviewContext, ReviewMutationResult,
+    ReviewQueueSelection, SchedulerReplayInstallReport, SchedulerReplaySnapshot,
+    SearchCardContentInput, SearchMaintenanceOperation, SearchMaintenanceReport,
+    SelectNextReviewCardInput, SetCardContentSuspendedInput, UndoLastGradeInput,
+    UpdateCardContentInput, MEDIA_ORPHAN_GRACE_MILLIS,
 };
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommandError {
-    code: CommandErrorCode,
-    message: String,
+    pub(crate) code: CommandErrorCode,
+    pub(crate) message: String,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-enum CommandErrorCode {
+pub(crate) enum CommandErrorCode {
     InvalidInput,
     NotFound,
     StaleReviewContext,
+    StaleSchedulerReplay,
+    StaleSettings,
     StaleCardContent,
     IdempotencyConflict,
     DatabaseUnavailable,
@@ -38,6 +42,8 @@ impl From<DatabaseError> for CommandError {
             DatabaseError::InvalidInput(_) => CommandErrorCode::InvalidInput,
             DatabaseError::NotFound { .. } => CommandErrorCode::NotFound,
             DatabaseError::StaleReviewContext(_) => CommandErrorCode::StaleReviewContext,
+            DatabaseError::StaleSchedulerReplay(_) => CommandErrorCode::StaleSchedulerReplay,
+            DatabaseError::StaleSettings(_) => CommandErrorCode::StaleSettings,
             DatabaseError::StaleCardContent(_) => CommandErrorCode::StaleCardContent,
             DatabaseError::IdempotencyConflict { .. } => CommandErrorCode::IdempotencyConflict,
             DatabaseError::WriterUnavailable => CommandErrorCode::DatabaseUnavailable,
@@ -59,9 +65,16 @@ impl CommandError {
         self.message = format!("{}: {context}", self.message);
         self
     }
+
+    pub(crate) fn invalid_input(message: impl Into<String>) -> Self {
+        Self {
+            code: CommandErrorCode::InvalidInput,
+            message: message.into(),
+        }
+    }
 }
 
-type CommandResult<T> = std::result::Result<T, CommandError>;
+pub(crate) type CommandResult<T> = std::result::Result<T, CommandError>;
 
 #[tauri::command]
 pub async fn create_card_content(
@@ -188,7 +201,33 @@ pub async fn load_home_stats(
     run_writer(move || client.load_home_stats(input)).await
 }
 
-async fn run_writer<T, F>(operation: F) -> CommandResult<T>
+#[tauri::command]
+pub async fn load_scheduler_replay_snapshot(
+    database: State<'_, Database>,
+) -> CommandResult<SchedulerReplaySnapshot> {
+    let client = database.client();
+    run_writer(move || client.load_scheduler_replay_snapshot()).await
+}
+
+#[tauri::command]
+pub async fn prepare_desired_retention_replay(
+    database: State<'_, Database>,
+    input: PrepareDesiredRetentionReplayInput,
+) -> CommandResult<SchedulerReplaySnapshot> {
+    let client = database.client();
+    run_writer(move || client.prepare_desired_retention_replay(input)).await
+}
+
+#[tauri::command]
+pub async fn install_scheduler_replay(
+    database: State<'_, Database>,
+    input: InstallSchedulerReplayInput,
+) -> CommandResult<SchedulerReplayInstallReport> {
+    let client = database.client();
+    run_writer(move || client.install_scheduler_replay(input)).await
+}
+
+pub(crate) async fn run_writer<T, F>(operation: F) -> CommandResult<T>
 where
     T: Send + 'static,
     F: FnOnce() -> super::Result<T> + Send + 'static,

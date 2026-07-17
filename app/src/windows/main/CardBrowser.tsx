@@ -273,7 +273,6 @@ export function CardBrowser({
 
   const submitSearch = () => {
     if (!query.trim()) {
-      clearSearch()
       return
     }
     setSubmittedQuery(query)

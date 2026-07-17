@@ -3,7 +3,7 @@ import type {
   ReviewCardCache,
   ReviewCardState,
   ReviewFact,
-  SchedulerConfigV1,
+  SchedulerConfigRecord,
   SchedulerLogV1,
 } from '../scheduling/index.ts'
 import type { ImageRecord } from '../media/image-reference.ts'
@@ -186,10 +186,6 @@ export interface ReviewCardSummary {
   status: ReviewCardStatus
   variantKey: string
   updatedAt: number
-}
-
-export interface SchedulerConfigRecord extends SchedulerConfigV1 {
-  id: string
 }
 
 export interface PersistedReviewFact {

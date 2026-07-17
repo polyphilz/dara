@@ -121,7 +121,64 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 5);
+    assert_eq!(history_rows, 6);
+}
+
+#[test]
+fn settings_migration_adds_defaults_to_an_existing_database() {
+    let (_directory, paths) = test_paths();
+    create_identified_unmigrated_pair(&paths);
+    let mut main = open_existing(&paths.main, DatabaseKind::Main);
+    let first_five = migrations::main_runner()
+        .get_migrations()
+        .iter()
+        .filter(|migration| migration.version() <= 5)
+        .cloned()
+        .collect::<Vec<_>>();
+    Runner::new(&first_five)
+        .set_grouped(true)
+        .run(&mut main)
+        .expect("pre-settings migrations");
+    main.execute(
+        "UPDATE app_settings SET updated_at = updated_at + 1 WHERE singleton_id = 1",
+        [],
+    )
+    .expect("existing application state");
+
+    migrations::run_main(&mut main).expect("settings migration");
+
+    let preferences = main
+        .query_row(
+            "SELECT revision, appearance, zoom_percent, legacy_zoom_migrated
+             FROM user_preferences WHERE singleton_id = 1",
+            [],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, bool>(3)?,
+                ))
+            },
+        )
+        .expect("migrated preferences");
+    assert_eq!(preferences, (1, "SYSTEM".into(), 100, false));
+    assert_eq!(
+        main.query_row("SELECT count(*) FROM keyboard_binding", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .expect("default keyboard bindings"),
+        2
+    );
+    assert_eq!(
+        main.query_row(
+            "SELECT updated_at FROM app_settings WHERE singleton_id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("preserved application state"),
+        1_783_828_800_001
+    );
 }
 
 #[test]
@@ -683,7 +740,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 6, 'future', applied_on, '0'
+         SELECT 7, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -704,17 +761,17 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V6__grouped_good.sql",
+            "V7__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
-        .expect("V5 migration"),
+        .expect("V7 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V7__grouped_failure.sql",
+            "V8__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
-        .expect("V6 migration"),
+        .expect("V8 migration"),
     );
     let runner = Runner::new(&all).set_grouped(true);
     assert!(runner.run(&mut main).is_err());
@@ -723,9 +780,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V5")
+            .expect("V6")
             .version(),
-        5
+        6
     );
 }
 
@@ -769,7 +826,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(5));
+    assert_eq!(launch.manifest.main.migration_head, Some(6));
     drop(database);
 
     let base = launch.manifest.created_at;

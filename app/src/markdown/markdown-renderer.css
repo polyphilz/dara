@@ -210,38 +210,72 @@
   color: #a63232;
 }
 
+:root[data-appearance='DARK'] .dara-markdown code,
+:root[data-appearance='DARK'] .dara-markdown pre,
+:root[data-appearance='DARK'] .dara-markdown th {
+  background: rgba(255, 255, 255, 0.065);
+}
+
+:root[data-appearance='DARK'] .dara-markdown .hljs-comment,
+:root[data-appearance='DARK'] .dara-markdown .hljs-quote {
+  color: #aaa49a;
+}
+
+:root[data-appearance='DARK'] .dara-markdown .hljs-keyword,
+:root[data-appearance='DARK'] .dara-markdown .hljs-selector-tag,
+:root[data-appearance='DARK'] .dara-markdown .hljs-type {
+  color: #dc91cc;
+}
+
+:root[data-appearance='DARK'] .dara-markdown .hljs-string,
+:root[data-appearance='DARK'] .dara-markdown .hljs-attr,
+:root[data-appearance='DARK'] .dara-markdown .hljs-template-tag {
+  color: #e0aa6d;
+}
+
+:root[data-appearance='DARK'] .dara-markdown .hljs-number,
+:root[data-appearance='DARK'] .dara-markdown .hljs-literal,
+:root[data-appearance='DARK'] .dara-markdown .hljs-built_in {
+  color: #8fc3ea;
+}
+
+:root[data-appearance='DARK'] .dara-markdown .hljs-title,
+:root[data-appearance='DARK'] .dara-markdown .hljs-function {
+  color: #e8a486;
+}
+
 @media (prefers-color-scheme: dark) {
-  .dara-markdown code,
-  .dara-markdown pre,
-  .dara-markdown th {
+  :root:not([data-appearance='LIGHT']) .dara-markdown code,
+  :root:not([data-appearance='LIGHT']) .dara-markdown pre,
+  :root:not([data-appearance='LIGHT']) .dara-markdown th {
     background: rgba(255, 255, 255, 0.065);
   }
 
-  .dara-markdown .hljs-comment,
-  .dara-markdown .hljs-quote {
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-comment,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-quote {
     color: #aaa49a;
   }
 
-  .dara-markdown .hljs-keyword,
-  .dara-markdown .hljs-selector-tag,
-  .dara-markdown .hljs-type {
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-keyword,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-selector-tag,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-type {
     color: #dc91cc;
   }
 
-  .dara-markdown .hljs-string,
-  .dara-markdown .hljs-attr,
-  .dara-markdown .hljs-template-tag {
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-string,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-attr,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-template-tag {
     color: #e0aa6d;
   }
 
-  .dara-markdown .hljs-number,
-  .dara-markdown .hljs-literal,
-  .dara-markdown .hljs-built_in {
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-number,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-literal,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-built_in {
     color: #8fc3ea;
   }
 
-  .dara-markdown .hljs-title,
-  .dara-markdown .hljs-function {
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-title,
+  :root:not([data-appearance='LIGHT']) .dara-markdown .hljs-function {
     color: #e8a486;
   }
 }
