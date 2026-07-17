@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   ingestImageFile: vi.fn(),
   listen: vi.fn(),
   renewMediaLease: vi.fn(),
+  setQuickAddFileDialogOpen: vi.fn(),
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
@@ -29,6 +30,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('../../../src/lib/native.ts', () => ({
   native: {
     dismissQuickAdd: mocks.dismissQuickAdd,
+    setQuickAddFileDialogOpen: mocks.setQuickAddFileDialogOpen,
   },
 }))
 
@@ -55,6 +57,33 @@ beforeEach(() => {
   mocks.ingestClipboardImage.mockReset()
   mocks.ingestImageFile.mockReset()
   mocks.renewMediaLease.mockResolvedValue(0)
+  mocks.setQuickAddFileDialogOpen.mockResolvedValue(undefined)
+})
+
+test('keeps Quick Add open while choosing an occlusion image file', async () => {
+  const image = {
+    id: '01980c8e-6c00-7000-8000-000000000301',
+    mimeType: 'image/webp',
+    naturalHeight: 400,
+    naturalWidth: 800,
+    ocrStatus: ImageOcrStatus.Pending,
+  }
+  mocks.ingestImageFile.mockResolvedValue(image)
+  const { container, getByRole } = render(<QuickAddWindow />)
+  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.mouseDown(getByRole('option', { name: 'Image occlusion' }))
+  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+
+  fireEvent.click(input)
+  expect(mocks.setQuickAddFileDialogOpen).toHaveBeenCalledWith(true)
+
+  const file = new File(['png'], 'diagram.png', { type: 'image/png' })
+  fireEvent.change(input, { target: { files: [file] } })
+  expect(mocks.setQuickAddFileDialogOpen).toHaveBeenLastCalledWith(false)
+  expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
+  await waitFor(() =>
+    expect(getByRole('application', { name: 'Editable image masks' })).toBeTruthy(),
+  )
 })
 
 test('focuses Front and follows the logical editor and form focus order', async () => {

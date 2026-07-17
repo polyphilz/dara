@@ -5,7 +5,7 @@ use super::{
     settings::{Appearance, KeyboardBindingInput},
     AdoptLegacyZoomInput, DaraCommand, Database, DatabaseError, DatabasePaths,
     InitializationOptions, SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput,
-    DEFAULT_QUICK_ADD_ACCELERATOR, DEFAULT_REVIEW_ACCELERATOR,
+    DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
 };
 
 fn test_database() -> (TempDir, Database) {
@@ -37,7 +37,7 @@ fn settings_defaults_are_complete_and_typed() {
             && binding.accelerator == DEFAULT_QUICK_ADD_ACCELERATOR
     }));
     assert!(settings.keyboard_bindings.iter().any(|binding| {
-        binding.command == DaraCommand::Review && binding.accelerator == DEFAULT_REVIEW_ACCELERATOR
+        binding.command == DaraCommand::Home && binding.accelerator == DEFAULT_HOME_ACCELERATOR
     }));
 }
 
@@ -110,7 +110,7 @@ fn keyboard_bindings_are_replaced_as_a_complete_conflict_free_set() {
                     accelerator: "control+alt+super+KeyQ".into(),
                 },
                 KeyboardBindingInput {
-                    command: DaraCommand::Review,
+                    command: DaraCommand::Home,
                     accelerator: "control+alt+super+KeyW".into(),
                 },
             ],
@@ -126,7 +126,7 @@ fn keyboard_bindings_are_replaced_as_a_complete_conflict_free_set() {
                 accelerator: "control+alt+super+KeyX".into(),
             },
             KeyboardBindingInput {
-                command: DaraCommand::Review,
+                command: DaraCommand::Home,
                 accelerator: "control+alt+super+KeyX".into(),
             },
         ],

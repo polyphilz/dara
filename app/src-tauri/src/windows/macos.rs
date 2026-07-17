@@ -20,7 +20,7 @@ use crate::database::{
     commands::{run_writer, CommandError, CommandResult},
     validate_complete_bindings, AdoptLegacyZoomInput, DaraCommand, Database, KeyboardBinding,
     SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
-    DEFAULT_QUICK_ADD_ACCELERATOR, DEFAULT_REVIEW_ACCELERATOR,
+    DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
 };
 
 const MAIN_LABEL: &str = "main";
@@ -31,7 +31,7 @@ const VIEW_MENU_TEXT: &str = "View";
 const SETTINGS_MENU_ID: &str = "open-settings";
 const SETTINGS_CHANGED_EVENT: &str = "settings-changed";
 const OPEN_SETTINGS_EVENT: &str = "open-settings";
-const OPEN_REVIEW_EVENT: &str = "open-review";
+const OPEN_HOME_EVENT: &str = "open-home";
 const ZOOM_COMMAND_EVENT: &str = "app-zoom-command";
 const BROWSE_COMMAND_EVENT: &str = "browse-command";
 
@@ -118,7 +118,7 @@ impl TrayMenuAction {
 pub struct SpikeStatus {
     quick_add_ready: bool,
     quick_add_shortcut: String,
-    review_shortcut: String,
+    home_shortcut: String,
     shortcut_errors: Vec<String>,
 }
 
@@ -127,7 +127,7 @@ impl Default for SpikeStatus {
         Self {
             quick_add_ready: false,
             quick_add_shortcut: shortcut_label(DEFAULT_QUICK_ADD_ACCELERATOR),
-            review_shortcut: shortcut_label(DEFAULT_REVIEW_ACCELERATOR),
+            home_shortcut: shortcut_label(DEFAULT_HOME_ACCELERATOR),
             shortcut_errors: Vec::new(),
         }
     }
@@ -152,9 +152,16 @@ pub struct SetLaunchAtLoginInput {
 #[derive(Default)]
 struct FocusContext {
     dismissing: bool,
+    file_dialog_open: bool,
     previous_external_pid: Option<i32>,
     quick_add_visible: bool,
     restore_main: bool,
+}
+
+impl FocusContext {
+    const fn should_dismiss_quick_add_on_focus_loss(&self) -> bool {
+        self.quick_add_visible && !self.dismissing && !self.file_dialog_open
+    }
 }
 
 #[derive(Default)]
@@ -415,14 +422,12 @@ fn register_binding(app: &AppHandle, binding: &KeyboardBinding) -> Result<(), St
                 }
             })
             .map_err(|error| error.to_string()),
-        DaraCommand::Review => app
+        DaraCommand::Home => app
             .global_shortcut()
             .on_shortcut(shortcut, |app, _shortcut, event| {
                 if event.state() == ShortcutState::Pressed {
-                    if let Err(error) =
-                        dispatch_to_main_thread(app, "show review", show_review_inner)
-                    {
-                        log::error!("review shortcut failed: {error}");
+                    if let Err(error) = dispatch_to_main_thread(app, "show home", show_home_inner) {
+                        log::error!("home shortcut failed: {error}");
                     }
                 }
             })
@@ -449,9 +454,9 @@ fn update_shortcut_status(
     status.quick_add_shortcut = binding_for(bindings, DaraCommand::QuickAdd)
         .map(|binding| shortcut_label(&binding.accelerator))
         .unwrap_or_else(|| shortcut_label(DEFAULT_QUICK_ADD_ACCELERATOR));
-    status.review_shortcut = binding_for(bindings, DaraCommand::Review)
+    status.home_shortcut = binding_for(bindings, DaraCommand::Home)
         .map(|binding| shortcut_label(&binding.accelerator))
-        .unwrap_or_else(|| shortcut_label(DEFAULT_REVIEW_ACCELERATOR));
+        .unwrap_or_else(|| shortcut_label(DEFAULT_HOME_ACCELERATOR));
     status.shortcut_errors = shortcut_errors;
 }
 
@@ -827,6 +832,12 @@ pub fn dismiss_quick_add(app: AppHandle) -> Result<(), String> {
     })
 }
 
+#[tauri::command]
+pub fn set_quick_add_file_dialog_open(state: State<'_, SpikeState>, open: bool) {
+    let mut context = state.focus.lock().expect("focus context poisoned");
+    context.file_dialog_open = open && context.quick_add_visible;
+}
+
 fn dismiss_quick_add_inner(app: &AppHandle, focus: DismissFocus) -> Result<(), String> {
     let target = {
         let state = app.state::<SpikeState>();
@@ -835,6 +846,7 @@ fn dismiss_quick_add_inner(app: &AppHandle, focus: DismissFocus) -> Result<(), S
             return Ok(());
         }
         context.dismissing = true;
+        context.file_dialog_open = false;
         context.quick_add_visible = false;
         RestoreTarget {
             external_pid: context.previous_external_pid.take(),
@@ -911,10 +923,10 @@ fn show_settings_inner(app: &AppHandle) -> Result<(), String> {
         .map_err(|error| format!("could not open Settings: {error}"))
 }
 
-fn show_review_inner(app: &AppHandle) -> Result<(), String> {
+fn show_home_inner(app: &AppHandle) -> Result<(), String> {
     show_main_inner(app)?;
-    app.emit_to(MAIN_LABEL, OPEN_REVIEW_EVENT, ())
-        .map_err(|error| format!("could not open Review: {error}"))
+    app.emit_to(MAIN_LABEL, OPEN_HOME_EVENT, ())
+        .map_err(|error| format!("could not open Home: {error}"))
 }
 
 fn activate_main_window(app: &AppHandle) -> Result<(), String> {
@@ -1003,7 +1015,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             let should_dismiss = {
                 let state = window.app_handle().state::<SpikeState>();
                 let context = state.focus.lock().expect("focus context poisoned");
-                context.quick_add_visible && !context.dismissing
+                context.should_dismiss_quick_add_on_focus_loss()
             };
             if should_dismiss {
                 if let Err(error) =
@@ -1019,5 +1031,22 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::FocusContext;
+
+    #[test]
+    fn quick_add_stays_open_while_its_file_dialog_has_focus() {
+        let mut context = FocusContext {
+            quick_add_visible: true,
+            ..FocusContext::default()
+        };
+        assert!(context.should_dismiss_quick_add_on_focus_loss());
+
+        context.file_dialog_open = true;
+        assert!(!context.should_dismiss_quick_add_on_focus_loss());
     }
 }

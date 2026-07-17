@@ -4,6 +4,12 @@ import { native } from '../../lib/native.ts'
 import { CardForm, type CardFormHandle } from '../shared/CardForm.tsx'
 import { CardFormVariant } from '../shared/card-form.ts'
 
+function setFileDialogOpen(open: boolean) {
+  void native.setQuickAddFileDialogOpen(open).catch((cause: unknown) => {
+    console.error('Could not update Quick Add file-dialog state', cause)
+  })
+}
+
 export function QuickAddWindow() {
   const formRef = useRef<CardFormHandle>(null)
 
@@ -55,6 +61,7 @@ export function QuickAddWindow() {
       <div className="quick-add-card">
         <CardForm
           onCancel={() => native.dismissQuickAdd()}
+          onFileDialogOpenChange={setFileDialogOpen}
           onSaved={async () => {
             await emit('card-created').catch((cause: unknown) => {
               console.error(

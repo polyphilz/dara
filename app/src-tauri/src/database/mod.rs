@@ -44,8 +44,8 @@ pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
 pub(crate) use settings::validate_complete_bindings;
 pub use settings::{
     AdoptLegacyZoomInput, DaraCommand, KeyboardBinding, SetAppearanceInput,
-    SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings, DEFAULT_QUICK_ADD_ACCELERATOR,
-    DEFAULT_REVIEW_ACCELERATOR,
+    SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings, DEFAULT_HOME_ACCELERATOR,
+    DEFAULT_QUICK_ADD_ACCELERATOR,
 };
 pub use stats::{HomeStats, LoadHomeStatsInput};
 pub use writer::DatabaseClient;

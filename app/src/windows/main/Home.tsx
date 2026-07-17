@@ -15,6 +15,7 @@ import {
 } from './home-stats-cache.ts'
 
 const ACTIVITY_DAY_COUNT = 365
+const ACTIVITY_GRAPH_SCALE = 720 / 739
 const MAX_TIMER_DELAY = 2_147_000_000
 const SYSTEM_DARK_COLOR_SCHEME_QUERY = '(prefers-color-scheme: dark)'
 const ACTIVITY_THEME = {
@@ -97,18 +98,15 @@ export const Home = memo(function Home({
 
   return (
     <section className="home-screen">
-      <section aria-labelledby="review-activity-title" className="home-activity">
-        <div className="home-section-heading">
-          <h1 id="review-activity-title">Review activity</h1>
-        </div>
+      <section aria-label="Review activity" className="home-activity">
         {activity ? (
           <ActivityCalendar
-            blockMargin={3}
-            blockRadius={3}
-            blockSize={10}
+            blockMargin={3 * ACTIVITY_GRAPH_SCALE}
+            blockRadius={3 * ACTIVITY_GRAPH_SCALE}
+            blockSize={11 * ACTIVITY_GRAPH_SCALE}
             colorScheme={calendarColorScheme}
             data={activity}
-            fontSize={11}
+            fontSize={12 * ACTIVITY_GRAPH_SCALE}
             labels={{
               legend: { less: 'Less', more: 'More' },
             }}

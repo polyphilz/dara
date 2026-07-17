@@ -4,6 +4,7 @@ body {
 }
 
 .main-window {
+  --wide-workspace-width: 1180px;
   width: min(760px, 100%);
   margin: 0 auto;
   padding: 30px 36px 48px;
@@ -14,15 +15,33 @@ body {
 }
 
 .main-window-creating {
-  width: min(960px, 100%);
+  width: min(var(--wide-workspace-width), 100%);
 }
 
 .main-window-browsing {
-  width: min(1180px, 100%);
+  display: flex;
+  height: 100vh;
+  width: min(var(--wide-workspace-width), 100%);
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.main-window-browsing > .main-header {
+  flex: 0 0 auto;
+}
+
+.main-window-browsing > .card-browser,
+.main-window-browsing > .basic-card-form-main {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.main-window-browsing > .basic-card-form-main {
+  overflow-y: auto;
 }
 
 .main-window-settings {
-  width: min(900px, 100%);
+  width: min(var(--wide-workspace-width), 100%);
 }
 
 .card-detail-actions,
@@ -80,9 +99,20 @@ body {
 }
 
 .settings-screen {
-  width: min(780px, 100%);
-  margin: 42px auto 0;
+  width: 100%;
+  margin: 30px auto 0;
   padding-bottom: 44px;
+}
+
+.main-window .settings-load-error button,
+.main-window .setting-section-footer button,
+.main-window .retention-actions button,
+.main-window .diagnostic-action button,
+.main-window .settings-dialog-actions button {
+  padding: var(--action-button-padding);
+  border-radius: var(--action-button-radius);
+  font-size: var(--action-button-font-size);
+  font-weight: 700;
 }
 
 .settings-loading {
@@ -213,10 +243,13 @@ body {
 .setting-section-footer button,
 .retention-actions .quiet-button,
 .zoom-stepper .zoom-reset {
-  padding: 5px 8px;
   border-color: transparent;
   color: var(--muted);
   background: transparent;
+}
+
+.zoom-stepper .zoom-reset {
+  padding: 5px 8px;
   font-size: 10px;
 }
 
@@ -371,11 +404,6 @@ body {
   margin-top: 18px;
 }
 
-.main-window .retention-actions button {
-  padding: 6px 9px;
-  font-size: 10px;
-}
-
 .retention-actions > button:first-child {
   color: #fff;
   border-color: var(--accent);
@@ -412,7 +440,9 @@ body {
   gap: 6px;
 }
 
-.main-window .diagnostic-action button {
+.main-window .card-detail-actions button,
+.main-window .delete-confirmation button,
+.main-window .card-browser-load-more {
   padding: 6px 9px;
   font-size: 10px;
 }
@@ -517,19 +547,6 @@ body {
 
 .home-activity {
   margin-top: 62px;
-}
-
-.home-section-heading {
-  width: min(745px, 100%);
-  margin: 0 auto 17px;
-  padding-left: 45px;
-}
-
-.home-section-heading h1 {
-  margin: 0;
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
 }
 
 .home-activity .react-activity-calendar {
@@ -768,19 +785,22 @@ body {
 .card-browser {
   display: grid;
   grid-template-columns: minmax(270px, 0.78fr) minmax(420px, 1.5fr);
-  min-height: 650px;
-  margin-top: 20px;
+  min-height: 0;
+  margin-top: 30px;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface);
+  font-size: 11px;
   box-shadow: 0 18px 50px rgba(24, 23, 22, 0.06);
 }
 
 .card-browser-sidebar {
   display: flex;
+  min-height: 0;
   min-width: 0;
   flex-direction: column;
+  overflow: hidden;
   border-right: 1px solid var(--line);
   background: color-mix(in srgb, var(--surface) 68%, var(--accent-soft));
 }
@@ -789,17 +809,17 @@ body {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  margin: 14px 14px 8px;
-  padding: 8px 10px;
+  gap: 6px;
+  margin: 10px 10px 6px;
+  padding: 6px 8px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 7px;
   background: var(--surface);
 }
 
 .card-search > span {
   color: var(--muted);
-  font-size: 18px;
+  font-size: 14px;
 }
 
 .card-search input {
@@ -809,6 +829,7 @@ body {
   outline: 0;
   color: var(--ink);
   background: transparent;
+  font-size: 11px;
 }
 
 .card-search kbd,
@@ -876,15 +897,19 @@ body {
 
 .card-result-list {
   flex: 1;
-  overflow: auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 0 8px 10px;
+  scrollbar-width: thin;
 }
 
 .main-window .card-result {
   display: grid;
   width: 100%;
-  gap: 8px;
-  padding: 12px 10px;
+  gap: 5px;
+  padding: 9px 8px;
   border-color: transparent;
   border-radius: 9px;
   text-align: left;
@@ -912,7 +937,7 @@ body {
 
 .card-result-title {
   overflow: hidden;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   line-height: 1.35;
   text-overflow: ellipsis;
@@ -925,7 +950,7 @@ body {
   align-items: center;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
 }
 
 .suspended-badge {
@@ -937,9 +962,9 @@ body {
 }
 
 .card-result-empty {
-  padding: 35px 18px;
+  padding: 28px 14px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 10px;
   text-align: center;
 }
 
@@ -950,17 +975,22 @@ body {
 
 .card-browser-detail {
   position: relative;
+  display: flex;
+  min-height: 0;
   min-width: 0;
+  flex-direction: column;
+  overflow: hidden;
   background: var(--surface);
 }
 
 .card-detail-toolbar {
   display: flex;
-  min-height: 60px;
+  min-height: 48px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 12px 18px;
+  gap: 12px;
+  padding: 9px 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1005,14 +1035,15 @@ body {
 
 .delete-confirmation {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 11px 18px;
+  padding: 8px 12px;
   border-bottom: 1px solid color-mix(in srgb, #a63232 24%, var(--line));
   color: #8e2f2f;
   background: color-mix(in srgb, #a63232 7%, var(--surface));
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .delete-confirmation > div {
@@ -1021,8 +1052,14 @@ body {
 
 .card-detail-content {
   display: grid;
-  gap: 26px;
-  padding: 32px;
+  min-height: 0;
+  flex: 1 1 auto;
+  gap: 20px;
+  padding: 22px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .card-detail-content > section {
@@ -1030,7 +1067,7 @@ body {
 }
 
 .card-detail-content > section + section {
-  padding-top: 26px;
+  padding-top: 20px;
   border-top: 1px solid var(--line);
 }
 
@@ -1038,7 +1075,7 @@ body {
   display: block;
   margin-bottom: 10px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 750;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -1046,6 +1083,11 @@ body {
 
 .card-detail-content .source {
   margin-top: 0;
+  font-size: 10px;
+}
+
+.card-detail-content .dara-markdown {
+  font-size: 14px;
 }
 
 .review-card-siblings {
@@ -1059,7 +1101,7 @@ body {
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 54px;
+  min-height: 48px;
   padding: 8px 10px;
   border-color: var(--line);
   background: color-mix(in srgb, var(--surface) 82%, var(--accent-soft));
@@ -1088,7 +1130,7 @@ body {
 .review-card-sibling-name {
   min-width: 0;
   overflow: hidden;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1121,7 +1163,8 @@ body {
 
 .card-browser-placeholder {
   display: grid;
-  min-height: 500px;
+  min-height: 0;
+  flex: 1 1 auto;
   place-content: center;
   padding: 40px;
   color: var(--muted);
@@ -1131,13 +1174,13 @@ body {
 .card-browser-placeholder h2 {
   margin: 0;
   color: var(--ink);
-  font-size: 20px;
+  font-size: 14px;
 }
 
 .card-browser-placeholder p {
   max-width: 320px;
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .card-browser-error {
@@ -1151,7 +1194,7 @@ body {
   border-radius: 8px;
   color: #a63232;
   background: var(--surface);
-  font-size: 12px;
+  font-size: 10px;
   box-shadow: 0 5px 20px rgba(24, 23, 22, 0.08);
 }
 

@@ -54,6 +54,7 @@ pub fn run() {
             windows::macos::set_appearance,
             windows::macos::set_keyboard_bindings,
             windows::macos::set_launch_at_login,
+            windows::macos::set_quick_add_file_dialog_open,
             windows::macos::set_zoom_percent,
             windows::macos::adopt_legacy_zoom,
             windows::macos::show_main,

@@ -375,15 +375,15 @@ export function Settings({
         <SettingRow
           control={
             <DaraShortcutRecorder
-              accelerator={acceleratorFor(snapshot.keyboardBindings, DaraCommand.Review)}
+              accelerator={acceleratorFor(snapshot.keyboardBindings, DaraCommand.Home)}
               disabled={controlsDisabled}
-              label="Review shortcut"
-              onCapture={(accelerator) => setBinding(DaraCommand.Review, accelerator)}
+              label="Home shortcut"
+              onCapture={(accelerator) => setBinding(DaraCommand.Home, accelerator)}
               resetToken={shortcutResetToken}
             />
           }
-          description="Bring Dara forward and enter Review."
-          label="Review"
+          description="Bring Dara forward and show Home."
+          label="Home"
         />
         {snapshot.shortcutErrors.map((error) => (
           <p className="setting-inline-error" key={error} role="alert">{error}</p>

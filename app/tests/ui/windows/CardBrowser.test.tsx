@@ -289,6 +289,28 @@ test('does not submit an empty search on Enter', async () => {
   expect(mocks.searchCardContent).toHaveBeenCalledTimes(1)
 })
 
+test('keeps the card list position while opening each selected card at the top', async () => {
+  mocks.searchCardContent.mockResolvedValue(
+    searchResult([activeItem, clozeItem]),
+  )
+  const { container, getAllByRole, getByText } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+  await waitFor(() => expect(getByText('Why is copper conductive?')).toBeTruthy())
+  const resultList = container.querySelector<HTMLElement>('.card-result-list')
+  const detail = container.querySelector<HTMLElement>('.card-detail-content')
+  if (!resultList || !detail) {
+    throw new Error('Browse scroll regions were not rendered')
+  }
+  resultList.scrollTop = 120
+  detail.scrollTop = 80
+
+  fireEvent.click(getAllByRole('option')[1]!)
+
+  expect(resultList.scrollTop).toBe(120)
+  expect(detail.scrollTop).toBe(0)
+})
+
 test('clearing a submitted query immediately restores the all-cards view', async () => {
   const { getByLabelText, getByText } = render(
     <CardBrowser onQueueChanged={vi.fn()} />,

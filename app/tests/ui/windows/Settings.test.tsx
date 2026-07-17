@@ -165,8 +165,8 @@ function settingsFixture(): SettingsFixture {
         command: DaraCommand.QuickAdd,
       },
       {
-        accelerator: 'control+alt+super+KeyR',
-        command: DaraCommand.Review,
+        accelerator: 'control+alt+super+KeyH',
+        command: DaraCommand.Home,
       },
     ],
     launchAtLogin: false,

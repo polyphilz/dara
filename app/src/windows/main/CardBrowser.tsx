@@ -67,6 +67,7 @@ export function CardBrowser({
   refreshToken = 0,
 }: CardBrowserProps) {
   const searchRef = useRef<HTMLInputElement>(null)
+  const detailContentRef = useRef<HTMLElement>(null)
   const resultRefs = useRef(new Map<string, HTMLButtonElement>())
   const requestId = useRef(0)
   const [query, setQuery] = useState('')
@@ -124,6 +125,12 @@ export function CardBrowser({
         : (reviewCards[0]?.id ?? null),
     )
   }, [reviewCards])
+
+  useEffect(() => {
+    if (detailContentRef.current) {
+      detailContentRef.current.scrollTop = 0
+    }
+  }, [selectedId])
 
   useEffect(() => {
     if (searchPending) {
@@ -637,7 +644,7 @@ export function CardBrowser({
               </div>
             )}
 
-            <article className="card-detail-content">
+            <article className="card-detail-content" ref={detailContentRef}>
               {selected.cardContent.type === CardContentType.Occlusion ? (
                 <>
                   <section>

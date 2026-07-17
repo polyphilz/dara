@@ -3,9 +3,9 @@ export { tauriSettingsGateway, type SettingsGateway } from './gateway.ts'
 export {
   Appearance,
   DaraCommand,
+  DEFAULT_HOME_ACCELERATOR,
   DEFAULT_KEYBOARD_BINDINGS,
   DEFAULT_QUICK_ADD_ACCELERATOR,
-  DEFAULT_REVIEW_ACCELERATOR,
   DEFAULT_ZOOM_PERCENT,
   MAX_ZOOM_PERCENT,
   MIN_ZOOM_PERCENT,

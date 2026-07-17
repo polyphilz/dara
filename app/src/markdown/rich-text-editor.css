@@ -109,6 +109,7 @@
   padding: 13px 15px;
   outline: none;
   color: var(--ink);
+  caret-color: var(--accent);
   font: 15px/1.55 var(--font-family-app);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
@@ -119,6 +120,10 @@
   color: #aaa59e;
   content: attr(data-placeholder);
   pointer-events: none;
+}
+
+.dara-rich-text-content[data-empty='true']:focus::before {
+  visibility: hidden;
 }
 
 .dara-rich-text-content > :first-child {

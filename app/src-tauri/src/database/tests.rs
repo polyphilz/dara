@@ -10,7 +10,8 @@ use super::{
     domain::{CardContentType, ReviewCardState, ReviewCardStatus, ReviewEventType},
     embedding_index, initialize,
     media::OcrQueueState,
-    migrations, snapshot, DatabaseError, DatabasePaths, ImageOcrStatus, InitializationOptions,
+    migrations, snapshot, DaraCommand, DatabaseError, DatabasePaths, ImageOcrStatus,
+    InitializationOptions, DEFAULT_HOME_ACCELERATOR,
 };
 
 const BASIC_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -121,7 +122,7 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 6);
+    assert_eq!(history_rows, 7);
 }
 
 #[test]
@@ -172,12 +173,68 @@ fn settings_migration_adds_defaults_to_an_existing_database() {
     );
     assert_eq!(
         main.query_row(
+            "SELECT command, accelerator
+             FROM keyboard_binding
+             WHERE command = ?1",
+            [DaraCommand::Home.as_db_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .expect("default home binding"),
+        (
+            DaraCommand::Home.as_db_str().to_owned(),
+            DEFAULT_HOME_ACCELERATOR.to_owned(),
+        )
+    );
+    assert_eq!(
+        main.query_row(
             "SELECT updated_at FROM app_settings WHERE singleton_id = 1",
             [],
             |row| row.get::<_, i64>(0),
         )
         .expect("preserved application state"),
         1_783_828_800_001
+    );
+}
+
+#[test]
+fn home_shortcut_migration_preserves_a_custom_review_accelerator() {
+    const LEGACY_REVIEW_COMMAND: &str = "REVIEW";
+    const CUSTOM_ACCELERATOR: &str = "control+alt+super+KeyW";
+
+    let (_directory, paths) = test_paths();
+    create_identified_unmigrated_pair(&paths);
+    let mut main = open_existing(&paths.main, DatabaseKind::Main);
+    let through_user_settings = migrations::main_runner()
+        .get_migrations()
+        .iter()
+        .filter(|migration| migration.version() <= 6)
+        .cloned()
+        .collect::<Vec<_>>();
+    Runner::new(&through_user_settings)
+        .set_grouped(true)
+        .run(&mut main)
+        .expect("user-settings migrations");
+    main.execute(
+        "UPDATE keyboard_binding SET accelerator = ?1 WHERE command = ?2",
+        params![CUSTOM_ACCELERATOR, LEGACY_REVIEW_COMMAND],
+    )
+    .expect("custom legacy binding");
+
+    migrations::run_main(&mut main).expect("home-shortcut migration");
+
+    assert_eq!(
+        main.query_row(
+            "SELECT command, accelerator
+             FROM keyboard_binding
+             WHERE command = ?1",
+            [DaraCommand::Home.as_db_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .expect("migrated home binding"),
+        (
+            DaraCommand::Home.as_db_str().to_owned(),
+            CUSTOM_ACCELERATOR.to_owned(),
+        )
     );
 }
 
@@ -740,7 +797,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 7, 'future', applied_on, '0'
+         SELECT 8, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -761,14 +818,14 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V7__grouped_good.sql",
+            "V8__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
         .expect("V7 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V8__grouped_failure.sql",
+            "V9__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
         .expect("V8 migration"),
@@ -780,9 +837,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V6")
+            .expect("V7")
             .version(),
-        6
+        7
     );
 }
 
@@ -826,7 +883,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(6));
+    assert_eq!(launch.manifest.main.migration_head, Some(7));
     drop(database);
 
     let base = launch.manifest.created_at;

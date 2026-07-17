@@ -58,6 +58,7 @@ export interface CardFormHandle {
 interface CardFormProps {
   initialContent?: CardContent
   onCancel: () => void | Promise<void>
+  onFileDialogOpenChange?: (open: boolean) => void
   onSaved: (item?: CardContentListItem) => void | Promise<void>
   variant: CardFormVariantType
 }
@@ -65,7 +66,16 @@ interface CardFormProps {
 const MEDIA_LEASE_RENEWAL_INTERVAL_MILLIS = 15 * 60 * 1_000
 
 export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
-  function CardForm({ initialContent, onCancel, onSaved, variant }, ref) {
+  function CardForm(
+    {
+      initialContent,
+      onCancel,
+      onFileDialogOpenChange,
+      onSaved,
+      variant,
+    },
+    ref,
+  ) {
     const primaryRef = useRef<RichTextEditorHandle>(null)
     const secondaryRef = useRef<RichTextEditorHandle>(null)
     const occlusionEditorRef = useRef<OcclusionEditorHandle>(null)
@@ -375,6 +385,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
               disabled={saving}
               leaseId={mediaLeaseId}
               onError={(cause) => setError(errorMessage(cause))}
+              onFileDialogOpenChange={onFileDialogOpenChange}
               onImage={(image) => {
                 setError(null)
                 setOcclusion((current) =>
@@ -510,7 +521,10 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
                   : editing
                     ? 'Save'
                     : 'Add'}{' '}
-              <kbd>⌘↵</kbd>
+              <kbd>
+                <span>⌘</span>
+                <span className="save-shortcut-enter">↵</span>
+              </kbd>
             </button>
             <button
               className="cancel-button"

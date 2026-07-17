@@ -129,7 +129,7 @@ beforeEach(() => {
     desiredRetention: 0.9,
     keyboardBindings: [
       { accelerator: 'control+alt+super+KeyD', command: 'QUICK_ADD' },
-      { accelerator: 'control+alt+super+KeyR', command: 'REVIEW' },
+      { accelerator: 'control+alt+super+KeyH', command: 'HOME' },
     ],
     launchAtLogin: false,
     launchAtLoginError: null,
@@ -161,7 +161,7 @@ test('Add card opens a persistent main-window editor rather than Quick Add', asy
 
   fireEvent.click(getByRole('button', { name: 'Cancel' }))
   await waitFor(() =>
-    expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy(),
+    expect(getByRole('region', { name: 'Review activity' })).toBeTruthy(),
   )
 })
 
@@ -202,7 +202,7 @@ test('saving in the main editor creates the card and returns home', async () => 
     )
   })
   expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(1)
-  expect(getByRole('heading', { name: 'Review activity' })).toBeTruthy()
+  expect(getByRole('region', { name: 'Review activity' })).toBeTruthy()
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
 })
 
@@ -296,17 +296,35 @@ test('opens Settings from the header and Command-comma', async () => {
   expect(mocks.loadSettings).toHaveBeenCalled()
 })
 
+test('opens Home when the global Home shortcut event arrives', async () => {
+  const handlers = new Map<string, () => void>()
+  mocks.listen.mockImplementation(
+    async (event: string, handler: () => void) => {
+      handlers.set(event, handler)
+      return () => handlers.delete(event)
+    },
+  )
+  const { findByRole, getByRole } = render(<MainWindow />)
+  fireEvent.click(getByRole('button', { name: 'Browse' }))
+  expect(await findByRole('searchbox', { name: 'Search cards' })).toBeTruthy()
+  await waitFor(() => expect(handlers.has('open-home')).toBe(true))
+
+  act(() => handlers.get('open-home')?.())
+
+  expect(await findByRole('region', { name: 'Review activity' })).toBeTruthy()
+})
+
 test('keeps the rendered home dashboard mounted while reviewing', async () => {
   const { findByRole, getByRole } = render(<MainWindow />)
-  const activityHeading = await findByRole('heading', {
+  const activityRegion = await findByRole('region', {
     name: 'Review activity',
   })
 
   fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
   fireEvent.click(getByRole('button', { name: 'Home' }))
 
-  expect(getByRole('heading', { name: 'Review activity' })).toBe(
-    activityHeading,
+  expect(getByRole('region', { name: 'Review activity' })).toBe(
+    activityRegion,
   )
   expect(mocks.loadHomeStats).toHaveBeenCalledTimes(1)
 })

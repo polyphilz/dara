@@ -275,7 +275,7 @@ export function MainWindow() {
     let disposed = false
     const listeners = Promise.all([
       listen('open-settings', showSettings),
-      listen('open-review', showReview),
+      listen('open-home', showHome),
     ]).then((unlisteners) => {
       if (disposed) {
         unlisteners.forEach((unlisten) => unlisten())
@@ -290,7 +290,7 @@ export function MainWindow() {
         unlisteners.forEach((unlisten) => unlisten())
       })
     }
-  }, [showReview, showSettings])
+  }, [showHome, showSettings])
 
   const schedulingChanged = useCallback(() => {
     void controller.refresh()

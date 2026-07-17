@@ -126,9 +126,9 @@
 }
 
 .card-editor-footer button {
-  padding: 8px 11px;
-  border-radius: 8px;
-  font-size: 12px;
+  padding: var(--action-button-padding);
+  border-radius: var(--action-button-radius);
+  font-size: var(--action-button-font-size);
   font-weight: 700;
   cursor: pointer;
 }
@@ -152,9 +152,17 @@
 }
 
 .save-button kbd {
+  display: inline-flex;
   margin-left: 5px;
+  align-items: center;
   color: rgba(255, 255, 255, 0.64);
   font: inherit;
+}
+
+.save-shortcut-enter {
+  position: relative;
+  top: -2px;
+  margin-left: 1px;
 }
 
 .card-editor-error {
@@ -164,7 +172,7 @@
 }
 
 .basic-card-form-main {
-  max-width: 880px;
+  max-width: none;
   margin: 30px auto 0;
   padding: 28px;
   border: 1px solid var(--line);

@@ -28,7 +28,7 @@ beforeEach(() => {
 
 test('accepts paste, file-picker, and drag-and-drop images through one restricted picker', async () => {
   const onImage = vi.fn()
-  const { container, getByRole } = render(
+  const { container, getByRole, queryByText } = render(
     <OcclusionImagePicker
       leaseId={leaseId}
       onError={vi.fn()}
@@ -38,6 +38,7 @@ test('accepts paste, file-picker, and drag-and-drop images through one restricte
     />,
   )
   const picker = getByRole('button', { name: 'Choose an image for occlusion' })
+  expect(queryByText('⌘V')).toBeNull()
 
   fireEvent.paste(picker, {
     clipboardData: { items: [{ type: 'image/png' }] },

@@ -10,7 +10,7 @@ pub const MIN_ZOOM_PERCENT: i64 = 50;
 pub const MAX_ZOOM_PERCENT: i64 = 200;
 pub const ZOOM_STEP_PERCENT: i64 = 10;
 pub const DEFAULT_QUICK_ADD_ACCELERATOR: &str = "control+alt+super+KeyD";
-pub const DEFAULT_REVIEW_ACCELERATOR: &str = "control+alt+super+KeyR";
+pub const DEFAULT_HOME_ACCELERATOR: &str = "control+alt+super+KeyH";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -45,23 +45,23 @@ impl Appearance {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum DaraCommand {
     QuickAdd,
-    Review,
+    Home,
 }
 
 impl DaraCommand {
-    pub const ALL: [Self; 2] = [Self::QuickAdd, Self::Review];
+    pub const ALL: [Self; 2] = [Self::QuickAdd, Self::Home];
 
     pub const fn as_db_str(self) -> &'static str {
         match self {
             Self::QuickAdd => "QUICK_ADD",
-            Self::Review => "REVIEW",
+            Self::Home => "HOME",
         }
     }
 
     fn from_db(value: &str) -> Result<Self> {
         match value {
             "QUICK_ADD" => Ok(Self::QuickAdd),
-            "REVIEW" => Ok(Self::Review),
+            "HOME" => Ok(Self::Home),
             _ => Err(DatabaseError::InvalidStoredSettings(format!(
                 "unknown Dara command {value}"
             ))),

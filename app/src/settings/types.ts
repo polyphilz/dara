@@ -8,7 +8,7 @@ export type Appearance = (typeof Appearance)[keyof typeof Appearance]
 
 export const DaraCommand = {
   QuickAdd: 'QUICK_ADD',
-  Review: 'REVIEW',
+  Home: 'HOME',
 } as const
 
 export type DaraCommand = (typeof DaraCommand)[keyof typeof DaraCommand]
@@ -31,7 +31,7 @@ export interface SettingsSnapshot {
 }
 
 export const DEFAULT_QUICK_ADD_ACCELERATOR = 'control+alt+super+KeyD'
-export const DEFAULT_REVIEW_ACCELERATOR = 'control+alt+super+KeyR'
+export const DEFAULT_HOME_ACCELERATOR = 'control+alt+super+KeyH'
 export const DEFAULT_ZOOM_PERCENT = 100
 export const MIN_ZOOM_PERCENT = 50
 export const MAX_ZOOM_PERCENT = 200
@@ -44,7 +44,7 @@ export const DEFAULT_KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
     command: DaraCommand.QuickAdd,
   },
   {
-    accelerator: DEFAULT_REVIEW_ACCELERATOR,
-    command: DaraCommand.Review,
+    accelerator: DEFAULT_HOME_ACCELERATOR,
+    command: DaraCommand.Home,
   },
 ]
