@@ -101,7 +101,8 @@ pub fn run() {
 
     app.run(|app, event| {
         if matches!(&event, RunEvent::Resumed) {
-            if let Err(error) = app.emit_to("main", "review-clock-refresh", ()) {
+            if let Err(error) = app.emit_to("main", windows::macos::REVIEW_CLOCK_REFRESH_EVENT, ())
+            {
                 log::error!("failed to refresh review clock after wake: {error}");
             }
         }

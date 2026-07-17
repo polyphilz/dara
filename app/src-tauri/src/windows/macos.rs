@@ -1,9 +1,14 @@
-use std::sync::Mutex;
+use std::{ptr::NonNull, sync::Mutex};
 
+use block2::RcBlock;
 use objc2::MainThreadMarker as ObjcMainThreadMarker;
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationOptions, NSRunningApplication, NSWindow,
     NSWindowCollectionBehavior, NSWorkspace,
+};
+use objc2_foundation::{
+    NSNotification, NSNotificationCenter, NSSystemClockDidChangeNotification,
+    NSSystemTimeZoneDidChangeNotification,
 };
 use serde::{Deserialize, Serialize};
 use tauri::{
@@ -34,6 +39,7 @@ const OPEN_SETTINGS_EVENT: &str = "open-settings";
 const OPEN_HOME_EVENT: &str = "open-home";
 const ZOOM_COMMAND_EVENT: &str = "app-zoom-command";
 const BROWSE_COMMAND_EVENT: &str = "browse-command";
+pub(crate) const REVIEW_CLOCK_REFRESH_EVENT: &str = "review-clock-refresh";
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -192,8 +198,39 @@ pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     create_quick_add_window(app.handle())?;
     install_tray(app, &settings.keyboard_bindings)?;
     register_shortcuts(app.handle(), &settings.keyboard_bindings);
+    install_clock_change_observers(app.handle());
 
     Ok(())
+}
+
+fn install_clock_change_observers(app: &AppHandle) {
+    let app = app.clone();
+    let refresh = RcBlock::new(move |_: NonNull<NSNotification>| {
+        if let Err(error) = app.emit_to(MAIN_LABEL, REVIEW_CLOCK_REFRESH_EVENT, ()) {
+            log::error!("failed to refresh review clock after a system clock change: {error}");
+        }
+    });
+    let center = NSNotificationCenter::defaultCenter();
+    // SAFETY: these extern statics are immutable notification-name constants supplied by
+    // Foundation for the lifetime of the process.
+    let notifications = unsafe {
+        [
+            NSSystemClockDidChangeNotification,
+            NSSystemTimeZoneDidChangeNotification,
+        ]
+    };
+    for notification in notifications {
+        // SAFETY: the notification names are Foundation constants, no sender is constrained,
+        // and NotificationCenter copies and retains the correctly typed block for app lifetime.
+        unsafe {
+            center.addObserverForName_object_queue_usingBlock(
+                Some(notification),
+                None,
+                None,
+                &refresh,
+            );
+        }
+    }
 }
 
 fn install_application_menu(app: &mut App) -> tauri::Result<()> {
@@ -954,7 +991,7 @@ fn activate_main_window(app: &AppHandle) -> Result<(), String> {
     window
         .set_focus()
         .map_err(|error| format!("could not focus main window: {error}"))?;
-    app.emit_to(MAIN_LABEL, "review-clock-refresh", ())
+    app.emit_to(MAIN_LABEL, REVIEW_CLOCK_REFRESH_EVENT, ())
         .map_err(|error| format!("could not refresh the review clock: {error}"))?;
     Ok(())
 }
@@ -1026,7 +1063,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
             }
         }
         WindowEvent::Focused(true) if window.label() == MAIN_LABEL => {
-            if let Err(error) = window.emit("review-clock-refresh", ()) {
+            if let Err(error) = window.emit(REVIEW_CLOCK_REFRESH_EVENT, ()) {
                 log::error!("failed to refresh review clock after activation: {error}");
             }
         }

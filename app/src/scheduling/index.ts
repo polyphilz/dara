@@ -38,6 +38,7 @@ export {
   captureStudyMoment,
   civilDayOrdinal,
   currentTimezoneId,
+  nextStudyDayBoundary,
 } from './study-clock.ts'
 export type {
   GradePreview,

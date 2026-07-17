@@ -4,6 +4,7 @@ import { SchedulingError } from './types.ts'
 const MILLISECONDS_PER_MINUTE = 60_000
 const MILLISECONDS_PER_DAY = 86_400_000
 const DAY_BOUNDARY_HOUR = 4
+const MAX_BOUNDARY_SEARCH_DAYS = 3
 
 interface CivilTime {
   year: number
@@ -62,6 +63,40 @@ export function currentTimezoneId(): string {
     throw new SchedulingError('the device did not report an IANA timezone')
   }
   return timezoneId
+}
+
+export function nextStudyDayBoundary(
+  instant: number | Date = Date.now(),
+  timezoneId: string = currentTimezoneId(),
+): number {
+  const reviewedAt = epochMilliseconds(instant)
+  const studyDay = captureStudyMoment(reviewedAt, timezoneId).studyDay
+  let beforeBoundary = reviewedAt
+  let afterBoundary = reviewedAt + MILLISECONDS_PER_DAY
+  const searchLimit =
+    reviewedAt + MAX_BOUNDARY_SEARCH_DAYS * MILLISECONDS_PER_DAY
+
+  while (
+    captureStudyMoment(afterBoundary, timezoneId).studyDay <= studyDay &&
+    afterBoundary < searchLimit
+  ) {
+    afterBoundary += MILLISECONDS_PER_DAY
+  }
+  if (captureStudyMoment(afterBoundary, timezoneId).studyDay <= studyDay) {
+    throw new SchedulingError(
+      `could not find the next study-day boundary in ${timezoneId}`,
+    )
+  }
+
+  while (afterBoundary - beforeBoundary > 1) {
+    const candidate = Math.floor((beforeBoundary + afterBoundary) / 2)
+    if (captureStudyMoment(candidate, timezoneId).studyDay <= studyDay) {
+      beforeBoundary = candidate
+    } else {
+      afterBoundary = candidate
+    }
+  }
+  return afterBoundary
 }
 
 export function civilDayOrdinal(

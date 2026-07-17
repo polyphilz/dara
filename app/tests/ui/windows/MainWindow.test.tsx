@@ -14,6 +14,7 @@ import {
   ReviewControllerPhase,
   type ReviewControllerState,
 } from '../../../src/review/controller.ts'
+import { nextStudyDayBoundary } from '../../../src/scheduling/index.ts'
 import { invalidateHomeStats } from '../../../src/windows/main/home-stats-cache.ts'
 
 const mocks = vi.hoisted(() => ({
@@ -336,6 +337,35 @@ test('automatically rechecks the queue when the next learning deadline arrives',
   render(<MainWindow />)
 
   act(() => vi.advanceTimersByTime(526))
+
+  expect(mocks.notifyClockChanged).toHaveBeenCalledTimes(1)
+})
+
+test('automatically refreshes at the next 4AM study-day boundary', () => {
+  vi.useFakeTimers()
+  const boundary = nextStudyDayBoundary()
+  vi.setSystemTime(boundary - 500)
+  render(<MainWindow />)
+
+  act(() => vi.advanceTimersByTime(526))
+
+  expect(mocks.notifyClockChanged).toHaveBeenCalledTimes(1)
+})
+
+test('rechecks the clock when a native clock or timezone event arrives', async () => {
+  const handlers = new Map<string, () => void>()
+  mocks.listen.mockImplementation(
+    async (event: string, handler: () => void) => {
+      handlers.set(event, handler)
+      return () => handlers.delete(event)
+    },
+  )
+  render(<MainWindow />)
+  await waitFor(() =>
+    expect(handlers.has('review-clock-refresh')).toBe(true),
+  )
+
+  act(() => handlers.get('review-clock-refresh')?.())
 
   expect(mocks.notifyClockChanged).toHaveBeenCalledTimes(1)
 })

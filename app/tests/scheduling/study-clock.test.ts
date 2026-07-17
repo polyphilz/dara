@@ -4,6 +4,7 @@ import {
   SchedulingError,
   captureStudyMoment,
   civilDayOrdinal,
+  nextStudyDayBoundary,
 } from '../../src/scheduling/index.ts'
 
 test('uses a 4AM local boundary instead of midnight', () => {
@@ -67,6 +68,33 @@ test('distinguishes both repeated fall DST instants', () => {
   assert.equal(secondOneThirty.utcOffsetMinutes, -300)
   assert.equal(firstOneThirty.studyDay, civilDayOrdinal(2026, 10, 31))
   assert.equal(secondOneThirty.studyDay, firstOneThirty.studyDay)
+})
+
+test('finds the next 4AM boundary across ordinary and DST-short days', () => {
+  assert.equal(
+    nextStudyDayBoundary(
+      Date.parse('2026-07-13T04:10:00Z'),
+      'America/New_York',
+    ),
+    Date.parse('2026-07-13T08:00:00Z'),
+  )
+  assert.equal(
+    nextStudyDayBoundary(
+      Date.parse('2026-03-07T09:00:00Z'),
+      'America/New_York',
+    ),
+    Date.parse('2026-03-08T08:00:00Z'),
+  )
+})
+
+test('finds the next 4AM boundary across a DST-long day', () => {
+  assert.equal(
+    nextStudyDayBoundary(
+      Date.parse('2026-10-31T08:00:00Z'),
+      'America/New_York',
+    ),
+    Date.parse('2026-11-01T09:00:00Z'),
+  )
 })
 
 test('freezes the zone and study day observed during travel', () => {

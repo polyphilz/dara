@@ -16,7 +16,11 @@ import {
   type CardContent,
   type ReviewControllerState,
 } from '../../review/index.ts'
-import type { ReviewCardCache, ReviewGrade } from '../../scheduling/index.ts'
+import {
+  nextStudyDayBoundary,
+  type ReviewCardCache,
+  type ReviewGrade,
+} from '../../scheduling/index.ts'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
@@ -41,6 +45,8 @@ const grades = [
 ] as const
 
 const MAX_TIMER_DELAY = 2_147_000_000
+const CLOCK_REFRESH_GRACE = 25
+const REVIEW_CLOCK_REFRESH_EVENT = 'review-clock-refresh'
 
 const MainWindowMode = {
   Home: 'HOME',
@@ -60,6 +66,7 @@ export function MainWindow() {
   const [homeRefreshToken, setHomeRefreshToken] = useState(0)
   const [settingsNavigationToken, setSettingsNavigationToken] = useState(0)
   const [settingsBusy, setSettingsBusy] = useState(false)
+  const [clockScheduleToken, setClockScheduleToken] = useState(0)
   const refreshHomeStats = useCallback(() => {
     invalidateHomeStats()
     setHomeRefreshToken((value) => value + 1)
@@ -79,21 +86,25 @@ export function MainWindow() {
   }, [controller])
 
   useEffect(() => {
-    if (
-      state.phase !== ReviewControllerPhase.CaughtUp ||
-      state.nextDueAt === null
-    ) {
-      return
-    }
+    const nextLearningDueAt =
+      state.phase === ReviewControllerPhase.CaughtUp
+        ? state.nextDueAt
+        : null
+    const nextRefreshAt = Math.min(
+      nextStudyDayBoundary(),
+      nextLearningDueAt ?? Number.POSITIVE_INFINITY,
+    )
     const delay = Math.min(
       MAX_TIMER_DELAY,
-      Math.max(0, state.nextDueAt - Date.now() + 25),
+      Math.max(0, nextRefreshAt - Date.now() + CLOCK_REFRESH_GRACE),
     )
     const timer = window.setTimeout(() => {
       void controller.notifyClockChanged()
+      setHomeRefreshToken((value) => value + 1)
+      setClockScheduleToken((value) => value + 1)
     }, delay)
     return () => window.clearTimeout(timer)
-  }, [controller, state])
+  }, [clockScheduleToken, controller, state])
 
   useEffect(() => {
     const refreshClock = () => {
@@ -102,13 +113,14 @@ export function MainWindow() {
       }
       void controller.notifyClockChanged()
       setHomeRefreshToken((value) => value + 1)
+      setClockScheduleToken((value) => value + 1)
     }
     window.addEventListener('focus', refreshClock)
     document.addEventListener('visibilitychange', refreshClock)
 
     let disposed = false
     let stopListening: (() => void) | undefined
-    void listen('review-clock-refresh', refreshClock).then((unlisten) => {
+    void listen(REVIEW_CLOCK_REFRESH_EVENT, refreshClock).then((unlisten) => {
       if (disposed) {
         unlisten()
       } else {
