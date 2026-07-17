@@ -1,6 +1,6 @@
 use std::{
     env,
-    fs::{self, File, OpenOptions},
+    fs::{self, File, OpenOptions, TryLockError},
     io::{Read, Seek, SeekFrom, Write},
     net::TcpListener,
     path::{Path, PathBuf},
@@ -34,15 +34,18 @@ const MODEL_OVERRIDE_ENV: &str = "DARA_EMBEDDING_MODEL_PATH";
 const SIDECAR_OVERRIDE_ENV: &str = "DARA_LLAMA_SERVER_PATH";
 const LLAMA_DEVICE_ENV: &str = "DARA_LLAMA_DEVICE";
 const LLAMA_GPU_LAYERS_ENV: &str = "DARA_LLAMA_GPU_LAYERS";
+const LIFECYCLE_LOCK_FILE: &str = "semantic-search.lock";
 const VERIFICATION_RECEIPT_FILE: &str = "semantic-search-verification.json";
 const VERIFICATION_RECEIPT_VERSION: u32 = 1;
 const LLAMA_EMBEDDING_NORMALIZATION: &str = "2";
 const LLAMA_PARALLEL_SLOTS: &str = "1";
 const SIDECAR_IDLE_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const HEALTH_POLL_ATTEMPTS: usize = 100;
+const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const HEALTH_POLL_DELAY: Duration = Duration::from_millis(100);
 const RECONCILIATION_POLL_DELAY: Duration = Duration::from_secs(1);
 const EMBEDDING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const LIFECYCLE_LOCK_WAIT: Duration = Duration::from_secs(30);
+const LIFECYCLE_LOCK_POLL_DELAY: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -118,6 +121,9 @@ struct SearchServiceInner {
     http: Client,
     status: Mutex<SemanticSearchStatus>,
     runtime: Mutex<SidecarRuntime>,
+    sidecar_startup: Mutex<()>,
+    failure_recording: Mutex<()>,
+    lifecycle_lock: Mutex<Option<File>>,
     shutdown: AtomicBool,
 }
 
@@ -167,6 +173,7 @@ impl SearchService {
         data_root: &Path,
         resource_dir: &Path,
     ) -> Result<Self, SearchError> {
+        let lifecycle_lock = acquire_lifecycle_lock(data_root)?;
         let manifest = embedding_index::jina_v1_manifest();
         let model_path = data_root.join("models").join(&manifest.config.model_file);
         let model_override = env::var_os(MODEL_OVERRIDE_ENV).map(PathBuf::from);
@@ -205,6 +212,9 @@ impl SearchService {
                 message: Some("Preparing local semantic search".into()),
             }),
             runtime: Mutex::new(SidecarRuntime::default()),
+            sidecar_startup: Mutex::new(()),
+            failure_recording: Mutex::new(()),
+            lifecycle_lock: Mutex::new(Some(lifecycle_lock)),
             shutdown: AtomicBool::new(false),
         });
         let worker_inner = Arc::clone(&inner);
@@ -231,7 +241,8 @@ impl SearchService {
             });
         }
 
-        let semantic_ready = self.status().phase == SemanticSearchPhase::Ready;
+        let semantic_ready = !self.inner.shutdown.load(Ordering::Acquire)
+            && self.status().phase == SemanticSearchPhase::Ready;
         if semantic_ready {
             let prompt = format!("{}{}", self.inner.manifest.config.query_prefix, input.query);
             match embed(&self.inner, &prompt) {
@@ -249,7 +260,9 @@ impl SearchService {
                 Err(error) => {
                     set_failure(&self.inner, &error);
                     stop_sidecar(&self.inner);
-                    log::error!("semantic query failed; returning lexical results: {error}");
+                    if !self.inner.shutdown.load(Ordering::Acquire) {
+                        log::error!("semantic query failed; returning lexical results: {error}");
+                    }
                 }
             }
         }
@@ -263,34 +276,45 @@ impl SearchService {
     }
 
     pub fn shutdown(&self) {
-        if self.inner.shutdown.swap(true, Ordering::SeqCst) {
-            return;
+        {
+            let _failure_recording = lock(&self.inner.failure_recording);
+            if self.inner.shutdown.swap(true, Ordering::SeqCst) {
+                return;
+            }
         }
         stop_sidecar(&self.inner);
+        drop(lock(&self.inner.sidecar_startup));
         if let Some(worker) = lock(&self.worker).take() {
             if let Err(error) = worker.join() {
                 log::error!("semantic-search worker panicked during shutdown: {error:?}");
             }
         }
+        release_lifecycle_lock(&self.inner);
     }
 }
 
 fn semantic_worker(inner: Arc<SearchServiceInner>) {
     if let Err(error) = prepare_and_verify(&inner) {
-        set_failure(&inner, &error);
-        stop_sidecar(&inner);
-        log::error!("semantic search initialization failed: {error}");
+        handle_worker_failure(&inner, "initialization", &error);
         return;
     }
     while !inner.shutdown.load(Ordering::Relaxed) {
         if let Err(error) = reconcile_embeddings(&inner) {
-            set_failure(&inner, &error);
-            stop_sidecar(&inner);
-            log::error!("semantic embedding reconciliation failed: {error}");
+            handle_worker_failure(&inner, "embedding reconciliation", &error);
             return;
         }
         reap_idle_sidecar(&inner);
         interruptible_sleep(&inner.shutdown, RECONCILIATION_POLL_DELAY);
+    }
+}
+
+fn handle_worker_failure(inner: &SearchServiceInner, operation: &str, error: &SearchError) {
+    set_failure(inner, error);
+    stop_sidecar(inner);
+    if inner.shutdown.load(Ordering::Acquire) {
+        log::debug!("semantic-search {operation} stopped during shutdown");
+    } else {
+        log::error!("semantic-search {operation} failed: {error}");
     }
 }
 
@@ -862,6 +886,10 @@ fn embed_with_model(
 }
 
 fn ensure_sidecar(inner: &SearchServiceInner, model_path: &Path) -> Result<String, SearchError> {
+    let _startup = lock(&inner.sidecar_startup);
+    if inner.shutdown.load(Ordering::Acquire) {
+        return Err(SearchError::Runtime("sidecar start canceled".into()));
+    }
     let mut runtime = lock(&inner.runtime);
     if let Some(child) = runtime.child.as_mut() {
         if child.try_wait()?.is_none() && runtime.model_path.as_deref() == Some(model_path) {
@@ -917,9 +945,12 @@ fn ensure_sidecar(inner: &SearchServiceInner, model_path: &Path) -> Result<Strin
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let child = command.spawn()?;
+    let mut child = command.spawn()?;
     let pid = child.id();
-    write_pidfile(&inner.data_root, pid, sidecar_path, model_path)?;
+    if let Err(error) = write_pidfile(&inner.data_root, pid, sidecar_path, model_path) {
+        terminate_process_group(&mut child);
+        return Err(error);
+    }
     let endpoint = format!("http://127.0.0.1:{port}");
     runtime.child = Some(child);
     runtime.endpoint = Some(endpoint.clone());
@@ -927,21 +958,26 @@ fn ensure_sidecar(inner: &SearchServiceInner, model_path: &Path) -> Result<Strin
     runtime.last_used = Some(Instant::now());
     drop(runtime);
 
-    for _ in 0..HEALTH_POLL_ATTEMPTS {
+    let startup_deadline = Instant::now() + SIDECAR_STARTUP_TIMEOUT;
+    while Instant::now() < startup_deadline {
         if inner.shutdown.load(Ordering::Relaxed) {
             stop_sidecar(inner);
             return Err(SearchError::Runtime("sidecar start canceled".into()));
         }
         {
             let mut runtime = lock(&inner.runtime);
-            if let Some(child) = runtime.child.as_mut() {
-                if let Some(status) = child.try_wait()? {
-                    runtime.child = None;
-                    return Err(SearchError::Runtime(format!(
-                        "llama-server exited during startup with {status}; see {}",
-                        log_path.display()
-                    )));
-                }
+            let status = runtime
+                .child
+                .as_mut()
+                .map(Child::try_wait)
+                .transpose()?
+                .flatten();
+            if let Some(status) = status {
+                stop_runtime(&mut runtime, &inner.data_root);
+                return Err(SearchError::Runtime(format!(
+                    "llama-server exited during startup with {status}; see {}",
+                    log_path.display()
+                )));
             }
         }
         if inner
@@ -979,16 +1015,20 @@ fn stop_sidecar(inner: &SearchServiceInner) {
 
 fn stop_runtime(runtime: &mut SidecarRuntime, data_root: &Path) {
     if let Some(mut child) = runtime.child.take() {
+        let pid = child.id();
         terminate_process_group(&mut child);
+        remove_pidfile_if_owned(data_root, pid);
     }
     runtime.endpoint = None;
     runtime.model_path = None;
     runtime.last_used = None;
-    let _ = fs::remove_file(pidfile_path(data_root));
 }
 
 #[cfg(unix)]
 fn terminate_process_group(child: &mut Child) {
+    if child.try_wait().ok().flatten().is_some() {
+        return;
+    }
     let process_group = -(child.id() as i32);
     // SAFETY: kill receives a process-group ID created by process_group(0).
     unsafe {
@@ -1018,7 +1058,7 @@ fn sweep_stale_sidecar(data_root: &Path, sidecar_path: &Path, model_path: &Path)
         return;
     };
     let mut lines = contents.lines();
-    let Some(pid) = lines.next().and_then(|value| value.parse::<i32>().ok()) else {
+    let Some(pid) = lines.next().and_then(|value| value.parse::<u32>().ok()) else {
         return;
     };
     let recorded_sidecar = lines.next().unwrap_or_default();
@@ -1028,27 +1068,66 @@ fn sweep_stale_sidecar(data_root: &Path, sidecar_path: &Path, model_path: &Path)
     {
         return;
     }
-    let output = Command::new("ps")
-        .args(["-p", &pid.to_string(), "-o", "command="])
-        .output();
-    let Ok(output) = output else {
-        return;
-    };
-    let command = String::from_utf8_lossy(&output.stdout);
-    if !output.status.success()
-        || !command.contains(recorded_sidecar)
-        || !command.contains(recorded_model)
-        || !command.contains("--embedding")
-    {
+    if !process_matches_sidecar(pid, recorded_sidecar, recorded_model) {
         return;
     }
-    #[cfg(unix)]
-    // SAFETY: the command line and both recorded paths identify Dara's sidecar.
+    terminate_stale_process_group(pid, recorded_sidecar, recorded_model);
+    remove_pidfile_if_owned(data_root, pid);
+}
+
+fn process_matches_sidecar(pid: u32, sidecar_path: &str, model_path: &str) -> bool {
+    let Ok(output) = Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "command="])
+        .output()
+    else {
+        return false;
+    };
+    let command = String::from_utf8_lossy(&output.stdout);
+    output.status.success()
+        && command.contains(sidecar_path)
+        && command.contains(model_path)
+        && command.contains("--embedding")
+}
+
+#[cfg(unix)]
+fn terminate_stale_process_group(pid: u32, sidecar_path: &str, model_path: &str) {
+    let Ok(pid) = i32::try_from(pid) else {
+        return;
+    };
+    // SAFETY: the caller verified that this process group is Dara's sidecar.
     unsafe {
         libc::kill(-pid, libc::SIGTERM);
     }
-    let _ = fs::remove_file(pidfile_path(data_root));
+    for _ in 0..20 {
+        if !process_exists(pid) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    if !process_matches_sidecar(pid as u32, sidecar_path, model_path) {
+        return;
+    }
+    // SAFETY: the verified sidecar did not exit after SIGTERM.
+    unsafe {
+        libc::kill(-pid, libc::SIGKILL);
+    }
+    for _ in 0..20 {
+        if !process_exists(pid) {
+            return;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
 }
+
+#[cfg(unix)]
+fn process_exists(pid: i32) -> bool {
+    // SAFETY: signal 0 checks for a process without sending a signal.
+    let result = unsafe { libc::kill(pid, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn terminate_stale_process_group(_pid: u32, _sidecar_path: &str, _model_path: &str) {}
 
 fn write_pidfile(
     data_root: &Path,
@@ -1072,6 +1151,21 @@ fn write_pidfile(
 
 fn pidfile_path(data_root: &Path) -> PathBuf {
     data_root.join("llama-server.pid")
+}
+
+fn remove_pidfile_if_owned(data_root: &Path, expected_pid: u32) {
+    let path = pidfile_path(data_root);
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return;
+    };
+    if contents
+        .lines()
+        .next()
+        .and_then(|value| value.parse::<u32>().ok())
+        == Some(expected_pid)
+    {
+        let _ = fs::remove_file(path);
+    }
 }
 
 fn resolve_sidecar_path(resource_dir: &Path) -> Option<PathBuf> {
@@ -1105,8 +1199,13 @@ fn resolve_sidecar_path(resource_dir: &Path) -> Option<PathBuf> {
 }
 
 fn set_failure(inner: &SearchServiceInner, error: &SearchError) {
-    if verification_failure_invalidates_receipt(error) {
-        invalidate_verification_receipt(&inner.data_root);
+    let _failure_recording = lock(&inner.failure_recording);
+    match failure_disposition(error, inner.shutdown.load(Ordering::Acquire)) {
+        FailureDisposition::Ignore => return,
+        FailureDisposition::Record => {}
+        FailureDisposition::RecordAndInvalidateVerification => {
+            invalidate_verification_receipt(&inner.data_root);
+        }
     }
     update_status(inner, |status| {
         status.phase = match error {
@@ -1117,8 +1216,58 @@ fn set_failure(inner: &SearchServiceInner, error: &SearchError) {
     });
 }
 
-fn verification_failure_invalidates_receipt(error: &SearchError) -> bool {
-    !matches!(error, SearchError::Database(_))
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FailureDisposition {
+    Ignore,
+    Record,
+    RecordAndInvalidateVerification,
+}
+
+fn failure_disposition(error: &SearchError, shutting_down: bool) -> FailureDisposition {
+    if shutting_down {
+        FailureDisposition::Ignore
+    } else if matches!(error, SearchError::InvalidArtifact(_)) {
+        // Runtime failures can be transient. Model, sidecar, and runtime-setting changes are
+        // already detected by the receipt fingerprint on the next launch.
+        FailureDisposition::RecordAndInvalidateVerification
+    } else {
+        FailureDisposition::Record
+    }
+}
+
+fn acquire_lifecycle_lock(data_root: &Path) -> Result<File, SearchError> {
+    fs::create_dir_all(data_root)?;
+    let path = data_root.join(LIFECYCLE_LOCK_FILE);
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&path)?;
+    let deadline = Instant::now() + LIFECYCLE_LOCK_WAIT;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(file),
+            Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                thread::sleep(LIFECYCLE_LOCK_POLL_DELAY);
+            }
+            Err(TryLockError::WouldBlock) => {
+                return Err(SearchError::RuntimeUnavailable(format!(
+                    "another Dara instance is still stopping semantic search; timed out waiting for {}",
+                    path.display()
+                )));
+            }
+            Err(TryLockError::Error(error)) => return Err(error.into()),
+        }
+    }
+}
+
+fn release_lifecycle_lock(inner: &SearchServiceInner) {
+    if let Some(file) = lock(&inner.lifecycle_lock).take() {
+        if let Err(error) = file.unlock() {
+            log::warn!("could not release semantic-search lifecycle lock: {error}");
+        }
+    }
 }
 
 fn update_status(inner: &SearchServiceInner, update: impl FnOnce(&mut SemanticSearchStatus)) {
@@ -1275,15 +1424,55 @@ mod tests {
     }
 
     #[test]
-    fn runtime_failures_invalidate_verification_but_database_failures_do_not() {
-        assert!(verification_failure_invalidates_receipt(
-            &SearchError::Runtime("sidecar stopped".into())
-        ));
-        assert!(verification_failure_invalidates_receipt(
-            &SearchError::InvalidArtifact("model changed".into())
-        ));
-        assert!(!verification_failure_invalidates_receipt(
-            &SearchError::Database(DatabaseError::InvalidInput("query".into()))
-        ));
+    fn failure_disposition_only_invalidates_receipts_for_invalid_artifacts() {
+        assert_eq!(
+            failure_disposition(&SearchError::Runtime("sidecar stopped".into()), false),
+            FailureDisposition::Record
+        );
+        assert_eq!(
+            failure_disposition(&SearchError::InvalidArtifact("model changed".into()), false),
+            FailureDisposition::RecordAndInvalidateVerification
+        );
+        assert_eq!(
+            failure_disposition(
+                &SearchError::Database(DatabaseError::InvalidInput("query".into())),
+                false
+            ),
+            FailureDisposition::Record
+        );
+        assert_eq!(
+            failure_disposition(&SearchError::Runtime("sidecar stopped".into()), true),
+            FailureDisposition::Ignore
+        );
+    }
+
+    #[test]
+    fn pidfile_is_only_removed_by_its_owner() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let sidecar_path = directory.path().join("llama-server");
+        let model_path = directory.path().join("model.gguf");
+        write_pidfile(directory.path(), 101, &sidecar_path, &model_path).expect("pidfile write");
+
+        remove_pidfile_if_owned(directory.path(), 202);
+        assert!(pidfile_path(directory.path()).exists());
+
+        remove_pidfile_if_owned(directory.path(), 101);
+        assert!(!pidfile_path(directory.path()).exists());
+    }
+
+    #[test]
+    fn lifecycle_lock_excludes_overlapping_search_services() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let first = acquire_lifecycle_lock(directory.path()).expect("first lifecycle lock");
+        let second = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(directory.path().join(LIFECYCLE_LOCK_FILE))
+            .expect("second lifecycle handle");
+
+        assert!(matches!(second.try_lock(), Err(TryLockError::WouldBlock)));
+        first.unlock().expect("first lifecycle unlock");
+        second.try_lock().expect("second lifecycle lock");
+        second.unlock().expect("second lifecycle unlock");
     }
 }
