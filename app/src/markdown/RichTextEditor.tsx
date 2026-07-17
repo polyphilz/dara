@@ -53,6 +53,11 @@ import {
   type KeyboardEvent,
   type MouseEvent,
 } from 'react'
+import { DaraButton } from '../components/DaraButton.tsx'
+import {
+  DaraButtonSize,
+  DaraButtonVariant,
+} from '../components/dara-button-types.ts'
 import { DaraInput } from '../components/DaraInput.tsx'
 import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
 import {
@@ -732,19 +737,21 @@ function ToolbarButton({
     onPress()
   }
   return (
-    <button
+    <DaraButton
       aria-keyshortcuts={shortcut}
       aria-label={label}
       aria-pressed={active}
       className={active ? 'toolbar-button toolbar-button-active' : 'toolbar-button'}
       disabled={disabled}
       onMouseDown={handleMouseDown}
+      size={DaraButtonSize.Custom}
       tabIndex={-1}
       title={shortcut ? `${label} (${shortcut})` : label}
       type="button"
+      variant={DaraButtonVariant.Custom}
     >
       {children}
-    </button>
+    </DaraButton>
   )
 }
 
@@ -1027,16 +1034,60 @@ function FormulaDialog({
         value={formula}
       />
       <div aria-label="Math symbols" className="formula-symbols" role="toolbar">
-        <button onClick={() => insertSnippet('\\pi')} type="button">π</button>
-        <button onClick={() => insertSnippet('\\sqrt{}', 6)} type="button">√</button>
-        <button onClick={() => insertSnippet('^{}', 2)} type="button">x²</button>
-        <button onClick={() => insertSnippet('\\frac{}{}', 6)} type="button">a⁄b</button>
-        <button onClick={() => insertSnippet('\\sum_{}^{}', 6)} type="button">∑</button>
-        <button onClick={() => insertSnippet('\\infty')} type="button">∞</button>
+        <DaraButton
+          onClick={() => insertSnippet('\\pi')}
+          size={DaraButtonSize.Compact}
+          variant={DaraButtonVariant.Ghost}
+        >
+          π
+        </DaraButton>
+        <DaraButton
+          onClick={() => insertSnippet('\\sqrt{}', 6)}
+          size={DaraButtonSize.Compact}
+          variant={DaraButtonVariant.Ghost}
+        >
+          √
+        </DaraButton>
+        <DaraButton
+          onClick={() => insertSnippet('^{}', 2)}
+          size={DaraButtonSize.Compact}
+          variant={DaraButtonVariant.Ghost}
+        >
+          x²
+        </DaraButton>
+        <DaraButton
+          onClick={() => insertSnippet('\\frac{}{}', 6)}
+          size={DaraButtonSize.Compact}
+          variant={DaraButtonVariant.Ghost}
+        >
+          a⁄b
+        </DaraButton>
+        <DaraButton
+          onClick={() => insertSnippet('\\sum_{}^{}', 6)}
+          size={DaraButtonSize.Compact}
+          variant={DaraButtonVariant.Ghost}
+        >
+          ∑
+        </DaraButton>
+        <DaraButton
+          onClick={() => insertSnippet('\\infty')}
+          size={DaraButtonSize.Compact}
+          variant={DaraButtonVariant.Ghost}
+        >
+          ∞
+        </DaraButton>
       </div>
       <div className="formula-dialog-actions">
-        <button onClick={onCancel} type="button">Cancel</button>
-        <button disabled={!formula.trim()} type="submit">Apply</button>
+        <DaraButton onClick={onCancel} variant={DaraButtonVariant.Ghost}>
+          Cancel
+        </DaraButton>
+        <DaraButton
+          disabled={!formula.trim()}
+          type="submit"
+          variant={DaraButtonVariant.Primary}
+        >
+          Apply
+        </DaraButton>
       </div>
     </form>
   )
@@ -1103,8 +1154,12 @@ function LinkDialog({
       />
       {error && <span role="alert">{error}</span>}
       <div className="formula-dialog-actions">
-        <button onClick={onCancel} type="button">Cancel</button>
-        <button type="submit">Apply</button>
+        <DaraButton onClick={onCancel} variant={DaraButtonVariant.Ghost}>
+          Cancel
+        </DaraButton>
+        <DaraButton type="submit" variant={DaraButtonVariant.Primary}>
+          Apply
+        </DaraButton>
       </div>
     </form>
   )

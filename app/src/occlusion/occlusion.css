@@ -99,13 +99,6 @@
 
 .occlusion-editor button {
   min-height: 30px;
-  padding: 6px 9px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--ink);
-  background: var(--surface);
-  font: 650 11px/1.2 var(--font-family-app);
-  cursor: pointer;
 }
 
 .occlusion-editor button:hover:not(:disabled),
@@ -411,8 +404,6 @@
 
 .occlusion-editor .occlusion-mask-tabs button {
   min-height: 25px;
-  padding: 4px 6px;
-  font-size: 10px;
 }
 
 .occlusion-delete-actions {
@@ -421,7 +412,6 @@
 
 .occlusion-delete-actions button {
   flex: 1;
-  color: #a63232;
 }
 
 .occlusion-layer-empty {

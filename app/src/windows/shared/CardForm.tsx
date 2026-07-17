@@ -10,6 +10,8 @@ import {
 } from 'react'
 import { parseClozeMarkdown, projectClozeMarkdown, ClozeProjection } from '../../cloze/cloze.ts'
 import { DaraInput } from '../../components/DaraInput.tsx'
+import { DaraButton } from '../../components/DaraButton.tsx'
+import { DaraButtonVariant } from '../../components/dara-button-types.ts'
 import { DaraSelect } from '../../components/DaraSelect.tsx'
 import {
   RichTextEditor,
@@ -506,11 +508,12 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
 
         <footer className="card-editor-footer">
           <div>
-            <button
+            <DaraButton
               className="save-button"
               disabled={saving || mediaPending}
               onClick={() => void save()}
               type="button"
+              variant={DaraButtonVariant.Primary}
             >
               {mediaPending
                 ? 'Processing image…'
@@ -525,15 +528,15 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
                 <span>⌘</span>
                 <span className="save-shortcut-enter">↵</span>
               </kbd>
-            </button>
-            <button
-              className="cancel-button"
+            </DaraButton>
+            <DaraButton
               disabled={saving}
               onClick={() => void cancel()}
               type="button"
+              variant={DaraButtonVariant.Ghost}
             >
               Cancel
-            </button>
+            </DaraButton>
           </div>
         </footer>
 

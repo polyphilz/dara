@@ -7,6 +7,11 @@ import {
   type ReactNode,
 } from 'react'
 import { DaraPercentageControl } from '../../components/DaraPercentageControl.tsx'
+import { DaraButton } from '../../components/DaraButton.tsx'
+import {
+  DaraButtonSize,
+  DaraButtonVariant,
+} from '../../components/dara-button-types.ts'
 import { DaraSelect } from '../../components/DaraSelect.tsx'
 import { DaraShortcutRecorder } from '../../components/DaraShortcutRecorder.tsx'
 import { DaraToggle } from '../../components/DaraToggle.tsx'
@@ -315,7 +320,9 @@ export function Settings({
         {loadingError ? (
           <div className="settings-load-error" role="alert">
             <span>{loadingError}</span>
-            <button onClick={() => void reload()} type="button">Try again</button>
+            <DaraButton onClick={() => void reload()} type="button">
+              Try again
+            </DaraButton>
           </div>
         ) : (
           <p>Loading settings…</p>
@@ -389,9 +396,14 @@ export function Settings({
           <p className="setting-inline-error" key={error} role="alert">{error}</p>
         ))}
         <div className="setting-section-footer">
-          <button disabled={controlsDisabled} onClick={resetBindings} type="button">
+          <DaraButton
+            disabled={controlsDisabled}
+            onClick={resetBindings}
+            type="button"
+            variant={DaraButtonVariant.Ghost}
+          >
             Reset shortcuts
-          </button>
+          </DaraButton>
         </div>
       </SettingSection>
 
@@ -421,16 +433,17 @@ export function Settings({
             value={retentionPercent}
           />
           <div className="retention-actions">
-            <button
+            <DaraButton
               disabled={!retentionChanged || controlsDisabled || reviewSaveInFlight}
               onClick={() => setConfirmation(ConfirmationKind.Retention)}
               ref={retentionButtonRef}
               type="button"
+              variant={DaraButtonVariant.Accent}
             >
               Update schedule
-            </button>
+            </DaraButton>
             {retentionChanged && retentionPercent !== DEFAULT_RETENTION_PERCENT && (
-              <button
+              <DaraButton
                 className="quiet-button"
                 disabled={controlsDisabled}
                 onClick={() => {
@@ -438,9 +451,10 @@ export function Settings({
                   setRetentionDirty(DEFAULT_RETENTION_PERCENT !== activeRetentionPercent)
                 }}
                 type="button"
+                variant={DaraButtonVariant.Ghost}
               >
                 Restore 90%
-              </button>
+              </DaraButton>
             )}
           </div>
           {reviewSaveInFlight && (
@@ -472,7 +486,7 @@ export function Settings({
         <SettingRow
           control={
             <div className="zoom-stepper">
-              <button
+              <DaraButton
                 aria-label="Zoom out"
                 disabled={controlsDisabled || snapshot.zoomPercent <= MIN_ZOOM_PERCENT}
                 onClick={() => {
@@ -483,12 +497,13 @@ export function Settings({
                     ),
                   )
                 }}
+                size={DaraButtonSize.Icon}
                 type="button"
               >
                 −
-              </button>
+              </DaraButton>
               <output aria-live="polite">{snapshot.zoomPercent}%</output>
-              <button
+              <DaraButton
                 aria-label="Zoom in"
                 disabled={controlsDisabled || snapshot.zoomPercent >= MAX_ZOOM_PERCENT}
                 onClick={() => {
@@ -499,12 +514,13 @@ export function Settings({
                     ),
                   )
                 }}
+                size={DaraButtonSize.Icon}
                 type="button"
               >
                 +
-              </button>
+              </DaraButton>
               {snapshot.zoomPercent !== DEFAULT_ZOOM_PERCENT && (
-                <button
+                <DaraButton
                   className="zoom-reset"
                   disabled={controlsDisabled}
                   onClick={() => {
@@ -512,10 +528,12 @@ export function Settings({
                       settingsGateway.setZoomPercent(current.revision, DEFAULT_ZOOM_PERCENT),
                     )
                   }}
+                  size={DaraButtonSize.Mini}
                   type="button"
+                  variant={DaraButtonVariant.Ghost}
                 >
                   Reset
-                </button>
+                </DaraButton>
               )}
             </div>
           }
@@ -535,21 +553,21 @@ export function Settings({
             <span>Check that every reviewed card matches its history.</span>
           </div>
           <div>
-            <button
+            <DaraButton
               disabled={controlsDisabled}
               onClick={() => void runSchedulingCheck()}
               type="button"
             >
               {schedulingTask === SchedulingTask.Check ? 'Checking…' : 'Check'}
-            </button>
-            <button
+            </DaraButton>
+            <DaraButton
               disabled={controlsDisabled}
               onClick={() => setConfirmation(ConfirmationKind.SchedulingRepair)}
               ref={repairButtonRef}
               type="button"
             >
               Repair data
-            </button>
+            </DaraButton>
           </div>
         </div>
         {schedulingNotice && <p className="scheduling-result" role="status">{schedulingNotice}</p>}
@@ -743,16 +761,22 @@ function ConfirmationDialog({
         </div>
         <div className="settings-dialog-copy">{children}</div>
         <div className="settings-dialog-actions">
-          <button
+          <DaraButton
             disabled={busy && !allowCancelWhileBusy}
             onClick={onCancel}
             type="button"
+            variant={DaraButtonVariant.Ghost}
           >
             Cancel
-          </button>
-          <button className="primary-action" disabled={busy} ref={confirmRef} type="submit">
+          </DaraButton>
+          <DaraButton
+            disabled={busy}
+            ref={confirmRef}
+            type="submit"
+            variant={DaraButtonVariant.Primary}
+          >
             {confirmLabel}
-          </button>
+          </DaraButton>
         </div>
       </form>
     </div>

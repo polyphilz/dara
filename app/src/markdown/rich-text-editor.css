@@ -356,16 +356,6 @@
   gap: 5px;
 }
 
-.formula-symbols button,
-.formula-dialog-actions button {
-  padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  color: var(--ink);
-  background: transparent;
-  cursor: pointer;
-}
-
 .formula-symbols button:hover,
 .formula-dialog-actions button:hover:not(:disabled) {
   border-color: var(--accent);
@@ -373,17 +363,6 @@
 
 .formula-dialog-actions {
   justify-content: flex-end;
-}
-
-.formula-dialog-actions button[type='submit'] {
-  color: var(--surface);
-  border-color: var(--ink);
-  background: var(--ink);
-}
-
-.formula-dialog-actions button:disabled {
-  cursor: default;
-  opacity: 0.45;
 }
 
 :root[data-appearance='DARK'] .rich-text-editor {

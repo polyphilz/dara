@@ -21,6 +21,8 @@ import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
 import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
 import { ClozeProjection } from '../../cloze/cloze.ts'
+import { DaraButton } from '../../components/DaraButton.tsx'
+import { DaraButtonVariant } from '../../components/dara-button-types.ts'
 import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
 import { occlusionLayerId } from '../../occlusion/occlusion.ts'
 import { CardForm } from '../shared/CardForm.tsx'
@@ -371,13 +373,14 @@ function ReviewContent({
               variantKey={state.card.context.reviewCard.variantKey}
             />
           </article>
-          <button
-            className="primary-action reveal-action"
+          <DaraButton
+            className="reveal-action"
             type="button"
             onClick={() => controller.reveal()}
+            variant={DaraButtonVariant.Primary}
           >
             Reveal answer
-          </button>
+          </DaraButton>
           <p className="key-hint">Space to reveal</p>
         </section>
       )
@@ -398,7 +401,7 @@ function ReviewContent({
           </article>
           <div className="grade-grid" aria-label="Grade this card">
             {grades.map(({ grade, label }) => (
-              <button
+              <DaraButton
                 className={
                   grade === state.focusedGrade
                     ? 'grade-button grade-focused'
@@ -414,7 +417,7 @@ function ReviewContent({
                   {formatInterval(state.previews[grade].cache, state.previewedAt)}
                 </small>
                 <kbd>{grade}</kbd>
-              </button>
+              </DaraButton>
             ))}
           </div>
           <p className="key-hint">
@@ -432,18 +435,18 @@ function ReviewContent({
           detail={formatNextDue(state.nextDueAt)}
           notice={state.notice}
         >
-          <button type="button" onClick={() => void controller.refresh()}>
+          <DaraButton type="button" onClick={() => void controller.refresh()}>
             Refresh
-          </button>
+          </DaraButton>
         </StatusScreen>
       )
     case ReviewControllerPhase.Error:
       return (
         <StatusScreen message="Something went wrong" detail={state.message} error>
           {state.canRetry && (
-            <button type="button" onClick={() => void controller.retry()}>
+            <DaraButton type="button" onClick={() => void controller.retry()}>
               Retry
-            </button>
+            </DaraButton>
           )}
         </StatusScreen>
       )

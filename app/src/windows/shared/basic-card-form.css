@@ -125,30 +125,9 @@
   gap: 8px;
 }
 
-.card-editor-footer button {
-  padding: var(--action-button-padding);
-  border-radius: var(--action-button-radius);
-  font-size: var(--action-button-font-size);
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.card-editor-footer button:disabled,
 .card-editor-field input:disabled {
   cursor: default;
   opacity: 0.62;
-}
-
-.cancel-button {
-  border: 1px solid var(--line);
-  color: var(--ink);
-  background: transparent;
-}
-
-.basic-card-form .save-button {
-  border: 1px solid var(--ink);
-  color: #fff;
-  background: var(--ink);
 }
 
 .save-button kbd {
@@ -189,10 +168,6 @@
   background: rgba(16, 15, 14, 0.52);
 }
 
-:root[data-appearance='DARK'] .basic-card-form .save-button {
-  color: #191817;
-}
-
 :root[data-appearance='DARK'] .save-button kbd {
   color: rgba(25, 24, 23, 0.58);
 }
@@ -200,10 +175,6 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-appearance='LIGHT']) .card-editor-field input {
     background: rgba(16, 15, 14, 0.52);
-  }
-
-  :root:not([data-appearance='LIGHT']) .basic-card-form .save-button {
-    color: #191817;
   }
 
   :root:not([data-appearance='LIGHT']) .save-button kbd {

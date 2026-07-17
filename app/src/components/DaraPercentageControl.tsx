@@ -1,3 +1,6 @@
+import { DaraButton } from './DaraButton.tsx'
+import { DaraButtonSize } from './dara-button-types.ts'
+
 interface DaraPercentageControlProps {
   describedBy?: string
   disabled?: boolean
@@ -20,14 +23,15 @@ export function DaraPercentageControl({
   const commit = (next: number) => onChange(Math.min(max, Math.max(min, next)))
   return (
     <div className="percentage-control">
-      <button
+      <DaraButton
         aria-label={`Decrease ${label}`}
         disabled={disabled || value <= min}
         onClick={() => commit(value - 1)}
+        size={DaraButtonSize.Icon}
         type="button"
       >
         −
-      </button>
+      </DaraButton>
       <input
         aria-describedby={describedBy}
         aria-label={label}
@@ -42,14 +46,15 @@ export function DaraPercentageControl({
       <output aria-live="polite" htmlFor="desired-retention">
         {value}%
       </output>
-      <button
+      <DaraButton
         aria-label={`Increase ${label}`}
         disabled={disabled || value >= max}
         onClick={() => commit(value + 1)}
+        size={DaraButtonSize.Icon}
         type="button"
       >
         +
-      </button>
+      </DaraButton>
     </div>
   )
 }

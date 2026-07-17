@@ -10,6 +10,11 @@ import {
   type ClipboardEvent,
 } from 'react'
 import { ingestClipboardImage, ingestImageFile } from '../media/gateway.ts'
+import { DaraButton } from '../components/DaraButton.tsx'
+import {
+  DaraButtonSize,
+  DaraButtonVariant,
+} from '../components/dara-button-types.ts'
 import type { ImageRecord } from '../media/image-reference.ts'
 import {
   isSupportedOcclusionImageFile,
@@ -196,7 +201,7 @@ export const OcclusionImagePicker = forwardRef<
   return (
     <div onPaste={handlePaste}>
       {fileInput}
-      <button
+      <DaraButton
         aria-label="Choose an image for occlusion"
         className={`occlusion-image-picker${dragging ? ' dragging' : ''}`}
         disabled={disabled || pending}
@@ -213,7 +218,9 @@ export const OcclusionImagePicker = forwardRef<
         onDragOver={(event) => event.preventDefault()}
         onDrop={handleDrop}
         ref={dropZoneRef}
+        size={DaraButtonSize.Custom}
         type="button"
+        variant={DaraButtonVariant.Custom}
       >
         <span className="occlusion-picker-icon" aria-hidden="true">
           <svg viewBox="0 0 24 24">
@@ -224,7 +231,7 @@ export const OcclusionImagePicker = forwardRef<
         </span>
         <strong>{pending ? 'Processing image…' : 'Add an image'}</strong>
         <span>{pending ? 'Re-encoding and saving locally' : 'Paste, drag and drop, or click to choose'}</span>
-      </button>
+      </DaraButton>
     </div>
   )
 })

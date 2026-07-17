@@ -8,6 +8,11 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { DaraInput } from '../../components/DaraInput.tsx'
+import { DaraButton } from '../../components/DaraButton.tsx'
+import {
+  DaraButtonSize,
+  DaraButtonVariant,
+} from '../../components/dara-button-types.ts'
 import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
 import {
   ClozeProjection,
@@ -535,7 +540,7 @@ export function CardBrowser({
             const suspended =
               item.reviewStatus === CardContentReviewStatus.Suspended
             return (
-              <button
+              <DaraButton
                 aria-selected={active}
                 className={`card-result${active ? ' card-result-selected' : ''}${suspended ? ' card-result-suspended' : ''}`}
                 key={item.cardContent.id}
@@ -553,6 +558,7 @@ export function CardBrowser({
                   }
                 }}
                 role="option"
+                size={DaraButtonSize.Custom}
                 type="button"
               >
                 <span className="card-result-title">
@@ -571,7 +577,7 @@ export function CardBrowser({
                     {formatRecency(item.cardContent.updatedAt)}
                   </time>
                 </span>
-              </button>
+              </DaraButton>
             )
           })}
           {!loading && results.length === 0 && (
@@ -581,14 +587,14 @@ export function CardBrowser({
           )}
         </div>
         {hasMore && (
-          <button
+          <DaraButton
             className="card-browser-load-more"
             disabled={loadingMore}
             onClick={() => void loadMore()}
             type="button"
           >
             {loadingMore ? 'Loading…' : 'Load more'}
-          </button>
+          </DaraButton>
         )}
       </aside>
 
@@ -610,23 +616,31 @@ export function CardBrowser({
                 )}
               </div>
               <div className="card-detail-actions">
-                <button disabled={mutating} onClick={() => void toggleSuspended()} type="button">
+                <DaraButton
+                  disabled={mutating}
+                  onClick={() => void toggleSuspended()}
+                  type="button"
+                >
                   {selected.reviewStatus === CardContentReviewStatus.Suspended
                     ? 'Resume'
                     : 'Pause'}{' '}
                   <kbd>⌘J</kbd>
-                </button>
-                <button disabled={mutating} onClick={() => setEditing(true)} type="button">
+                </DaraButton>
+                <DaraButton
+                  disabled={mutating}
+                  onClick={() => setEditing(true)}
+                  type="button"
+                >
                   Edit <kbd>↵</kbd>
-                </button>
-                <button
-                  className="danger-button"
+                </DaraButton>
+                <DaraButton
                   disabled={mutating}
                   onClick={() => setConfirmingDelete(true)}
                   type="button"
+                  variant={DaraButtonVariant.Danger}
                 >
                   Delete
-                </button>
+                </DaraButton>
               </div>
             </header>
 
@@ -634,12 +648,22 @@ export function CardBrowser({
               <div className="delete-confirmation" role="alert">
                 <span>Delete this card? Review history will be retained.</span>
                 <div>
-                  <button disabled={mutating} onClick={() => void removeSelected()} type="button">
+                  <DaraButton
+                    disabled={mutating}
+                    onClick={() => void removeSelected()}
+                    type="button"
+                    variant={DaraButtonVariant.Danger}
+                  >
                     {mutating ? 'Deleting…' : 'Delete card'}
-                  </button>
-                  <button disabled={mutating} onClick={() => setConfirmingDelete(false)} type="button">
+                  </DaraButton>
+                  <DaraButton
+                    disabled={mutating}
+                    onClick={() => setConfirmingDelete(false)}
+                    type="button"
+                    variant={DaraButtonVariant.Ghost}
+                  >
                     Cancel
-                  </button>
+                  </DaraButton>
                 </div>
               </div>
             )}
@@ -708,13 +732,14 @@ export function CardBrowser({
                     {reviewCards.map((reviewCard, index) => {
                       const active = reviewCard.id === selectedReviewCard?.id
                       return (
-                        <button
+                        <DaraButton
                           aria-pressed={active}
                           className={`review-card-sibling${active ? ' review-card-sibling-selected' : ''}`}
                           key={reviewCard.id}
                           onClick={() =>
                             setSelectedReviewCardId(reviewCard.id)
                           }
+                          size={DaraButtonSize.Custom}
                           type="button"
                         >
                           <span className="review-card-sibling-number">
@@ -739,7 +764,7 @@ export function CardBrowser({
                               ? 'Never'
                               : formatRecency(reviewCard.lastReviewAt)}
                           </span>
-                        </button>
+                        </DaraButton>
                       )
                     })}
                   </div>

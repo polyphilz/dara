@@ -3,6 +3,8 @@ import {
   acceleratorForKeyboardEvent,
   formatAccelerator,
 } from './shortcut-accelerator.ts'
+import { DaraButton } from './DaraButton.tsx'
+import { DaraButtonSize } from './dara-button-types.ts'
 
 interface DaraShortcutRecorderProps {
   accelerator: string
@@ -72,7 +74,7 @@ export function DaraShortcutRecorder({
 
   return (
     <div className="shortcut-recorder">
-      <button
+      <DaraButton
         aria-describedby={error ? `${label}-shortcut-error` : undefined}
         aria-label={`${label}: ${formatAccelerator(accelerator)}`}
         className={recording ? 'shortcut-recorder-button recording' : 'shortcut-recorder-button'}
@@ -88,10 +90,11 @@ export function DaraShortcutRecorder({
           setError(null)
         }}
         ref={buttonRef}
+        size={DaraButtonSize.Compact}
         type="button"
       >
         {recording ? 'Press shortcut…' : formatAccelerator(accelerator)}
-      </button>
+      </DaraButton>
       {error && (
         <span className="shortcut-recorder-error" id={`${label}-shortcut-error`} role="alert">
           {error}

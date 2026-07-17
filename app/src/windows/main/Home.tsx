@@ -1,5 +1,7 @@
 import { ActivityCalendar, type Activity } from 'react-activity-calendar'
 import { memo, useEffect, useMemo, useState } from 'react'
+import { DaraButton } from '../../components/DaraButton.tsx'
+import { DaraButtonSize } from '../../components/dara-button-types.ts'
 import { errorMessage } from '../../review/errors.ts'
 import type { HomeStats, LoadHomeStatsInput } from '../../review/index.ts'
 import { captureStudyMoment } from '../../scheduling/index.ts'
@@ -134,7 +136,7 @@ export const Home = memo(function Home({
       {error && (
         <div className="home-error" role="alert">
           <span>{error}</span>
-          <button
+          <DaraButton
             onClick={() => {
               invalidateHomeStats()
               setReloadToken((value) => value + 1)
@@ -142,10 +144,15 @@ export const Home = memo(function Home({
             type="button"
           >
             Try again
-          </button>
+          </DaraButton>
         </div>
       )}
-      <button className="home-review-card" onClick={onReview} type="button">
+      <DaraButton
+        className="home-review-card"
+        onClick={onReview}
+        size={DaraButtonSize.Custom}
+        type="button"
+      >
         <span className="home-review-card-heading">
           <span>Review</span>
           <span aria-hidden="true">→</span>
@@ -159,7 +166,7 @@ export const Home = memo(function Home({
           <QueueCount label="Learning" value={stats?.queue.learning} />
           <QueueCount label="Review" value={stats?.queue.review} />
         </span>
-      </button>
+      </DaraButton>
     </section>
   )
 })

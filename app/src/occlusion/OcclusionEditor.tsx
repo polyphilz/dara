@@ -10,6 +10,11 @@ import {
   type PointerEvent,
 } from 'react'
 import { DaraInput } from '../components/DaraInput.tsx'
+import { DaraButton } from '../components/DaraButton.tsx'
+import {
+  DaraButtonSize,
+  DaraButtonVariant,
+} from '../components/dara-button-types.ts'
 import { DaraSelect } from '../components/DaraSelect.tsx'
 import { createUuidV7 } from '../review/uuid-v7.ts'
 import {
@@ -627,18 +632,19 @@ export const OcclusionEditor = forwardRef<
     >
       <header className="occlusion-editor-toolbar">
         <div>
-          <button
+          <DaraButton
             className={drawIntent === DrawIntent.NewLayer ? 'active' : undefined}
             disabled={disabled}
             onClick={() => {
               setDrawIntent(DrawIntent.NewLayer)
               focus()
             }}
+            size={DaraButtonSize.Compact}
             type="button"
           >
             New layer <kbd>N</kbd>
-          </button>
-          <button
+          </DaraButton>
+          <DaraButton
             className={
               drawIntent === DrawIntent.SelectedLayer ? 'active' : undefined
             }
@@ -647,12 +653,13 @@ export const OcclusionEditor = forwardRef<
               setDrawIntent(DrawIntent.SelectedLayer)
               focus()
             }}
+            size={DaraButtonSize.Compact}
             type="button"
           >
             Add mask <kbd>A</kbd>
-          </button>
+          </DaraButton>
           <div className="occlusion-legend">
-            <button
+            <DaraButton
               aria-controls={legendOpen ? legendId : undefined}
               aria-expanded={legendOpen}
               aria-haspopup="dialog"
@@ -667,10 +674,11 @@ export const OcclusionEditor = forwardRef<
                 }
               }}
               ref={legendTriggerRef}
+              size={DaraButtonSize.Compact}
               type="button"
             >
               Legend <kbd>⌘L</kbd>
-            </button>
+            </DaraButton>
             {legendOpen && (
               <div
                 aria-label="Image occlusion shortcuts"
@@ -703,9 +711,14 @@ export const OcclusionEditor = forwardRef<
             options={MODE_OPTIONS}
             value={definition.mode}
           />
-          <button disabled={disabled} onClick={onReplaceImage} type="button">
+          <DaraButton
+            disabled={disabled}
+            onClick={onReplaceImage}
+            size={DaraButtonSize.Compact}
+            type="button"
+          >
             Replace image
-          </button>
+          </DaraButton>
         </div>
       </header>
 
@@ -806,13 +819,14 @@ export const OcclusionEditor = forwardRef<
           </header>
           <div className="occlusion-layer-list">
             {definition.layers.map((layer, index) => (
-              <button
+              <DaraButton
                 aria-pressed={layer.id === selectedLayer?.id}
                 className="occlusion-layer-row"
                 key={layer.id}
                 onClick={() =>
                   selectMask(layer.id, layer.masks[0]?.id ?? null)
                 }
+                size={DaraButtonSize.Custom}
                 type="button"
               >
                 <strong>{index + 1}</strong>
@@ -821,7 +835,7 @@ export const OcclusionEditor = forwardRef<
                   {layer.masks.length}{' '}
                   {layer.masks.length === 1 ? 'mask' : 'masks'}
                 </small>
-              </button>
+              </DaraButton>
             ))}
           </div>
 
@@ -851,16 +865,17 @@ export const OcclusionEditor = forwardRef<
               </label>
               <div className="occlusion-mask-tabs" aria-label="Masks in selected layer">
                 {selectedLayer.masks.map((mask, index) => (
-                  <button
+                  <DaraButton
                     aria-pressed={mask.id === selectedMask?.id}
                     key={mask.id}
                     onClick={() =>
                       selectMask(selectedLayer.id, mask.id)
                     }
+                    size={DaraButtonSize.Mini}
                     type="button"
                   >
                     Mask {index + 1}
-                  </button>
+                  </DaraButton>
                 ))}
               </div>
               {selectedMask && (
@@ -886,16 +901,24 @@ export const OcclusionEditor = forwardRef<
                 />
               )}
               <div className="occlusion-delete-actions">
-                <button
+                <DaraButton
                   disabled={disabled || !selectedMask}
                   onClick={removeSelectedMask}
+                  size={DaraButtonSize.Compact}
                   type="button"
+                  variant={DaraButtonVariant.Danger}
                 >
                   Delete mask
-                </button>
-                <button disabled={disabled} onClick={() => removeLayer(selectedLayer.id)} type="button">
+                </DaraButton>
+                <DaraButton
+                  disabled={disabled}
+                  onClick={() => removeLayer(selectedLayer.id)}
+                  size={DaraButtonSize.Compact}
+                  type="button"
+                  variant={DaraButtonVariant.Danger}
+                >
                   Delete layer
-                </button>
+                </DaraButton>
               </div>
             </div>
           ) : (

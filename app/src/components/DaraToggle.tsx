@@ -1,3 +1,6 @@
+import { DaraButton } from './DaraButton.tsx'
+import { DaraButtonSize, DaraButtonVariant } from './dara-button-types.ts'
+
 interface DaraToggleProps {
   checked: boolean
   disabled?: boolean
@@ -12,16 +15,18 @@ export function DaraToggle({
   onChange,
 }: DaraToggleProps) {
   return (
-    <button
+    <DaraButton
       aria-checked={checked}
       aria-label={label}
       className="dara-toggle"
       disabled={disabled}
       onClick={() => onChange(!checked)}
       role="switch"
+      size={DaraButtonSize.Custom}
       type="button"
+      variant={DaraButtonVariant.Custom}
     >
       <span aria-hidden="true" />
-    </button>
+    </DaraButton>
   )
 }

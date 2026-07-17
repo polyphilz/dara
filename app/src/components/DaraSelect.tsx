@@ -7,6 +7,8 @@ import {
   type MouseEvent,
 } from 'react'
 import { createPortal } from 'react-dom'
+import { DaraButton } from './DaraButton.tsx'
+import { DaraButtonSize, DaraButtonVariant } from './dara-button-types.ts'
 import './dara-select.css'
 
 export interface DaraSelectOption<Value extends string> {
@@ -205,7 +207,7 @@ export function DaraSelect<Value extends string>({
 
   return (
     <>
-      <button
+      <DaraButton
         aria-controls={open ? menuId : undefined}
         aria-expanded={open}
         aria-haspopup="listbox"
@@ -215,9 +217,11 @@ export function DaraSelect<Value extends string>({
         onKeyDown={handleTriggerKeyDown}
         onMouseDown={handleTriggerMouseDown}
         ref={triggerRef}
+        size={DaraButtonSize.Custom}
         tabIndex={tabIndex}
         title={title}
         type="button"
+        variant={DaraButtonVariant.Custom}
       >
         <span>{currentLabel}</span>
         <svg
@@ -227,7 +231,7 @@ export function DaraSelect<Value extends string>({
         >
           <path d="M1 1 5 5 9 1" />
         </svg>
-      </button>
+      </DaraButton>
       {open &&
         position &&
         createPortal(
@@ -243,7 +247,7 @@ export function DaraSelect<Value extends string>({
             {options.map((option, index) => {
               const selected = option.value === value
               return (
-                <button
+                <DaraButton
                   aria-selected={selected}
                   className={
                     selected
@@ -260,14 +264,16 @@ export function DaraSelect<Value extends string>({
                     optionRefs.current[index] = element
                   }}
                   role="option"
+                  size={DaraButtonSize.Custom}
                   tabIndex={selected ? 0 : -1}
                   type="button"
+                  variant={DaraButtonVariant.Custom}
                 >
                   <span aria-hidden="true" className="dara-select-check">
                     {selected ? '✓' : ''}
                   </span>
                   {option.label}
-                </button>
+                </DaraButton>
               )
             })}
           </div>,
