@@ -821,7 +821,7 @@ body {
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: 0 8px 10px;
+  padding: 5px 8px 10px;
   scrollbar-width: thin;
 }
 
