@@ -263,7 +263,10 @@ fn validate_fts(connection: &Connection) -> Result<()> {
 }
 
 fn validate_vec(connection: &mut Connection) -> Result<()> {
-    let vector = zero_vector_json(768);
+    let manifest = embedding_index::jina_v1_manifest();
+    // Cosine distance is undefined for an all-zero vector. Use a unit vector so
+    // this probe remains the exact nearest neighbor in a populated index.
+    let vector = basis_vector_json(manifest.dimension as usize, 0);
     let transaction = connection.transaction()?;
     transaction.execute(
         "INSERT INTO text_embedding_vec_jina_v1(rowid, embedding) VALUES(-1, ?1)",
@@ -299,14 +302,15 @@ fn table_exists(connection: &Connection, table: &str) -> Result<bool> {
     Ok(exists)
 }
 
-fn zero_vector_json(dimension: usize) -> String {
+fn basis_vector_json(dimension: usize, one_at: usize) -> String {
+    assert!(one_at < dimension);
     let mut vector = String::with_capacity(dimension * 2 + 1);
     vector.push('[');
     for index in 0..dimension {
         if index > 0 {
             vector.push(',');
         }
-        vector.push('0');
+        vector.push(if index == one_at { '1' } else { '0' });
     }
     vector.push(']');
     vector
@@ -327,4 +331,39 @@ fn invalid<T>(kind: DatabaseKind, reason: String) -> Result<T> {
         kind: kind.label(),
         reason,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vec_validation_succeeds_for_a_populated_cosine_index() {
+        connection::register_sqlite_vec().expect("sqlite-vec registration");
+        let mut connection = Connection::open_in_memory().expect("in-memory database");
+        connection
+            .execute_batch(
+                "CREATE VIRTUAL TABLE text_embedding_vec_jina_v1 USING vec0(
+                    embedding float[768] distance_metric=cosine
+                )",
+            )
+            .expect("vector table");
+        connection
+            .execute(
+                "INSERT INTO text_embedding_vec_jina_v1(rowid, embedding) VALUES(1, ?1)",
+                [basis_vector_json(768, 1)],
+            )
+            .expect("existing vector");
+
+        validate_vec(&mut connection).expect("populated vector-index validation");
+
+        let rows: i64 = connection
+            .query_row(
+                "SELECT count(*) FROM text_embedding_vec_jina_v1",
+                [],
+                |row| row.get(0),
+            )
+            .expect("vector count");
+        assert_eq!(rows, 1, "the smoke-test vector must be rolled back");
+    }
 }

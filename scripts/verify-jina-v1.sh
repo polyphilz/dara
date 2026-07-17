@@ -81,16 +81,19 @@ run_fixture() {
   prompt=$(jq -r --arg name "$name" '.cases[] | select(.name == $name) | .input' "$FIXTURES")
   output="$TMP_DIR/$name.json"
 
-  "$LLAMA_EMBEDDING" \
+  set -- \
     --model "$MODEL_FILE" \
     --pooling last \
     --embd-normalize 2 \
-    --embd-output-format json \
-    --device "$LLAMA_DEVICE" \
+    --embd-output-format json
+  if test "$LLAMA_DEVICE" != auto; then
+    set -- "$@" --device "$LLAMA_DEVICE"
+  fi
+  set -- "$@" \
     --n-gpu-layers "$LLAMA_GPU_LAYERS" \
     --seed 0 \
-    --prompt "$prompt" \
-    >"$output"
+    --prompt "$prompt"
+  "$LLAMA_EMBEDDING" "$@" >"$output"
 
   verify_output "$name" "$output" llama-embedding
 }
@@ -101,17 +104,20 @@ run_fixture document
 PORT=${DARA_JINA_TEST_PORT:-$((40000 + ($$ % 20000)))}
 SERVER_URL="http://127.0.0.1:$PORT"
 SERVER_LOG="$TMP_DIR/llama-server.log"
-"$LLAMA_SERVER" \
+set -- \
   --model "$MODEL_FILE" \
   --embedding \
   --pooling last \
-  --embd-normalize 2 \
-  --device "$LLAMA_DEVICE" \
+  --embd-normalize 2
+if test "$LLAMA_DEVICE" != auto; then
+  set -- "$@" --device "$LLAMA_DEVICE"
+fi
+set -- "$@" \
   --n-gpu-layers "$LLAMA_GPU_LAYERS" \
   --parallel 1 \
   --host 127.0.0.1 \
-  --port "$PORT" \
-  >"$SERVER_LOG" 2>&1 &
+  --port "$PORT"
+"$LLAMA_SERVER" "$@" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 attempt=0

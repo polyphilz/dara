@@ -16,7 +16,7 @@ A personal spaced-repetition app for macOS. Built to replace Anki after 6–7 ye
 - FSRS scheduling (same modern algorithm Anki uses), desired-retention as the single user-facing knob
 - Card types: markdown front/back, cloze deletion, image occlusion (N masks → N sibling cards)
 - Ephemeral Quick Add window (global hotkey, restores the prior app/window on dismiss) + full app window for reviewing/editing/searching
-- Hybrid search: instant lexical (FTS5) as you type, semantic (local text embeddings) on demand
+- Hybrid search on Enter: lexical FTS5 + local text embeddings fused with Reciprocal Rank Fusion
 - OCR on pasted images, so text inside screenshots is searchable
 - Edit / suspend / unsuspend / delete / undo-last-grade
 - AI mistake-explainer (BYOK or `codex exec`)
@@ -73,9 +73,29 @@ curl -fL --retry 3 \
 printf '%s  %s\n' "$MODEL_SHA256" "$MODEL_FILE" | shasum -a 256 -c -
 ```
 
+### Local development
+
+Repository-local model files belong in the ignored `models/` directory. The application normally
+downloads and verifies the pinned model beneath its Dara data directory; development can reuse a
+checked artifact and a local llama.cpp build explicitly:
+
+```sh
+cd app
+DARA_EMBEDDING_MODEL_PATH="$PWD/../models/v5-nano-retrieval-Q8_0.gguf" \
+DARA_LLAMA_SERVER_PATH=/opt/homebrew/bin/llama-server \
+  pnpm tauri dev
+```
+
+The development command keeps its databases under `app/.data/local/`. The model override changes
+only where model bytes are read from. Dara runs the manifest checksum and golden compatibility
+checks before first use and whenever the model, sidecar, inference settings, or verification
+contract changes. A successful check writes an atomic, machine-local derived receipt beneath the
+Dara data directory. An exact receipt match keeps the model unloaded until a hybrid query or stale
+document embedding actually needs inference; a runtime failure invalidates the receipt.
+
 ### Reproducing the sidecar
 
-Dara bundles `llama-server` as a sidecar and downloads the larger GGUF separately. Each release records the exact `llama.cpp` revision used to build that sidecar. The initial compatibility target is upstream commit `fdb1db877c526ec90f668eca1b858da5dba85560` (build 9860). Homebrew's formula moves over time, so build the recorded revision when reproducing a release:
+Dara's production distribution is designed to bundle `llama-server` as a sidecar and download the larger GGUF separately; distribution packaging remains a later milestone. Each release records the exact `llama.cpp` revision used to build that sidecar. The initial compatibility target is upstream commit `fdb1db877c526ec90f668eca1b858da5dba85560` (build 9860). Homebrew's formula moves over time, so build the recorded revision when reproducing a release:
 
 ```sh
 LLAMA_CPP_DIR="${TMPDIR:-/tmp}/dara-llama.cpp"
@@ -124,7 +144,7 @@ LLAMA_SERVER="$LLAMA_CPP_DIR/build/bin/llama-server" \
 The script defaults to the CPU backend for reproducibility. Before packaging a macOS release, run the same gate through Metal as well:
 
 ```sh
-LLAMA_DEVICE=MTL0 LLAMA_GPU_LAYERS=all \
+LLAMA_DEVICE=auto LLAMA_GPU_LAYERS=all \
 LLAMA_EMBEDDING="$LLAMA_CPP_DIR/build/bin/llama-embedding" \
 LLAMA_SERVER="$LLAMA_CPP_DIR/build/bin/llama-server" \
   ./scripts/verify-jina-v1.sh "$MODEL_FILE"
@@ -136,4 +156,4 @@ A new upstream GGUF or `llama.cpp` commit does not itself create a new index. Da
 
 ## Status
 
-Early development. The macOS windowing and SQLite foundations are implemented, together with BASIC and cloze capture/review, saved-card editing, lexical search, suspension, and tombstone deletion. Images/OCR, semantic search, and distribution remain under construction.
+Early development. The macOS windowing and SQLite foundations are implemented, together with all three card types, images/OCR, saved-card editing, suspension, tombstone deletion, and Enter-only local hybrid search. FSRS configurability and resilience work, the AI explainer, and distribution remain under construction.

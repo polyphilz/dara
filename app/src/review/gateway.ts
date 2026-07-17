@@ -12,6 +12,10 @@ import type {
   ReviewQueueSelection,
   SelectNextReviewCardInput,
   SearchCardContentInput,
+  SearchCardContentResult,
+  SearchMaintenanceOperation,
+  SearchMaintenanceReport,
+  SemanticSearchStatus,
   SetCardContentSuspendedInput,
   UndoLastGradeInput,
   UpdateCardContentInput,
@@ -45,8 +49,18 @@ export function updateCardContent(
 
 export function searchCardContent(
   input: SearchCardContentInput,
-): Promise<CardContentListItem[]> {
-  return invoke<CardContentListItem[]>('search_card_content', { input })
+): Promise<SearchCardContentResult> {
+  return invoke<SearchCardContentResult>('search_card_content', { input })
+}
+
+export function searchStatus(): Promise<SemanticSearchStatus> {
+  return invoke<SemanticSearchStatus>('search_status')
+}
+
+export function maintainSearch(
+  operation: SearchMaintenanceOperation,
+): Promise<SearchMaintenanceReport> {
+  return invoke<SearchMaintenanceReport>('maintain_search', { operation })
 }
 
 export function setCardContentSuspended(

@@ -1,5 +1,9 @@
 use std::sync::mpsc::{self, Sender, SyncSender};
 
+use super::embedding_index::{
+    EmbeddingIndexProgress, InstallEmbeddingDisposition, PendingEmbeddingDocument,
+    SearchMaintenanceOperation, SearchMaintenanceReport,
+};
 use super::snapshot::CreatedSnapshot;
 use super::{
     CanonicalImage, CardContentDraft, CardContentListItem, DatabaseError, DeleteCardContentInput,
@@ -23,6 +27,30 @@ pub(super) enum WriterMessage {
     SearchCardContent {
         input: SearchCardContentInput,
         reply: SyncSender<Result<Vec<CardContentListItem>>>,
+    },
+    HybridSearchCardContent {
+        input: SearchCardContentInput,
+        query_embedding: Vec<f32>,
+        reply: SyncSender<Result<Vec<CardContentListItem>>>,
+    },
+    LoadEmbeddingReconciliationBatch {
+        limit: i64,
+        reply: SyncSender<Result<Vec<PendingEmbeddingDocument>>>,
+    },
+    InstallTextEmbedding {
+        document: PendingEmbeddingDocument,
+        embedding: Vec<f32>,
+        reply: SyncSender<Result<InstallEmbeddingDisposition>>,
+    },
+    LoadEmbeddingIndexProgress {
+        reply: SyncSender<Result<EmbeddingIndexProgress>>,
+    },
+    ActivateEmbeddingIndexIfComplete {
+        reply: SyncSender<Result<bool>>,
+    },
+    MaintainSearch {
+        operation: SearchMaintenanceOperation,
+        reply: SyncSender<Result<SearchMaintenanceReport>>,
     },
     SetCardContentSuspended {
         input: SetCardContentSuspendedInput,
@@ -147,6 +175,88 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::SearchCardContent { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn hybrid_search_card_content(
+        &self,
+        input: SearchCardContentInput,
+        query_embedding: Vec<f32>,
+    ) -> Result<Vec<CardContentListItem>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::HybridSearchCardContent {
+                input,
+                query_embedding,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_embedding_reconciliation_batch(
+        &self,
+        limit: i64,
+    ) -> Result<Vec<PendingEmbeddingDocument>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadEmbeddingReconciliationBatch { limit, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn install_text_embedding(
+        &self,
+        document: PendingEmbeddingDocument,
+        embedding: Vec<f32>,
+    ) -> Result<InstallEmbeddingDisposition> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::InstallTextEmbedding {
+                document,
+                embedding,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_embedding_index_progress(&self) -> Result<EmbeddingIndexProgress> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadEmbeddingIndexProgress { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn activate_embedding_index_if_complete(&self) -> Result<bool> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::ActivateEmbeddingIndexIfComplete { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn maintain_search(
+        &self,
+        operation: SearchMaintenanceOperation,
+    ) -> Result<SearchMaintenanceReport> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::MaintainSearch { operation, reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

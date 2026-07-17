@@ -14,8 +14,9 @@ use super::{
         ReviewCardState, ReviewCardStatus, ReviewEventType, ReviewFact, SchedulerLogV1,
         SearchCardContentInput, SetCardContentSuspendedInput, UpdateCardContentInput,
     },
+    embedding_index::InstallEmbeddingDisposition,
     initialize, CanonicalImage, Database, DatabaseError, DatabasePaths, InitializationOptions,
-    RecordGradeInput, ReviewContext, UndoLastGradeInput,
+    RecordGradeInput, ReviewContext, SearchMaintenanceOperation, UndoLastGradeInput,
 };
 
 const FIXTURE_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -1618,6 +1619,126 @@ fn lexical_search_and_protected_edits_share_one_plain_text_document() {
         .expect("search document");
     assert!(body.contains("Why is aluminum used for overhead wire?"));
     assert!(!body.contains("**"));
+}
+
+#[test]
+fn semantic_index_reconciles_by_hash_activates_atomically_and_supports_hybrid_search() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let copper = database
+        .create_card_content(basic_draft(
+            "Why is copper conductive?",
+            "Its electrons are mobile.",
+            None,
+        ))
+        .expect("copper card");
+    database
+        .create_card_content(basic_draft(
+            "What causes ocean tides?",
+            "Mostly the Moon's gravity.",
+            None,
+        ))
+        .expect("tides card");
+
+    let client = database.client();
+    let pending = client
+        .load_embedding_reconciliation_batch(32)
+        .expect("pending embeddings");
+    assert_eq!(pending.len(), 2);
+    let copper_document = pending
+        .iter()
+        .find(|document| document.body.contains("copper"))
+        .expect("copper search document")
+        .clone();
+    for document in pending {
+        let dimension = if document.rowid == copper_document.rowid {
+            0
+        } else {
+            1
+        };
+        assert_eq!(
+            client
+                .install_text_embedding(document, unit_embedding(dimension))
+                .expect("install embedding"),
+            InstallEmbeddingDisposition::Installed
+        );
+    }
+    let progress = client
+        .load_embedding_index_progress()
+        .expect("embedding progress");
+    assert_eq!(progress.current_documents, 2);
+    assert_eq!(progress.total_documents, 2);
+    assert!(!progress.active);
+    assert!(client
+        .activate_embedding_index_if_complete()
+        .expect("activate complete index"));
+
+    let semantic = client
+        .hybrid_search_card_content(
+            SearchCardContentInput {
+                query: "???".into(),
+                limit: 20,
+                offset: 0,
+            },
+            unit_embedding(0),
+        )
+        .expect("semantic-only ranked query");
+    assert_eq!(semantic[0].card_content.id(), copper.card_content.id());
+
+    let updated = database
+        .update_card_content(UpdateCardContentInput {
+            id: copper.card_content.id().into(),
+            expected_updated_at: copper.card_content.updated_at(),
+            content: basic_draft(
+                "Why is aluminum useful for transmission lines?",
+                "It is light for its conductivity.",
+                None,
+            ),
+        })
+        .expect("edit invalidates embedding");
+    assert_eq!(
+        client
+            .install_text_embedding(copper_document, unit_embedding(0))
+            .expect("stale write is handled"),
+        InstallEmbeddingDisposition::Stale
+    );
+    let pending = client
+        .load_embedding_reconciliation_batch(32)
+        .expect("edited document is pending");
+    assert_eq!(pending.len(), 1);
+    assert!(pending[0].body.contains("aluminum"));
+    assert_eq!(
+        client
+            .install_text_embedding(pending[0].clone(), unit_embedding(0))
+            .expect("install refreshed embedding"),
+        InstallEmbeddingDisposition::Installed
+    );
+    assert_eq!(
+        database
+            .search_card_content(SearchCardContentInput {
+                query: "aluminum".into(),
+                limit: 20,
+                offset: 0,
+            })
+            .expect("updated lexical search")[0]
+            .card_content
+            .updated_at(),
+        updated.card_content.updated_at()
+    );
+
+    let report = client
+        .maintain_search(SearchMaintenanceOperation::RebuildFts)
+        .expect("rebuild FTS");
+    assert_eq!(report.search_documents, 2);
+    assert_eq!(report.fts_rows, 2);
+    assert_eq!(report.indexed_documents, 2);
+    assert!(report.semantic_index_active);
+}
+
+fn unit_embedding(dimension: usize) -> Vec<f32> {
+    let mut embedding = vec![0.0; 768];
+    embedding[dimension] = 1.0;
+    embedding
 }
 
 #[test]

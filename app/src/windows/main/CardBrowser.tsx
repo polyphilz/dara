@@ -1,3 +1,4 @@
+import { listen } from '@tauri-apps/api/event'
 import {
   useCallback,
   useEffect,
@@ -22,11 +23,15 @@ import {
   CardContentType,
   OcclusionMode,
   ReviewCardStatus,
+  SearchExecutionMode,
+  SemanticSearchPhase,
   deleteCardContent,
   searchCardContent,
+  searchStatus,
   setCardContentSuspended,
   type CardContentListItem,
   type ReviewCardListItem,
+  type SemanticSearchStatus,
 } from '../../review/index.ts'
 import { errorMessage } from '../../review/errors.ts'
 import { ReviewCardState } from '../../scheduling/index.ts'
@@ -37,6 +42,16 @@ import { CardFormVariant } from '../shared/card-form.ts'
 
 const SEARCH_PAGE_SIZE = 50
 const SEARCH_FETCH_LIMIT = SEARCH_PAGE_SIZE + 1
+const BROWSE_COMMAND_EVENT = 'browse-command'
+
+const BrowseCommand = {
+  FocusSearch: 'FOCUS_SEARCH',
+  ToggleSelectedSuspension: 'TOGGLE_SELECTED_SUSPENSION',
+} as const
+
+type BrowseCommand = (typeof BrowseCommand)[keyof typeof BrowseCommand]
+
+const browseCommands = new Set<BrowseCommand>(Object.values(BrowseCommand))
 
 interface CardBrowserProps {
   onCardContentChanged?: () => void
@@ -52,8 +67,11 @@ export function CardBrowser({
   refreshToken = 0,
 }: CardBrowserProps) {
   const searchRef = useRef<HTMLInputElement>(null)
+  const resultRefs = useRef(new Map<string, HTMLButtonElement>())
   const requestId = useRef(0)
   const [query, setQuery] = useState('')
+  const [submittedQuery, setSubmittedQuery] = useState('')
+  const [searchPending, setSearchPending] = useState(false)
   const [revision, setRevision] = useState(0)
   const [results, setResults] = useState<CardContentListItem[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -67,6 +85,11 @@ export function CardBrowser({
   const [hasMore, setHasMore] = useState(false)
   const [mutating, setMutating] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [searchMode, setSearchMode] = useState<SearchExecutionMode>(
+    SearchExecutionMode.Browse,
+  )
+  const [semanticStatus, setSemanticStatus] =
+    useState<SemanticSearchStatus | null>(null)
 
   const selected = useMemo(
     () => results.find((item) => item.cardContent.id === selectedId) ?? null,
@@ -103,22 +126,28 @@ export function CardBrowser({
   }, [reviewCards])
 
   useEffect(() => {
+    if (searchPending) {
+      return
+    }
     const currentRequest = ++requestId.current
     setLoading(true)
     setLoadingMore(false)
     setHasMore(false)
     setError(null)
     void searchCardContent({
-      query,
+      query: submittedQuery,
       limit: SEARCH_FETCH_LIMIT,
       offset: 0,
     })
-      .then((nextResults) => {
+      .then((result) => {
         if (requestId.current !== currentRequest) {
           return
         }
+        const nextResults = result.items
         const page = nextResults.slice(0, SEARCH_PAGE_SIZE)
         setResults(page)
+        setSearchMode(result.mode)
+        setSemanticStatus(result.semanticStatus)
         setHasMore(nextResults.length > SEARCH_PAGE_SIZE)
         setSelectedId((current) =>
           current && page.some((item) => item.cardContent.id === current)
@@ -136,7 +165,24 @@ export function CardBrowser({
           setLoading(false)
         }
       })
-  }, [query, refreshToken, revision])
+  }, [submittedQuery, refreshToken, revision, searchPending])
+
+  useEffect(() => {
+    if (
+      semanticStatus === null ||
+      semanticStatus.phase === SemanticSearchPhase.Ready ||
+      semanticStatus.phase === SemanticSearchPhase.Unavailable ||
+      semanticStatus.phase === SemanticSearchPhase.Failed
+    ) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      void searchStatus()
+        .then(setSemanticStatus)
+        .catch(() => undefined)
+    }, 1_000)
+    return () => window.clearInterval(timer)
+  }, [semanticStatus])
 
   const refresh = useCallback(() => {
     setRevision((value) => value + 1)
@@ -151,14 +197,16 @@ export function CardBrowser({
     setError(null)
     try {
       const nextResults = await searchCardContent({
-        query,
+        query: submittedQuery,
         limit: SEARCH_FETCH_LIMIT,
         offset: results.length,
       })
       if (requestId.current !== currentRequest) {
         return
       }
-      const page = nextResults.slice(0, SEARCH_PAGE_SIZE)
+      const page = nextResults.items.slice(0, SEARCH_PAGE_SIZE)
+      setSearchMode(nextResults.mode)
+      setSemanticStatus(nextResults.semanticStatus)
       setResults((current) => {
         const existingIds = new Set(
           current.map((item) => item.cardContent.id),
@@ -168,7 +216,7 @@ export function CardBrowser({
           ...page.filter((item) => !existingIds.has(item.cardContent.id)),
         ]
       })
-      setHasMore(nextResults.length > SEARCH_PAGE_SIZE)
+      setHasMore(nextResults.items.length > SEARCH_PAGE_SIZE)
     } catch (cause) {
       if (requestId.current === currentRequest) {
         setError(errorMessage(cause))
@@ -180,7 +228,7 @@ export function CardBrowser({
     }
   }
 
-  const moveSelection = (delta: -1 | 1) => {
+  const moveSelection = (delta: -1 | 1, moveFocus = false) => {
     if (results.length === 0) {
       return
     }
@@ -189,11 +237,56 @@ export function CardBrowser({
       results.findIndex((item) => item.cardContent.id === selectedId),
     )
     const nextIndex = Math.min(results.length - 1, Math.max(0, currentIndex + delta))
-    setSelectedId(results[nextIndex]!.cardContent.id)
+    const nextId = results[nextIndex]!.cardContent.id
+    setSelectedId(nextId)
     setConfirmingDelete(false)
+    if (moveFocus) {
+      resultRefs.current.get(nextId)?.focus()
+    }
   }
 
-  const toggleSuspended = async () => {
+  const clearSearch = () => {
+    requestId.current += 1
+    setQuery('')
+    setSubmittedQuery('')
+    setSearchPending(false)
+    setResults([])
+    setSelectedId(null)
+    setHasMore(false)
+    setRevision((value) => value + 1)
+  }
+
+  const updateQuery = (value: string) => {
+    setQuery(value)
+    if (value.trim()) {
+      setSearchPending(true)
+      requestId.current += 1
+      setResults([])
+      setSelectedId(null)
+      setHasMore(false)
+      setLoading(false)
+      setError(null)
+      return
+    }
+    clearSearch()
+  }
+
+  const submitSearch = () => {
+    if (!query.trim()) {
+      clearSearch()
+      return
+    }
+    setSubmittedQuery(query)
+    setSearchPending(false)
+    setRevision((value) => value + 1)
+  }
+
+  const focusSearch = useCallback(() => {
+    searchRef.current?.focus()
+    searchRef.current?.select()
+  }, [])
+
+  const toggleSuspended = useCallback(async () => {
     if (!selected || mutating) {
       return
     }
@@ -218,7 +311,78 @@ export function CardBrowser({
     } finally {
       setMutating(false)
     }
-  }
+  }, [mutating, onQueueChanged, refresh, selected])
+
+  const runBrowseCommand = useCallback(
+    (command: BrowseCommand) => {
+      if (editing) {
+        return
+      }
+      switch (command) {
+        case BrowseCommand.FocusSearch:
+          focusSearch()
+          return
+        case BrowseCommand.ToggleSelectedSuspension:
+          void toggleSuspended()
+          return
+        default:
+          return command satisfies never
+      }
+    },
+    [editing, focusSearch, toggleSuspended],
+  )
+  const runBrowseCommandRef = useRef(runBrowseCommand)
+  runBrowseCommandRef.current = runBrowseCommand
+
+  useEffect(() => {
+    const handleShortcut = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.isComposing ||
+        event.repeat ||
+        !event.metaKey ||
+        event.altKey ||
+        event.ctrlKey ||
+        event.shiftKey
+      ) {
+        return
+      }
+      const command =
+        event.code === 'KeyF'
+          ? BrowseCommand.FocusSearch
+          : event.code === 'KeyJ'
+            ? BrowseCommand.ToggleSelectedSuspension
+            : null
+      if (command === null) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      runBrowseCommandRef.current(command)
+    }
+    window.addEventListener('keydown', handleShortcut, { capture: true })
+    return () =>
+      window.removeEventListener('keydown', handleShortcut, { capture: true })
+  }, [])
+
+  useEffect(() => {
+    let disposed = false
+    let stopListening: (() => void) | undefined
+    void listen<unknown>(BROWSE_COMMAND_EVENT, (event) => {
+      if (isBrowseCommand(event.payload)) {
+        runBrowseCommandRef.current(event.payload)
+      }
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten()
+      } else {
+        stopListening = unlisten
+      }
+    })
+    return () => {
+      disposed = true
+      stopListening?.()
+    }
+  }, [])
 
   const removeSelected = async () => {
     if (!selected || mutating) {
@@ -248,14 +412,7 @@ export function CardBrowser({
       return
     }
     if (event.metaKey && !event.altKey && !event.ctrlKey) {
-      if (event.key.toLowerCase() === 'f') {
-        event.preventDefault()
-        searchRef.current?.focus()
-        searchRef.current?.select()
-      } else if (event.key.toLowerCase() === 'j') {
-        event.preventDefault()
-        void toggleSuspended()
-      } else if (event.key === 'Backspace' && selected) {
+      if (event.key === 'Backspace' && selected) {
         event.preventDefault()
         setConfirmingDelete(true)
       }
@@ -272,10 +429,10 @@ export function CardBrowser({
     }
     if (event.key === 'ArrowDown') {
       event.preventDefault()
-      moveSelection(1)
+      moveSelection(1, event.target instanceof Element && !!event.target.closest('.card-result'))
     } else if (event.key === 'ArrowUp') {
       event.preventDefault()
-      moveSelection(-1)
+      moveSelection(-1, event.target instanceof Element && !!event.target.closest('.card-result'))
     } else if (event.key === 'Enter' && selected) {
       event.preventDefault()
       setEditing(true)
@@ -283,8 +440,26 @@ export function CardBrowser({
       if (confirmingDelete) {
         setConfirmingDelete(false)
       } else if (query) {
-        setQuery('')
+        clearSearch()
+        searchRef.current?.focus()
       }
+    }
+  }
+
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing) {
+      return
+    }
+    if (event.key === 'Enter' && !event.metaKey && !event.altKey && !event.ctrlKey) {
+      event.preventDefault()
+      event.stopPropagation()
+      submitSearch()
+    } else if (event.key === 'ArrowDown' && results.length > 0) {
+      event.preventDefault()
+      event.stopPropagation()
+      const resultId = selectedId ?? results[0]!.cardContent.id
+      setSelectedId(resultId)
+      resultRefs.current.get(resultId)?.focus()
     }
   }
 
@@ -317,8 +492,9 @@ export function CardBrowser({
           <span aria-hidden="true">⌕</span>
           <DaraInput
             aria-label="Search cards"
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search every card"
+            onChange={(event) => updateQuery(event.target.value)}
+            onKeyDown={handleSearchKeyDown}
+            placeholder="Search every card · Enter"
             ref={searchRef}
             type="search"
             value={query}
@@ -327,9 +503,25 @@ export function CardBrowser({
         </div>
 
         <div className="card-result-summary" aria-live="polite">
-          <span>{query ? 'Matches' : 'All cards'}</span>
-          <span>{loading ? '…' : `${results.length}${hasMore ? '+' : ''}`}</span>
+          <span>{searchSummaryLabel(searchPending, searchMode)}</span>
+          <span>
+            {searchPending ? '↵' : loading ? '…' : `${results.length}${hasMore ? '+' : ''}`}
+          </span>
         </div>
+
+        {semanticStatus && semanticStatus.phase !== SemanticSearchPhase.Ready && (
+          <p
+            className={`semantic-search-status${semanticStatusShimmers(semanticStatus) ? ' semantic-search-status-shimmering' : ''}`}
+            data-shimmer-text={
+              semanticStatusShimmers(semanticStatus)
+                ? semanticStatusLabel(semanticStatus)
+                : undefined
+            }
+            role="status"
+          >
+            {semanticStatusLabel(semanticStatus)}
+          </p>
+        )}
 
         <div className="card-result-list" role="listbox" aria-label="Cards">
           {results.map((item) => {
@@ -346,6 +538,14 @@ export function CardBrowser({
                   setConfirmingDelete(false)
                 }}
                 onDoubleClick={() => setEditing(true)}
+                onFocus={() => setSelectedId(item.cardContent.id)}
+                ref={(element) => {
+                  if (element) {
+                    resultRefs.current.set(item.cardContent.id, element)
+                  } else {
+                    resultRefs.current.delete(item.cardContent.id)
+                  }
+                }}
                 role="option"
                 type="button"
               >
@@ -369,7 +569,9 @@ export function CardBrowser({
             )
           })}
           {!loading && results.length === 0 && (
-            <p className="card-result-empty">No cards found.</p>
+            <p className="card-result-empty">
+              {searchPending ? 'Press Enter to search.' : 'No cards found.'}
+            </p>
           )}
         </div>
         {hasMore && (
@@ -558,6 +760,61 @@ export function CardBrowser({
         )}
       </div>
     </section>
+  )
+}
+
+function isBrowseCommand(value: unknown): value is BrowseCommand {
+  return typeof value === 'string' && browseCommands.has(value as BrowseCommand)
+}
+
+function searchSummaryLabel(searchPending: boolean, mode: SearchExecutionMode): string {
+  if (searchPending) {
+    return 'Ready to search'
+  }
+  switch (mode) {
+    case SearchExecutionMode.Browse:
+      return 'All cards'
+    case SearchExecutionMode.Lexical:
+      return 'Lexical matches'
+    case SearchExecutionMode.Hybrid:
+      return 'Hybrid matches'
+    default:
+      return mode satisfies never
+  }
+}
+
+function semanticStatusLabel(status: SemanticSearchStatus): string {
+  switch (status.phase) {
+    case SemanticSearchPhase.Downloading: {
+      const percent =
+        status.modelBytes > 0
+          ? Math.min(100, Math.floor((status.downloadedBytes / status.modelBytes) * 100))
+          : 0
+      return `Preparing semantic search · ${percent}%`
+    }
+    case SemanticSearchPhase.Verifying:
+      return 'Verifying semantic search…'
+    case SemanticSearchPhase.Starting:
+      return 'Starting semantic search…'
+    case SemanticSearchPhase.Indexing:
+      return status.totalDocuments > 0
+        ? `Indexing cards · ${status.indexedDocuments}/${status.totalDocuments}`
+        : 'Preparing the semantic index…'
+    case SemanticSearchPhase.Unavailable:
+      return 'Semantic search unavailable · lexical search still works'
+    case SemanticSearchPhase.Failed:
+      return 'Semantic search needs attention · lexical search still works'
+    case SemanticSearchPhase.Ready:
+      return 'Semantic search ready'
+    default:
+      return status.phase satisfies never
+  }
+}
+
+function semanticStatusShimmers(status: SemanticSearchStatus): boolean {
+  return (
+    status.phase === SemanticSearchPhase.Verifying ||
+    status.phase === SemanticSearchPhase.Starting
   )
 }
 

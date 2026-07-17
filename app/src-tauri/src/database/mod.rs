@@ -1,7 +1,7 @@
 pub mod commands;
 mod connection;
 mod domain;
-mod embedding_index;
+pub(crate) mod embedding_index;
 mod error;
 mod media;
 mod migrations;
@@ -30,6 +30,7 @@ pub use domain::{
     ReviewMutationResult, SearchCardContentInput, SetCardContentSuspendedInput, UndoLastGradeInput,
     UpdateCardContentInput,
 };
+pub use embedding_index::{SearchMaintenanceOperation, SearchMaintenanceReport};
 pub use error::{DatabaseError, Result};
 pub(crate) use media::now_millis;
 pub use media::{
@@ -314,7 +315,69 @@ fn writer_loop(
                 ));
             }
             WriterMessage::SearchCardContent { input, reply } => {
-                let _ = reply.send(domain::search_card_content(&mut main, input));
+                let _ = reply.send(domain::search_card_content(&mut main, input, None));
+            }
+            WriterMessage::HybridSearchCardContent {
+                input,
+                query_embedding,
+                reply,
+            } => {
+                let _ = reply.send(domain::search_card_content(
+                    &mut main,
+                    input,
+                    Some(query_embedding),
+                ));
+            }
+            WriterMessage::LoadEmbeddingReconciliationBatch { limit, reply } => {
+                let result = main
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
+                    .map_err(Into::into)
+                    .and_then(|transaction| {
+                        embedding_index::load_reconciliation_batch(&transaction, limit)
+                    });
+                let _ = reply.send(result);
+            }
+            WriterMessage::InstallTextEmbedding {
+                document,
+                embedding,
+                reply,
+            } => {
+                let result = (|| {
+                    let transaction =
+                        main.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+                    let disposition =
+                        embedding_index::install_embedding(&transaction, &document, &embedding)?;
+                    transaction.commit()?;
+                    Ok(disposition)
+                })();
+                let _ = reply.send(result);
+            }
+            WriterMessage::LoadEmbeddingIndexProgress { reply } => {
+                let result = main
+                    .transaction_with_behavior(rusqlite::TransactionBehavior::Deferred)
+                    .map_err(Into::into)
+                    .and_then(|transaction| embedding_index::index_progress(&transaction));
+                let _ = reply.send(result);
+            }
+            WriterMessage::ActivateEmbeddingIndexIfComplete { reply } => {
+                let result = (|| {
+                    let transaction =
+                        main.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+                    let activated = embedding_index::activate_index_if_complete(&transaction)?;
+                    transaction.commit()?;
+                    Ok(activated)
+                })();
+                let _ = reply.send(result);
+            }
+            WriterMessage::MaintainSearch { operation, reply } => {
+                let result = (|| {
+                    let transaction =
+                        main.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+                    let report = embedding_index::maintain_search(&transaction, operation)?;
+                    transaction.commit()?;
+                    Ok(report)
+                })();
+                let _ = reply.send(result);
             }
             WriterMessage::SetCardContentSuspended { input, reply } => {
                 let _ = reply.send(domain::set_card_content_suspended(&mut main, input));

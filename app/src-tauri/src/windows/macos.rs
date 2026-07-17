@@ -20,8 +20,10 @@ const QUICK_ADD_LABEL: &str = "quick-add";
 const QUICK_ADD_SHORTCUT_LABEL: &str = "⌃⌥⌘D";
 const REVIEW_SHORTCUT_LABEL: &str = "⌃⌥⌘R";
 const TRAY_ID: &str = "dara-tray";
+const EDIT_MENU_TEXT: &str = "Edit";
 const VIEW_MENU_TEXT: &str = "View";
 const ZOOM_COMMAND_EVENT: &str = "app-zoom-command";
+const BROWSE_COMMAND_EVENT: &str = "browse-command";
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -42,6 +44,28 @@ impl AppZoomCommand {
 
     fn from_menu_id(id: &str) -> Option<Self> {
         [Self::ZoomIn, Self::ZoomOut, Self::Reset]
+            .into_iter()
+            .find(|command| command.menu_id() == id)
+    }
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+enum BrowseCommand {
+    FocusSearch,
+    ToggleSelectedSuspension,
+}
+
+impl BrowseCommand {
+    const fn menu_id(self) -> &'static str {
+        match self {
+            Self::FocusSearch => "browse-focus-search",
+            Self::ToggleSelectedSuspension => "browse-toggle-selected-suspension",
+        }
+    }
+
+    fn from_menu_id(id: &str) -> Option<Self> {
+        [Self::FocusSearch, Self::ToggleSelectedSuspension]
             .into_iter()
             .find(|command| command.menu_id() == id)
     }
@@ -135,6 +159,27 @@ pub fn setup(app: &mut App) -> tauri::Result<()> {
 
 fn install_application_menu(app: &mut App) -> tauri::Result<()> {
     let menu = Menu::default(app.handle())?;
+    if let Some(edit_menu) = menu.items()?.into_iter().find_map(|item| match item {
+        MenuItemKind::Submenu(submenu)
+            if submenu.text().ok().as_deref() == Some(EDIT_MENU_TEXT) =>
+        {
+            Some(submenu)
+        }
+        _ => None,
+    }) {
+        let separator = PredefinedMenuItem::separator(app)?;
+        let focus_search =
+            MenuItemBuilder::with_id(BrowseCommand::FocusSearch.menu_id(), "Find Cards")
+                .accelerator("CmdOrCtrl+F")
+                .build(app)?;
+        let toggle_suspension = MenuItemBuilder::with_id(
+            BrowseCommand::ToggleSelectedSuspension.menu_id(),
+            "Pause or Resume Card",
+        )
+        .accelerator("CmdOrCtrl+J")
+        .build(app)?;
+        edit_menu.append_items(&[&separator, &focus_search, &toggle_suspension])?;
+    }
     if let Some(view_menu) = menu.items()?.into_iter().find_map(|item| match item {
         MenuItemKind::Submenu(submenu)
             if submenu.text().ok().as_deref() == Some(VIEW_MENU_TEXT) =>
@@ -157,19 +202,31 @@ fn install_application_menu(app: &mut App) -> tauri::Result<()> {
     }
 
     app.on_menu_event(|app, event| {
-        let Some(command) = AppZoomCommand::from_menu_id(event.id().as_ref()) else {
+        if let Some(command) = AppZoomCommand::from_menu_id(event.id().as_ref()) {
+            let target = [QUICK_ADD_LABEL, MAIN_LABEL]
+                .into_iter()
+                .find(|label| {
+                    app.get_webview_window(label)
+                        .and_then(|window| window.is_focused().ok())
+                        .unwrap_or(false)
+                })
+                .unwrap_or(MAIN_LABEL);
+            if let Err(error) = app.emit_to(target, ZOOM_COMMAND_EVENT, command) {
+                log::error!("failed to dispatch zoom command: {error}");
+            }
+            return;
+        }
+        let Some(command) = BrowseCommand::from_menu_id(event.id().as_ref()) else {
             return;
         };
-        let target = [QUICK_ADD_LABEL, MAIN_LABEL]
-            .into_iter()
-            .find(|label| {
-                app.get_webview_window(label)
-                    .and_then(|window| window.is_focused().ok())
-                    .unwrap_or(false)
-            })
-            .unwrap_or(MAIN_LABEL);
-        if let Err(error) = app.emit_to(target, ZOOM_COMMAND_EVENT, command) {
-            log::error!("failed to dispatch zoom command: {error}");
+        let main_is_focused = app
+            .get_webview_window(MAIN_LABEL)
+            .and_then(|window| window.is_focused().ok())
+            .unwrap_or(false);
+        if main_is_focused {
+            if let Err(error) = app.emit_to(MAIN_LABEL, BROWSE_COMMAND_EVENT, command) {
+                log::error!("failed to dispatch Browse command: {error}");
+            }
         }
     });
     app.set_menu(menu)?;

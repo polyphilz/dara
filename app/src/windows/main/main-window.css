@@ -378,6 +378,52 @@ body {
   text-transform: uppercase;
 }
 
+.semantic-search-status {
+  margin: -2px 16px 8px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.semantic-search-status-shimmering {
+  position: relative;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  color: var(--muted);
+}
+
+.semantic-search-status-shimmering::after {
+  position: absolute;
+  inset: 0;
+  color: transparent;
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--ink) 50%,
+    transparent 100%
+  );
+  background-repeat: no-repeat;
+  background-position: -82% 50%;
+  background-size: 45% 100%;
+  background-clip: text;
+  content: attr(data-shimmer-text);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: semantic-search-status-shimmer 1.6s linear infinite;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@keyframes semantic-search-status-shimmer {
+  from {
+    background-position: -82% 50%;
+  }
+
+  to {
+    background-position: 182% 50%;
+  }
+}
+
 .card-result-list {
   flex: 1;
   overflow: auto;
@@ -432,8 +478,7 @@ body {
   font-size: 10px;
 }
 
-.suspended-badge,
-.detail-status {
+.suspended-badge {
   padding: 2px 6px;
   border-radius: 999px;
   color: var(--accent);
@@ -482,7 +527,8 @@ body {
   letter-spacing: 0.08em;
 }
 
-.occlusion-mode-badge {
+.occlusion-mode-badge,
+.detail-status {
   padding: 3px 7px;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -676,6 +722,12 @@ body {
 
   .card-detail-actions kbd {
     display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .semantic-search-status-shimmering::after {
+    content: none;
   }
 }
 

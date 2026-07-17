@@ -9,17 +9,27 @@ import {
   OcclusionMaskColor,
   OcclusionMode,
   ReviewCardStatus,
+  SearchExecutionMode,
+  SemanticSearchPhase,
   type CardContentListItem,
+  type SearchCardContentResult,
+  type SemanticSearchStatus,
 } from '../../../src/review/contracts.ts'
 import { ImageOcrStatus } from '../../../src/media/image-reference.ts'
 import { ReviewCardState } from '../../../src/scheduling/index.ts'
 
 const mocks = vi.hoisted(() => ({
   deleteCardContent: vi.fn(),
+  listen: vi.fn(),
   searchCardContent: vi.fn(),
+  searchStatus: vi.fn(),
   setCardContentSuspended: vi.fn(),
   updateCardContent: vi.fn(),
   renewMediaLease: vi.fn(),
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: mocks.listen,
 }))
 
 vi.mock('../../../src/media/gateway.ts', () => ({
@@ -33,6 +43,7 @@ vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
   createCardContent: vi.fn(),
   deleteCardContent: mocks.deleteCardContent,
   searchCardContent: mocks.searchCardContent,
+  searchStatus: mocks.searchStatus,
   setCardContentSuspended: mocks.setCardContentSuspended,
   updateCardContent: mocks.updateCardContent,
 }))
@@ -62,6 +73,23 @@ const activeItem: CardContentListItem = {
     },
   ],
   reviewStatus: CardContentReviewStatus.Active,
+}
+
+const readySemanticStatus: SemanticSearchStatus = {
+  phase: SemanticSearchPhase.Ready,
+  downloadedBytes: 232_883_776,
+  modelBytes: 232_883_776,
+  indexedDocuments: 3,
+  totalDocuments: 3,
+  message: null,
+}
+
+function searchResult(
+  items: CardContentListItem[],
+  mode: SearchExecutionMode = SearchExecutionMode.Browse,
+  semanticStatus: SemanticSearchStatus = readySemanticStatus,
+): SearchCardContentResult {
+  return { items, mode, semanticStatus }
 }
 
 const clozeItem: CardContentListItem = {
@@ -175,7 +203,9 @@ const occlusionItem: CardContentListItem = {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  mocks.searchCardContent.mockResolvedValue([activeItem])
+  mocks.listen.mockResolvedValue(() => undefined)
+  mocks.searchCardContent.mockResolvedValue(searchResult([activeItem]))
+  mocks.searchStatus.mockResolvedValue(readySemanticStatus)
   mocks.deleteCardContent.mockResolvedValue(undefined)
   mocks.setCardContentSuspended.mockResolvedValue({
     ...activeItem,
@@ -186,7 +216,7 @@ beforeEach(() => {
   mocks.renewMediaLease.mockResolvedValue(0)
 })
 
-test('searches immediately and toggles the selected authored item with Command-J', async () => {
+test('submits hybrid search on Enter and handles window-level Browse shortcuts', async () => {
   const onQueueChanged = vi.fn()
   const { getAllByText, getByLabelText, getByText } = render(
     <CardBrowser onQueueChanged={onQueueChanged} />,
@@ -201,13 +231,16 @@ test('searches immediately and toggles the selected authored item with Command-J
   })
   expect(getByText('Why is copper conductive?')).toBeTruthy()
 
-  const search = getByLabelText('Search cards')
+  const search = getByLabelText('Search cards') as HTMLInputElement
   expect(search.getAttribute('autocapitalize')).toBe('none')
   expect(search.getAttribute('autocomplete')).toBe('off')
   expect(search.getAttribute('autocorrect')).toBe('off')
   expect(search.getAttribute('spellcheck')).toBe('false')
   expect(search.getAttribute('writingsuggestions')).toBe('false')
   fireEvent.change(search, { target: { value: 'conduct' } })
+  expect(mocks.searchCardContent).toHaveBeenCalledTimes(1)
+  expect(getByText('Press Enter to search.')).toBeTruthy()
+  fireEvent.keyDown(search, { key: 'Enter' })
   await waitFor(() => {
     expect(mocks.searchCardContent).toHaveBeenLastCalledWith({
       query: 'conduct',
@@ -216,7 +249,24 @@ test('searches immediately and toggles the selected authored item with Command-J
     })
   })
 
-  fireEvent.keyDown(search, { key: 'j', metaKey: true })
+  const outside = document.createElement('button')
+  document.body.append(outside)
+  outside.focus()
+  fireEvent.keyDown(window, { code: 'KeyF', key: 'f', metaKey: true })
+  expect(document.activeElement).toBe(search)
+  expect(search.selectionStart).toBe(0)
+  expect(search.selectionEnd).toBe(search.value.length)
+  outside.remove()
+
+  await waitFor(() => {
+    expect(mocks.listen).toHaveBeenCalledWith('browse-command', expect.any(Function))
+  })
+  const nativeCommandListener = mocks.listen.mock.calls.find(
+    ([eventName]) => eventName === 'browse-command',
+  )?.[1] as ((event: { payload: unknown }) => void) | undefined
+  act(() => {
+    nativeCommandListener?.({ payload: 'TOGGLE_SELECTED_SUSPENSION' })
+  })
   await waitFor(() => {
     expect(mocks.setCardContentSuspended).toHaveBeenCalledWith({
       cardContentId: activeItem.cardContent.id,
@@ -228,6 +278,93 @@ test('searches immediately and toggles the selected authored item with Command-J
   expect(onQueueChanged).toHaveBeenCalledTimes(1)
 })
 
+test('clearing a submitted query immediately restores the all-cards view', async () => {
+  const { getByLabelText, getByText } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+  await waitFor(() => expect(getByText('Why is copper conductive?')).toBeTruthy())
+  const search = getByLabelText('Search cards')
+
+  fireEvent.change(search, { target: { value: 'copper' } })
+  fireEvent.keyDown(search, { key: 'Enter' })
+  await waitFor(() => {
+    expect(mocks.searchCardContent).toHaveBeenLastCalledWith({
+      query: 'copper',
+      limit: 51,
+      offset: 0,
+    })
+  })
+
+  const submittedCallCount = mocks.searchCardContent.mock.calls.length
+  fireEvent.change(search, { target: { value: 'coppers' } })
+  fireEvent.change(search, { target: { value: 'copper' } })
+  expect(mocks.searchCardContent).toHaveBeenCalledTimes(submittedCallCount)
+  expect(getByText('Press Enter to search.')).toBeTruthy()
+
+  fireEvent.change(search, { target: { value: '' } })
+  await waitFor(() => {
+    expect(mocks.searchCardContent).toHaveBeenLastCalledWith({
+      query: '',
+      limit: 51,
+      offset: 0,
+    })
+  })
+  expect(getByText('All cards')).toBeTruthy()
+})
+
+test('reports lexical fallback when semantic search is unavailable', async () => {
+  const unavailable: SemanticSearchStatus = {
+    ...readySemanticStatus,
+    phase: SemanticSearchPhase.Unavailable,
+    message: 'llama-server was not found',
+  }
+  mocks.searchCardContent.mockImplementation(({ query }: { query: string }) =>
+    Promise.resolve(
+      searchResult(
+        [activeItem],
+        query ? SearchExecutionMode.Lexical : SearchExecutionMode.Browse,
+        unavailable,
+      ),
+    ),
+  )
+  const { getByLabelText, getByText } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+  await waitFor(() =>
+    expect(
+      getByText('Semantic search unavailable · lexical search still works'),
+    ).toBeTruthy(),
+  )
+  const search = getByLabelText('Search cards')
+  fireEvent.change(search, { target: { value: 'copper' } })
+  fireEvent.keyDown(search, { key: 'Enter' })
+  await waitFor(() => expect(getByText('Lexical matches')).toBeTruthy())
+})
+
+test.each([
+  SemanticSearchPhase.Verifying,
+  SemanticSearchPhase.Starting,
+])('shimmers while semantic search is initializing in %s', async (phase) => {
+  const verifying: SemanticSearchStatus = {
+    ...readySemanticStatus,
+    phase,
+    message: 'Initializing semantic search',
+  }
+  mocks.searchCardContent.mockResolvedValue(
+    searchResult([activeItem], SearchExecutionMode.Browse, verifying),
+  )
+
+  const { getByRole } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+
+  await waitFor(() => {
+    expect(getByRole('status').classList).toContain(
+      'semantic-search-status-shimmering',
+    )
+  })
+})
+
 test('opens the selected BASIC card for editing and tombstone deletion requires confirmation', async () => {
   const onQueueChanged = vi.fn()
   const { getByLabelText, getByRole, getByText, queryByRole } = render(
@@ -235,7 +372,12 @@ test('opens the selected BASIC card for editing and tombstone deletion requires 
   )
   await waitFor(() => expect(getByText('Why is copper conductive?')).toBeTruthy())
 
-  fireEvent.keyDown(getByLabelText('Search cards'), { key: 'Enter' })
+  fireEvent.keyDown(getByLabelText('Search cards'), { key: 'ArrowDown' })
+  const selectedResult = getByRole('option', {
+    name: /Why is copper conductive/,
+  })
+  expect(document.activeElement).toBe(selectedResult)
+  fireEvent.keyDown(selectedResult, { key: 'Enter' })
   expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
   fireEvent.click(getByRole('button', { name: 'Cancel' }))
 
@@ -261,7 +403,7 @@ test('opens the selected BASIC card for editing and tombstone deletion requires 
 })
 
 test('renders and edits CLOZE content without exposing its stored delimiters', async () => {
-  mocks.searchCardContent.mockResolvedValue([clozeItem])
+  mocks.searchCardContent.mockResolvedValue(searchResult([clozeItem]))
   mocks.updateCardContent.mockResolvedValue({
     ...clozeItem,
     cardContent: {
@@ -326,7 +468,7 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
 })
 
 test('shows every occlusion review sibling and previews the selected layer', async () => {
-  mocks.searchCardContent.mockResolvedValue([occlusionItem])
+  mocks.searchCardContent.mockResolvedValue(searchResult([occlusionItem]))
   const { container, getByRole, getByText } = render(
     <CardBrowser onQueueChanged={vi.fn()} />,
   )
@@ -356,7 +498,8 @@ test('returns from edit mode when Browse is invoked again', async () => {
     <CardBrowser navigationToken={0} onQueueChanged={onQueueChanged} />,
   )
   await waitFor(() => expect(getByLabelText('Search cards')).toBeTruthy())
-  fireEvent.keyDown(getByLabelText('Search cards'), { key: 'Enter' })
+  fireEvent.keyDown(getByLabelText('Search cards'), { key: 'ArrowDown' })
+  fireEvent.keyDown(getByRole('option'), { key: 'Enter' })
   expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
 
   rerender(
@@ -382,7 +525,9 @@ test('loads Browse results incrementally beyond the first page', async () => {
   }))
   mocks.searchCardContent.mockImplementation(
     ({ offset }: { offset: number }) =>
-      Promise.resolve(offset === 0 ? items.slice(0, 51) : items.slice(offset)),
+      Promise.resolve(
+        searchResult(offset === 0 ? items.slice(0, 51) : items.slice(offset)),
+      ),
   )
   const { getAllByRole, getByRole } = render(
     <CardBrowser onQueueChanged={vi.fn()} />,

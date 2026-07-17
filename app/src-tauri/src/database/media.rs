@@ -1275,6 +1275,9 @@ fn rebuild_search_documents_for_image(
             .unwrap_or(current_body.as_str());
         let body = search_body_with_ocr(authored_body, &ocr_texts);
         let content_hash = Sha256::digest(body.as_bytes());
+        if current_body != body {
+            super::embedding_index::invalidate_card_content(transaction, &card_content_id)?;
+        }
         transaction.execute(
             "UPDATE search_document
              SET body = ?1, content_hash = ?2, updated_at = max(updated_at + 1, ?3)

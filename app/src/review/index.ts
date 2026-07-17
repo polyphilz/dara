@@ -7,7 +7,9 @@ export {
   createCardContent,
   deleteCardContent,
   loadHomeStats,
+  maintainSearch,
   searchCardContent,
+  searchStatus,
   setCardContentSuspended,
   tauriReviewGateway,
   updateCardContent,
@@ -22,5 +24,8 @@ export {
   ReviewCardStatus,
   ReviewQueueLane,
   ReviewQueueSelectionKind,
+  SearchExecutionMode,
+  SearchMaintenanceOperation,
+  SemanticSearchPhase,
 } from './contracts.ts'
 export type * from './contracts.ts'

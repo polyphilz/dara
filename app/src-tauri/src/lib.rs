@@ -1,6 +1,7 @@
 mod database;
 mod external;
 mod media;
+mod search;
 mod windows;
 
 use std::path::PathBuf;
@@ -28,9 +29,11 @@ pub fn run() {
             database::commands::load_home_stats,
             database::commands::load_review_context,
             database::commands::maintain_media,
+            database::commands::maintain_search,
             database::commands::record_grade,
             database::commands::renew_media_lease,
             database::commands::search_card_content,
+            database::commands::search_status,
             database::commands::select_next_review_card,
             database::commands::set_card_content_suspended,
             database::commands::undo_last_grade,
@@ -63,8 +66,15 @@ pub fn run() {
                 database::InitializationOptions::default(),
             )?;
             log::info!("database ready at {}", database.paths().root().display());
+            let resource_dir = app.path().resource_dir()?;
+            let search = search::SearchService::start(
+                database.client(),
+                database.paths().root(),
+                &resource_dir,
+            )?;
             let ocr = media::OcrCoordinator::start(database.client())?;
             app.manage(database);
+            app.manage(search);
             app.manage(ocr);
 
             windows::setup(app)?;
@@ -75,10 +85,13 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app, event| {
-        if matches!(event, RunEvent::Resumed) {
+        if matches!(&event, RunEvent::Resumed) {
             if let Err(error) = app.emit_to("main", "review-clock-refresh", ()) {
                 log::error!("failed to refresh review clock after wake: {error}");
             }
+        }
+        if matches!(&event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+            app.state::<search::SearchService>().shutdown();
         }
     });
 }

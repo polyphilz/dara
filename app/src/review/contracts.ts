@@ -270,6 +270,60 @@ export interface SearchCardContentInput {
   offset: number
 }
 
+export const SemanticSearchPhase = {
+  Downloading: 'DOWNLOADING',
+  Verifying: 'VERIFYING',
+  Starting: 'STARTING',
+  Indexing: 'INDEXING',
+  Ready: 'READY',
+  Unavailable: 'UNAVAILABLE',
+  Failed: 'FAILED',
+} as const
+
+export type SemanticSearchPhase =
+  (typeof SemanticSearchPhase)[keyof typeof SemanticSearchPhase]
+
+export const SearchExecutionMode = {
+  Browse: 'BROWSE',
+  Lexical: 'LEXICAL',
+  Hybrid: 'HYBRID',
+} as const
+
+export type SearchExecutionMode =
+  (typeof SearchExecutionMode)[keyof typeof SearchExecutionMode]
+
+export interface SemanticSearchStatus {
+  phase: SemanticSearchPhase
+  downloadedBytes: number
+  modelBytes: number
+  indexedDocuments: number
+  totalDocuments: number
+  message: string | null
+}
+
+export interface SearchCardContentResult {
+  items: CardContentListItem[]
+  mode: SearchExecutionMode
+  semanticStatus: SemanticSearchStatus
+}
+
+export const SearchMaintenanceOperation = {
+  IntegrityCheck: 'INTEGRITY_CHECK',
+  RebuildFts: 'REBUILD_FTS',
+} as const
+
+export type SearchMaintenanceOperation =
+  (typeof SearchMaintenanceOperation)[keyof typeof SearchMaintenanceOperation]
+
+export interface SearchMaintenanceReport {
+  operation: SearchMaintenanceOperation
+  searchDocuments: number
+  ftsRows: number
+  indexedDocuments: number
+  totalEmbeddingDocuments: number
+  semanticIndexActive: boolean
+}
+
 export interface SetCardContentSuspendedInput {
   cardContentId: string
   expectedLifecycleUpdatedAt: number

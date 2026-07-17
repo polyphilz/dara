@@ -1,12 +1,14 @@
 use serde::Serialize;
 use tauri::State;
 
+use crate::search::{SearchCardContentResult, SearchService, SemanticSearchStatus};
+
 use super::{
     CardContentDraft, CardContentListItem, Database, DatabaseError, DeleteCardContentInput,
     HomeStats, LoadHomeStatsInput, MediaMaintenanceReport, RecordGradeInput, ReviewContext,
-    ReviewMutationResult, ReviewQueueSelection, SearchCardContentInput, SelectNextReviewCardInput,
-    SetCardContentSuspendedInput, UndoLastGradeInput, UpdateCardContentInput,
-    MEDIA_ORPHAN_GRACE_MILLIS,
+    ReviewMutationResult, ReviewQueueSelection, SearchCardContentInput, SearchMaintenanceOperation,
+    SearchMaintenanceReport, SelectNextReviewCardInput, SetCardContentSuspendedInput,
+    UndoLastGradeInput, UpdateCardContentInput, MEDIA_ORPHAN_GRACE_MILLIS,
 };
 
 #[derive(Debug, Serialize)]
@@ -102,11 +104,25 @@ pub async fn maintain_media(
 
 #[tauri::command]
 pub async fn search_card_content(
-    database: State<'_, Database>,
+    search: State<'_, SearchService>,
     input: SearchCardContentInput,
-) -> CommandResult<Vec<CardContentListItem>> {
+) -> CommandResult<SearchCardContentResult> {
+    let search = search.inner().clone();
+    run_writer(move || search.search(input)).await
+}
+
+#[tauri::command]
+pub fn search_status(search: State<'_, SearchService>) -> SemanticSearchStatus {
+    search.status()
+}
+
+#[tauri::command]
+pub async fn maintain_search(
+    database: State<'_, Database>,
+    operation: SearchMaintenanceOperation,
+) -> CommandResult<SearchMaintenanceReport> {
     let client = database.client();
-    run_writer(move || client.search_card_content(input)).await
+    run_writer(move || client.maintain_search(operation)).await
 }
 
 #[tauri::command]

@@ -20,6 +20,7 @@ serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "tiff", "webp"] }
 pulldown-cmark = "0.13.0"
+reqwest = { version = "=0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
 tauri = { version = "2.11.3", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
@@ -37,6 +38,7 @@ webp = { version = "=0.3.1", default-features = false }
 tempfile = "3.23"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+libc = "=0.2.186"
 objc2 = "0.6.1"
 objc2-app-kit = "0.3.1"
 objc2-foundation = "0.3.2"

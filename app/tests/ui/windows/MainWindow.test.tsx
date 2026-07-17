@@ -7,6 +7,8 @@ import {
   CardContentType,
   ReviewCardStatus,
   ReviewQueueLane,
+  SearchExecutionMode,
+  SemanticSearchPhase,
 } from '../../../src/review/contracts.ts'
 import {
   ReviewControllerPhase,
@@ -62,7 +64,26 @@ vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
   createCardContent: mocks.createCardContent,
   deleteCardContent: vi.fn(),
   loadHomeStats: mocks.loadHomeStats,
-  searchCardContent: vi.fn().mockResolvedValue([]),
+  searchCardContent: vi.fn().mockResolvedValue({
+    items: [],
+    mode: SearchExecutionMode.Browse,
+    semanticStatus: {
+      phase: SemanticSearchPhase.Ready,
+      downloadedBytes: 0,
+      modelBytes: 0,
+      indexedDocuments: 0,
+      totalDocuments: 0,
+      message: null,
+    },
+  }),
+  searchStatus: vi.fn().mockResolvedValue({
+    phase: SemanticSearchPhase.Ready,
+    downloadedBytes: 0,
+    modelBytes: 0,
+    indexedDocuments: 0,
+    totalDocuments: 0,
+    message: null,
+  }),
   setCardContentSuspended: vi.fn(),
   updateCardContent: vi.fn(),
   ReviewController: class {

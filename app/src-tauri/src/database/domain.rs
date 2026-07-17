@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -29,6 +29,7 @@ pub(super) const SEARCH_FIELD_SEPARATOR: &str = "\n\u{1e}\n";
 const BASIC_VARIANT_KEY: &str = "basic";
 const CLOZE_VARIANT_PREFIX: &str = "cloze:";
 const OCCLUSION_VARIANT_PREFIX: &str = "layer:";
+const HYBRID_SEARCH_MIN_CANDIDATES: i64 = 200;
 const CARD_CONTENT_LIST_SELECT: &str = "
     WITH lifecycle AS (
         SELECT
@@ -780,11 +781,8 @@ pub(super) fn update_card_content(
     rebuild_search_document(
         &transaction,
         &input.id,
-        fields.search_md,
-        fields.back_md,
-        fields.source,
+        &fields,
         &image_references,
-        occlusion_source_image_id,
         updated_at,
     )?;
     media::sync_card_content_images(&transaction, &input.id, &image_references)?;
@@ -800,6 +798,7 @@ pub(super) fn update_card_content(
 pub(super) fn search_card_content(
     connection: &mut Connection,
     input: SearchCardContentInput,
+    query_embedding: Option<Vec<f32>>,
 ) -> Result<Vec<CardContentListItem>> {
     if !(1..=100).contains(&input.limit) {
         return Err(DatabaseError::InvalidInput(
@@ -808,9 +807,48 @@ pub(super) fn search_card_content(
     }
     validate_non_negative_safe(input.offset, "offset")?;
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+    if let Some(embedding) = query_embedding.as_deref() {
+        super::embedding_index::validate_embedding(
+            embedding,
+            super::embedding_index::jina_v1_manifest().dimension as usize,
+        )?;
+    }
     let terms = literal_search_terms(&input.query);
     let mut stored_results = Vec::new();
-    if !terms.is_empty() && terms.iter().all(|term| term.chars().count() >= 3) {
+    if input.query.trim().is_empty() {
+        let mut statement = transaction.prepare(&format!(
+            "{CARD_CONTENT_LIST_SELECT}
+             WHERE content.deleted_at IS NULL
+             ORDER BY content.updated_at DESC, content.id
+             LIMIT ?1 OFFSET ?2"
+        ))?;
+        let rows =
+            statement.query_map(params![input.limit, input.offset], card_content_list_row)?;
+        for row in rows {
+            stored_results.push(row?);
+        }
+    } else if let Some(embedding) = query_embedding.as_deref() {
+        let candidate_limit = input
+            .offset
+            .checked_add(input.limit)
+            .ok_or_else(|| DatabaseError::InvalidInput("search page is too large".into()))?
+            .clamp(HYBRID_SEARCH_MIN_CANDIDATES, 4_096);
+        let lexical_ids = lexical_ranked_ids(&transaction, &terms, candidate_limit)?;
+        let semantic_ids = semantic_ranked_ids(&transaction, embedding, candidate_limit)?;
+        let ranked_ids = reciprocal_rank_fusion(&lexical_ids, &semantic_ids);
+        let start = usize::try_from(input.offset)
+            .unwrap_or(usize::MAX)
+            .min(ranked_ids.len());
+        let end = start
+            .saturating_add(input.limit as usize)
+            .min(ranked_ids.len());
+        for card_content_id in &ranked_ids[start..end] {
+            stored_results.push(load_stored_card_content_list_item(
+                &transaction,
+                card_content_id,
+            )?);
+        }
+    } else if !terms.is_empty() && terms.iter().all(|term| term.chars().count() >= 3) {
         let fts_query = literal_trigram_query(&terms);
         let mut statement = transaction.prepare(&format!(
             "{CARD_CONTENT_LIST_SELECT}
@@ -855,24 +893,122 @@ pub(super) fn search_card_content(
         for row in rows {
             stored_results.push(row?);
         }
-    } else if input.query.trim().is_empty() {
-        let mut statement = transaction.prepare(&format!(
-            "{CARD_CONTENT_LIST_SELECT}
-             WHERE content.deleted_at IS NULL
-             ORDER BY content.updated_at DESC, content.id
-             LIMIT ?1 OFFSET ?2"
-        ))?;
-        let rows =
-            statement.query_map(params![input.limit, input.offset], card_content_list_row)?;
-        for row in rows {
-            stored_results.push(row?);
-        }
     }
     drop(transaction);
     stored_results
         .into_iter()
         .map(|item| hydrate_card_content_list_item(connection, item))
         .collect()
+}
+
+const RRF_RANK_CONSTANT: f64 = 60.0;
+
+fn lexical_ranked_ids(
+    transaction: &Transaction<'_>,
+    terms: &[String],
+    limit: i64,
+) -> Result<Vec<String>> {
+    if terms.is_empty() {
+        return Ok(Vec::new());
+    }
+    if terms.iter().all(|term| term.chars().count() >= 3) {
+        let fts_query = literal_trigram_query(terms);
+        let mut statement = transaction.prepare(
+            "SELECT content.id
+             FROM card_content AS content
+             JOIN search_document AS document ON document.card_content_id = content.id
+             JOIN search_document_fts ON search_document_fts.rowid = document.rowid
+             WHERE content.deleted_at IS NULL
+               AND search_document_fts MATCH ?1
+             ORDER BY bm25(search_document_fts), content.updated_at DESC, content.id
+             LIMIT ?2",
+        )?;
+        return statement
+            .query_map(params![fts_query, limit], |row| row.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(Into::into);
+    }
+
+    let predicates = terms
+        .iter()
+        .enumerate()
+        .map(|(index, _)| format!("instr(lower(document.body), lower(?{})) > 0", index + 1))
+        .collect::<Vec<_>>()
+        .join(" AND ");
+    let limit_parameter = terms.len() + 1;
+    let mut parameters = terms
+        .iter()
+        .cloned()
+        .map(SqlValue::Text)
+        .collect::<Vec<_>>();
+    parameters.push(SqlValue::Integer(limit));
+    let mut statement = transaction.prepare(&format!(
+        "SELECT content.id
+         FROM card_content AS content
+         JOIN search_document AS document ON document.card_content_id = content.id
+         WHERE content.deleted_at IS NULL
+           AND {predicates}
+         ORDER BY content.updated_at DESC, content.id
+         LIMIT ?{limit_parameter}"
+    ))?;
+    let rows = statement
+        .query_map(params_from_iter(parameters), |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+fn semantic_ranked_ids(
+    transaction: &Transaction<'_>,
+    embedding: &[f32],
+    limit: i64,
+) -> Result<Vec<String>> {
+    let vector_json = serde_json::to_string(embedding)?;
+    let manifest = super::embedding_index::jina_v1_manifest();
+    let mut statement = transaction.prepare(
+        "SELECT content.id
+         FROM (
+             SELECT rowid, distance
+             FROM text_embedding_vec_jina_v1
+             WHERE embedding MATCH ?1 AND k = ?2
+             ORDER BY distance
+         ) AS nearest
+         JOIN search_document AS document ON document.rowid = nearest.rowid
+         JOIN text_embedding AS metadata
+           ON metadata.search_document_id = document.rowid
+          AND metadata.text_embedding_index_id = ?3
+          AND metadata.content_hash = document.content_hash
+         JOIN app_settings AS settings
+           ON settings.singleton_id = 1
+          AND settings.active_text_embedding_index_id = metadata.text_embedding_index_id
+         JOIN card_content AS content ON content.id = document.card_content_id
+         WHERE content.deleted_at IS NULL
+         ORDER BY nearest.distance, content.updated_at DESC, content.id",
+    )?;
+    let rows = statement
+        .query_map(params![vector_json, limit, manifest.id], |row| row.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
+fn reciprocal_rank_fusion(lexical_ids: &[String], semantic_ids: &[String]) -> Vec<String> {
+    let mut scores = HashMap::<String, (f64, usize)>::new();
+    for ids in [lexical_ids, semantic_ids] {
+        for (index, id) in ids.iter().enumerate() {
+            let rank = index + 1;
+            let entry = scores.entry(id.clone()).or_insert((0.0, rank));
+            entry.0 += 1.0 / (RRF_RANK_CONSTANT + rank as f64);
+            entry.1 = entry.1.min(rank);
+        }
+    }
+    let mut ranked = scores.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|(left_id, left), (right_id, right)| {
+        right
+            .0
+            .total_cmp(&left.0)
+            .then_with(|| left.1.cmp(&right.1))
+            .then_with(|| left_id.cmp(right_id))
+    });
+    ranked.into_iter().map(|(id, _)| id).collect()
 }
 
 pub(super) fn set_card_content_suspended(
@@ -993,8 +1129,9 @@ pub(super) fn delete_card_content(
          WHERE card_content_id = ?3 AND deleted_at IS NULL",
         params![content_updated_at, now, input.card_content_id],
     )?;
-    // Search documents are derived rather than tombstoned. No embedding rows are
-    // produced before the complete-search milestone, so vector invalidation remains deferred.
+    // Search documents are derived rather than tombstoned. The vec0 table does
+    // not participate in the relational cascade, so remove its row first.
+    super::embedding_index::invalidate_card_content(&transaction, &input.card_content_id)?;
     transaction.execute(
         "DELETE FROM search_document WHERE card_content_id = ?1",
         [&input.card_content_id],
@@ -1034,15 +1171,17 @@ pub(super) fn load_review_context(
     validate_materialized_history(&cache, &review_history)?;
 
     Ok(ReviewContext {
-        card_content: card_content_from_fields(
+        card_content: hydrate_card_content(
             connection,
-            stored.content_id,
-            stored.content_created_at,
-            stored.content_updated_at,
-            stored.content_type,
-            stored.front_md,
-            stored.back_md,
-            stored.source,
+            StoredCardContentFields {
+                id: stored.content_id,
+                created_at: stored.content_created_at,
+                updated_at: stored.content_updated_at,
+                content_type: stored.content_type,
+                front_md: stored.front_md,
+                back_md: stored.back_md,
+                source: stored.source,
+            },
         )?,
         review_card: ReviewCardSummary {
             id: stored.card_id,
@@ -1863,22 +2002,30 @@ fn push_plain_text(output: &mut String, text: &str) {
 fn rebuild_search_document(
     transaction: &Transaction<'_>,
     card_content_id: &str,
-    front_md: &str,
-    back_md: &str,
-    source: Option<&str>,
+    fields: &DraftFields<'_>,
     image_references: &[media::ImageReference],
-    occlusion_source_image_id: Option<&str>,
     updated_at: i64,
 ) -> Result<()> {
+    let occlusion_source_image_id = fields
+        .occlusion
+        .map(|occlusion| occlusion.source_image_id.as_str());
     let body = search_body(
         transaction,
-        front_md,
-        back_md,
-        source,
+        fields.search_md,
+        fields.back_md,
+        fields.source,
         image_references,
         occlusion_source_image_id,
     )?;
     let content_hash = Sha256::digest(body.as_bytes());
+    let (search_document_id, previous_hash) = transaction.query_row(
+        "SELECT rowid, content_hash FROM search_document WHERE card_content_id = ?1",
+        [card_content_id],
+        |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+    )?;
+    if previous_hash.as_slice() != content_hash.as_slice() {
+        super::embedding_index::invalidate_search_document(transaction, search_document_id)?;
+    }
     let changed = transaction.execute(
         "UPDATE search_document
          SET body = ?1, content_hash = ?2, updated_at = ?3
@@ -1930,7 +2077,15 @@ fn load_card_content_list_item(
     connection: &Connection,
     card_content_id: &str,
 ) -> Result<CardContentListItem> {
-    let stored = connection
+    let stored = load_stored_card_content_list_item(connection, card_content_id)?;
+    hydrate_card_content_list_item(connection, stored)
+}
+
+fn load_stored_card_content_list_item(
+    connection: &Connection,
+    card_content_id: &str,
+) -> Result<StoredCardContentListItem> {
+    connection
         .query_row(
             &format!(
                 "{CARD_CONTENT_LIST_SELECT}
@@ -1943,8 +2098,7 @@ fn load_card_content_list_item(
         .ok_or_else(|| DatabaseError::NotFound {
             entity: "card content",
             id: card_content_id.to_owned(),
-        })?;
-    hydrate_card_content_list_item(connection, stored)
+        })
 }
 
 struct StoredCardContentFields {
@@ -2043,53 +2197,31 @@ fn hydrate_card_content(
     connection: &Connection,
     fields: StoredCardContentFields,
 ) -> Result<CardContent> {
-    card_content_from_fields(
-        connection,
-        fields.id,
-        fields.created_at,
-        fields.updated_at,
-        fields.content_type,
-        fields.front_md,
-        fields.back_md,
-        fields.source,
-    )
-}
-
-fn card_content_from_fields(
-    connection: &Connection,
-    id: String,
-    created_at: i64,
-    updated_at: i64,
-    content_type: CardContentType,
-    front_md: String,
-    back_md: String,
-    source: Option<String>,
-) -> Result<CardContent> {
-    Ok(match content_type {
+    Ok(match fields.content_type {
         CardContentType::Basic => CardContent::Basic {
-            id,
-            created_at,
-            updated_at,
-            front_md,
-            back_md,
-            source,
+            id: fields.id,
+            created_at: fields.created_at,
+            updated_at: fields.updated_at,
+            front_md: fields.front_md,
+            back_md: fields.back_md,
+            source: fields.source,
         },
         CardContentType::Cloze => CardContent::Cloze {
-            id,
-            created_at,
-            updated_at,
-            front_md,
-            back_md,
-            source,
+            id: fields.id,
+            created_at: fields.created_at,
+            updated_at: fields.updated_at,
+            front_md: fields.front_md,
+            back_md: fields.back_md,
+            source: fields.source,
         },
         CardContentType::Occlusion => CardContent::Occlusion {
-            occlusion: load_occlusion_definition(connection, &id)?,
-            id,
-            created_at,
-            updated_at,
-            front_md,
-            back_md,
-            source,
+            occlusion: load_occlusion_definition(connection, &fields.id)?,
+            id: fields.id,
+            created_at: fields.created_at,
+            updated_at: fields.updated_at,
+            front_md: fields.front_md,
+            back_md: fields.back_md,
+            source: fields.source,
         },
     })
 }
