@@ -680,6 +680,17 @@ export function CardBrowser({
                   )}
                 </section>
               )}
+              {(selected.cardContent.type === CardContentType.Basic ||
+                selected.cardContent.backMd.trim()) && (
+                  <section>
+                    <span>
+                      {selected.cardContent.type === CardContentType.Basic
+                        ? 'Back'
+                        : 'Extra'}
+                    </span>
+                    <MarkdownRenderer source={selected.cardContent.backMd} />
+                  </section>
+                )}
               {reviewCards.length > 0 && (
                 <section>
                   <span>Review cards · {reviewCards.length}</span>
@@ -728,17 +739,6 @@ export function CardBrowser({
                   </div>
                 </section>
               )}
-              {(selected.cardContent.type === CardContentType.Basic ||
-                selected.cardContent.backMd.trim()) && (
-                  <section>
-                    <span>
-                      {selected.cardContent.type === CardContentType.Basic
-                        ? 'Back'
-                        : 'Extra'}
-                    </span>
-                    <MarkdownRenderer source={selected.cardContent.backMd} />
-                  </section>
-                )}
               {selected.cardContent.source && (
                 <section>
                   <span>Source</span>

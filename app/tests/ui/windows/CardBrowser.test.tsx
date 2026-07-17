@@ -312,6 +312,32 @@ test('clearing a submitted query immediately restores the all-cards view', async
   expect(getByText('All cards')).toBeTruthy()
 })
 
+test.each([
+  [
+    'BASIC',
+    activeItem,
+    ['Front', 'Back', 'Review cards · 1', 'Source'],
+  ],
+  [
+    'CLOZE',
+    clozeItem,
+    ['Text', 'Extra', 'Review cards · 2', 'Source'],
+  ],
+])('keeps %s authored fields before review cards', async (_, item, labels) => {
+  mocks.searchCardContent.mockResolvedValue(searchResult([item]))
+  const { getByRole } = render(
+    <CardBrowser onQueueChanged={vi.fn()} />,
+  )
+
+  const article = await waitFor(() => getByRole('article'))
+  expect(
+    Array.from(
+      article.children,
+      (section) => section.firstElementChild?.textContent,
+    ),
+  ).toEqual(labels)
+})
+
 test('reports lexical fallback when semantic search is unavailable', async () => {
   const unavailable: SemanticSearchStatus = {
     ...readySemanticStatus,
