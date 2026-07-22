@@ -17,7 +17,7 @@
 .dara-select-trigger:hover:not(:disabled),
 .dara-select-trigger[aria-expanded='true'] {
   border-color: var(--accent);
-  color: var(--accent);
+  color: var(--ink);
   background: var(--accent-soft);
 }
 
@@ -87,7 +87,7 @@
 .dara-select-option:focus-visible,
 .dara-select-option-selected {
   outline: none;
-  color: var(--accent);
+  color: inherit;
   background: var(--accent-soft);
 }
 
