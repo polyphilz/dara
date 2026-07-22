@@ -1,6 +1,7 @@
 import { emit, listen } from '@tauri-apps/api/event'
 import { useEffect, useRef, type KeyboardEvent } from 'react'
 import { native } from '../../lib/native.ts'
+import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { CardForm, type CardFormHandle } from '../shared/CardForm.tsx'
 import { CardFormVariant } from '../shared/card-form.ts'
 
@@ -42,7 +43,7 @@ export function QuickAddWindow() {
     let disposed = false
     let stopListening: (() => void) | undefined
 
-    void listen('quick-add-shown', focusFront).then((unlisten) => {
+    void listen(DaraEvent.QuickAddShown, focusFront).then((unlisten) => {
       if (disposed) {
         unlisten()
       } else {
@@ -59,11 +60,12 @@ export function QuickAddWindow() {
   return (
     <main className="quick-add-shell" onKeyDownCapture={handleEscapeCapture}>
       <div className="quick-add-card">
+        <h1 className="visually-hidden">Quick add</h1>
         <CardForm
           onCancel={() => native.dismissQuickAdd()}
           onFileDialogOpenChange={setFileDialogOpen}
           onSaved={async () => {
-            await emit('card-created').catch((cause: unknown) => {
+            await emit(DaraEvent.CardCreated).catch((cause: unknown) => {
               console.error(
                 'Could not notify the review window about the new card',
                 cause,
