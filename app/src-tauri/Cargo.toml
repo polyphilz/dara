@@ -11,6 +11,9 @@ rust-version = "1.97.0"
 name = "dara_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+e2e = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
@@ -25,6 +28,8 @@ tauri = { version = "2.11.3", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-wdio = { version = "1", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 refinery = { version = "=0.9.2", features = ["rusqlite"] }
 rusqlite = { version = "=0.39.0", features = ["bundled"] }
 sha2 = "0.10.9"

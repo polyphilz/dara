@@ -1,0 +1,60 @@
+name: Tauri native macOS
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '43 7 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: tauri-native-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tauri-native-macos:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - run: pnpm install --frozen-lockfile
+      - name: Prove the ordinary Rust graph builds without E2E
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+      - name: Prove native test-driver isolation
+        run: pnpm test:native-bundle-safety
+      - name: Build and run serial native boundary suite
+        if: ${{ github.event_name != 'schedule' }}
+        continue-on-error: true
+        run: pnpm test:native
+      - name: Repeat native boundary suite from fresh data directories
+        if: ${{ github.event_name == 'schedule' }}
+        continue-on-error: true
+        run: pnpm test:native:stress
+      - name: Upload native diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tauri-native-diagnostics
+          path: |
+            app/logs/
+            app/test-results/native/run.json
+            app/test-results/native/stress.json
+          if-no-files-found: warn
+          retention-days: 14

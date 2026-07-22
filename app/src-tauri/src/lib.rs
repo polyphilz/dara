@@ -10,7 +10,13 @@ use tauri::{Emitter, Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(feature = "e2e")]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+
+    let app = builder
         .register_uri_scheme_protocol("dara-media", |context, request| {
             media::protocol_response(context.app_handle(), request)
         })
@@ -61,7 +67,7 @@ pub fn run() {
             windows::macos::show_quick_add,
         ])
         .setup(|app| {
-            if cfg!(debug_assertions) {
+            if cfg!(debug_assertions) && !cfg!(feature = "e2e") {
                 app.handle().plugin(
                     tauri_plugin_log::Builder::default()
                         .level(log::LevelFilter::Info)
