@@ -7,5 +7,7 @@ test('Quick Add focus outline at DPR 2', async ({ page }) => {
   )
   const surface = page.getByRole('region', { name: 'Quick add' })
   await expect(page.getByRole('textbox', { name: 'Front' })).toBeFocused()
-  await expect(surface).toHaveScreenshot('quick-add-focus-dpr2.png')
+  await expect(surface).toHaveScreenshot('quick-add-focus-dpr2.png', {
+    scale: 'device',
+  })
 })

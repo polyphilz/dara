@@ -7,5 +7,8 @@ test('shared control one-device-pixel details at DPR 2', async ({ page }) => {
     `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}&surface=${BrowserHarnessSurface.VisualCatalog}`,
   )
   await page.getByRole('button', { name: 'Catalog choice: Second option' }).focus()
-  await expect(page.locator('.visual-catalog')).toHaveScreenshot('controls-dpr2.png')
+  await expect(page.locator('.visual-catalog')).toHaveScreenshot(
+    'controls-dpr2.png',
+    { scale: 'device' },
+  )
 })
