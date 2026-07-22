@@ -1,0 +1,1243 @@
+{
+  "schemaVersion": 1,
+  "productionHtmlEntries": [
+    "index.html",
+    "quick-add.html"
+  ],
+  "moduleGraph": [
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/app-zoom-D97HNCK1.js",
+      "isEntry": false,
+      "modules": [
+        "\u0000vite/modulepreload-polyfill.js",
+        "node_modules/.pnpm/@fontsource-variable+reddit-mono@5.2.8/node_modules/@fontsource-variable/reddit-mono/wght.css",
+        "node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/core.js",
+        "node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/dpi.js",
+        "node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/event.js",
+        "node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/external/tslib/tslib.es6.js",
+        "node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/image.js",
+        "node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/webview.js",
+        "node_modules/.pnpm/@tauri-apps+api@2.11.1/node_modules/@tauri-apps/api/window.js",
+        "node_modules/.pnpm/bail@2.0.2/node_modules/bail/index.js",
+        "node_modules/.pnpm/ccount@2.0.1/node_modules/ccount/index.js",
+        "node_modules/.pnpm/decode-named-character-reference@1.3.0/node_modules/decode-named-character-reference/index.dom.js",
+        "node_modules/.pnpm/devlop@1.1.0/node_modules/devlop/lib/default.js",
+        "node_modules/.pnpm/escape-string-regexp@5.0.0/node_modules/escape-string-regexp/index.js",
+        "node_modules/.pnpm/extend@3.0.2/node_modules/extend/index.js",
+        "node_modules/.pnpm/is-plain-obj@4.1.0/node_modules/is-plain-obj/index.js",
+        "node_modules/.pnpm/katex@0.17.0/node_modules/katex/dist/katex.min.css",
+        "node_modules/.pnpm/katex@0.17.0/node_modules/katex/dist/katex.mjs",
+        "node_modules/.pnpm/longest-streak@3.1.0/node_modules/longest-streak/index.js",
+        "node_modules/.pnpm/markdown-table@3.0.4/node_modules/markdown-table/index.js",
+        "node_modules/.pnpm/mdast-util-find-and-replace@3.0.2/node_modules/mdast-util-find-and-replace/lib/index.js",
+        "node_modules/.pnpm/mdast-util-from-markdown@2.0.3/node_modules/mdast-util-from-markdown/lib/index.js",
+        "node_modules/.pnpm/mdast-util-gfm-autolink-literal@2.0.1/node_modules/mdast-util-gfm-autolink-literal/lib/index.js",
+        "node_modules/.pnpm/mdast-util-gfm-footnote@2.1.0/node_modules/mdast-util-gfm-footnote/lib/index.js",
+        "node_modules/.pnpm/mdast-util-gfm-strikethrough@2.0.0/node_modules/mdast-util-gfm-strikethrough/lib/index.js",
+        "node_modules/.pnpm/mdast-util-gfm-table@2.0.0/node_modules/mdast-util-gfm-table/lib/index.js",
+        "node_modules/.pnpm/mdast-util-gfm-task-list-item@2.0.0/node_modules/mdast-util-gfm-task-list-item/lib/index.js",
+        "node_modules/.pnpm/mdast-util-gfm@3.1.0/node_modules/mdast-util-gfm/lib/index.js",
+        "node_modules/.pnpm/mdast-util-math@3.0.0/node_modules/mdast-util-math/lib/index.js",
+        "node_modules/.pnpm/mdast-util-newline-to-break@2.0.0/node_modules/mdast-util-newline-to-break/lib/index.js",
+        "node_modules/.pnpm/mdast-util-phrasing@4.1.0/node_modules/mdast-util-phrasing/lib/index.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/configure.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/blockquote.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/break.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/code.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/definition.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/emphasis.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/heading.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/html.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/image-reference.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/image.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/index.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/inline-code.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/link-reference.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/link.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/list-item.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/list.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/paragraph.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/root.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/strong.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/text.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/handle/thematic-break.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/index.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/join.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/unsafe.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/association.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-bullet-ordered.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-bullet-other.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-bullet.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-emphasis.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-fence.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-list-item-indent.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-quote.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-rule-repetition.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-rule.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/check-strong.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/compile-pattern.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/container-flow.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/container-phrasing.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/encode-character-reference.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/encode-info.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/format-code-as-indented.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/format-heading-as-setext.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/format-link-as-autolink.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/indent-lines.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/pattern-in-scope.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/safe.js",
+        "node_modules/.pnpm/mdast-util-to-markdown@2.1.2/node_modules/mdast-util-to-markdown/lib/util/track.js",
+        "node_modules/.pnpm/mdast-util-to-string@4.0.0/node_modules/mdast-util-to-string/lib/index.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/attention.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/autolink.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/blank-line.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/block-quote.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/character-escape.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/character-reference.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/code-fenced.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/code-indented.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/code-text.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/content.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/definition.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/hard-break-escape.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/heading-atx.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/html-flow.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/html-text.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/label-end.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/label-start-image.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/label-start-link.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/line-ending.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/list.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/setext-underline.js",
+        "node_modules/.pnpm/micromark-core-commonmark@2.0.3/node_modules/micromark-core-commonmark/lib/thematic-break.js",
+        "node_modules/.pnpm/micromark-extension-gfm-autolink-literal@2.1.0/node_modules/micromark-extension-gfm-autolink-literal/lib/syntax.js",
+        "node_modules/.pnpm/micromark-extension-gfm-footnote@2.1.0/node_modules/micromark-extension-gfm-footnote/lib/syntax.js",
+        "node_modules/.pnpm/micromark-extension-gfm-strikethrough@2.1.0/node_modules/micromark-extension-gfm-strikethrough/lib/syntax.js",
+        "node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table/lib/edit-map.js",
+        "node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table/lib/infer.js",
+        "node_modules/.pnpm/micromark-extension-gfm-table@2.1.1/node_modules/micromark-extension-gfm-table/lib/syntax.js",
+        "node_modules/.pnpm/micromark-extension-gfm-task-list-item@2.1.0/node_modules/micromark-extension-gfm-task-list-item/lib/syntax.js",
+        "node_modules/.pnpm/micromark-extension-gfm@3.0.0/node_modules/micromark-extension-gfm/index.js",
+        "node_modules/.pnpm/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/lib/math-flow.js",
+        "node_modules/.pnpm/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/lib/math-text.js",
+        "node_modules/.pnpm/micromark-extension-math@3.1.0/node_modules/micromark-extension-math/lib/syntax.js",
+        "node_modules/.pnpm/micromark-factory-destination@2.0.1/node_modules/micromark-factory-destination/index.js",
+        "node_modules/.pnpm/micromark-factory-label@2.0.1/node_modules/micromark-factory-label/index.js",
+        "node_modules/.pnpm/micromark-factory-space@2.0.1/node_modules/micromark-factory-space/index.js",
+        "node_modules/.pnpm/micromark-factory-title@2.0.1/node_modules/micromark-factory-title/index.js",
+        "node_modules/.pnpm/micromark-factory-whitespace@2.0.1/node_modules/micromark-factory-whitespace/index.js",
+        "node_modules/.pnpm/micromark-util-character@2.1.1/node_modules/micromark-util-character/index.js",
+        "node_modules/.pnpm/micromark-util-chunked@2.0.1/node_modules/micromark-util-chunked/index.js",
+        "node_modules/.pnpm/micromark-util-classify-character@2.0.1/node_modules/micromark-util-classify-character/index.js",
+        "node_modules/.pnpm/micromark-util-combine-extensions@2.0.1/node_modules/micromark-util-combine-extensions/index.js",
+        "node_modules/.pnpm/micromark-util-decode-numeric-character-reference@2.0.2/node_modules/micromark-util-decode-numeric-character-reference/index.js",
+        "node_modules/.pnpm/micromark-util-decode-string@2.0.1/node_modules/micromark-util-decode-string/index.js",
+        "node_modules/.pnpm/micromark-util-html-tag-name@2.0.1/node_modules/micromark-util-html-tag-name/index.js",
+        "node_modules/.pnpm/micromark-util-normalize-identifier@2.0.1/node_modules/micromark-util-normalize-identifier/index.js",
+        "node_modules/.pnpm/micromark-util-resolve-all@2.0.1/node_modules/micromark-util-resolve-all/index.js",
+        "node_modules/.pnpm/micromark-util-subtokenize@2.1.0/node_modules/micromark-util-subtokenize/index.js",
+        "node_modules/.pnpm/micromark-util-subtokenize@2.1.0/node_modules/micromark-util-subtokenize/lib/splice-buffer.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/constructs.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/create-tokenizer.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/content.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/document.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/flow.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/initialize/text.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/parse.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/postprocess.js",
+        "node_modules/.pnpm/micromark@4.0.2/node_modules/micromark/lib/preprocess.js",
+        "node_modules/.pnpm/prosemirror-dropcursor@1.8.3/node_modules/prosemirror-dropcursor/dist/index.js",
+        "node_modules/.pnpm/prosemirror-gapcursor@1.4.1/node_modules/prosemirror-gapcursor/dist/index.js",
+        "node_modules/.pnpm/prosemirror-inputrules@1.5.1/node_modules/prosemirror-inputrules/dist/index.js",
+        "node_modules/.pnpm/prosemirror-keymap@1.2.3/node_modules/prosemirror-keymap/dist/index.js",
+        "node_modules/.pnpm/prosemirror-schema-basic@1.2.4/node_modules/prosemirror-schema-basic/dist/index.js",
+        "node_modules/.pnpm/prosemirror-schema-list@1.5.1/node_modules/prosemirror-schema-list/dist/index.js",
+        "node_modules/.pnpm/prosemirror-tables@1.8.5/node_modules/prosemirror-tables/dist/index.js",
+        "node_modules/.pnpm/prosemirror-view@1.42.1/node_modules/prosemirror-view/dist/index.js",
+        "node_modules/.pnpm/react-dom@19.2.7_react@19.2.7/node_modules/react-dom/cjs/react-dom-client.production.js",
+        "node_modules/.pnpm/react-dom@19.2.7_react@19.2.7/node_modules/react-dom/client.js",
+        "node_modules/.pnpm/remark-breaks@4.0.0/node_modules/remark-breaks/lib/index.js",
+        "node_modules/.pnpm/remark-gfm@4.0.1/node_modules/remark-gfm/lib/index.js",
+        "node_modules/.pnpm/remark-math@6.0.0/node_modules/remark-math/lib/index.js",
+        "node_modules/.pnpm/remark-parse@11.0.0/node_modules/remark-parse/lib/index.js",
+        "node_modules/.pnpm/remark-stringify@11.0.0/node_modules/remark-stringify/lib/index.js",
+        "node_modules/.pnpm/scheduler@0.27.0/node_modules/scheduler/cjs/scheduler.production.js",
+        "node_modules/.pnpm/scheduler@0.27.0/node_modules/scheduler/index.js",
+        "node_modules/.pnpm/trough@2.2.0/node_modules/trough/lib/index.js",
+        "node_modules/.pnpm/ts-fsrs@5.4.1/node_modules/ts-fsrs/dist/index.mjs",
+        "node_modules/.pnpm/unified@11.0.5/node_modules/unified/lib/callable-instance.js",
+        "node_modules/.pnpm/unified@11.0.5/node_modules/unified/lib/index.js",
+        "node_modules/.pnpm/unist-util-is@6.0.1/node_modules/unist-util-is/lib/index.js",
+        "node_modules/.pnpm/unist-util-stringify-position@4.0.0/node_modules/unist-util-stringify-position/lib/index.js",
+        "node_modules/.pnpm/unist-util-visit-parents@6.0.2/node_modules/unist-util-visit-parents/lib/color.js",
+        "node_modules/.pnpm/unist-util-visit-parents@6.0.2/node_modules/unist-util-visit-parents/lib/index.js",
+        "node_modules/.pnpm/unist-util-visit@5.1.0/node_modules/unist-util-visit/lib/index.js",
+        "node_modules/.pnpm/vfile-message@4.0.3/node_modules/vfile-message/lib/index.js",
+        "node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/index.js",
+        "node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minpath.browser.js",
+        "node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minproc.browser.js",
+        "node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minurl.browser.js",
+        "node_modules/.pnpm/vfile@6.0.3/node_modules/vfile/lib/minurl.shared.js",
+        "node_modules/.pnpm/zwitch@2.0.4/node_modules/zwitch/index.js",
+        "src/cloze/cloze.ts",
+        "src/components/DaraButton.tsx",
+        "src/components/DaraInput.tsx",
+        "src/components/DaraSelect.tsx",
+        "src/components/dara-button-types.ts",
+        "src/components/dara-button.css",
+        "src/components/dara-select.css",
+        "src/lib/native.ts",
+        "src/lib/tauri-contracts.ts",
+        "src/markdown/CodeLanguageMenu.tsx",
+        "src/markdown/ImageNodeView.ts",
+        "src/markdown/RichTextEditor.tsx",
+        "src/markdown/editor-schema.ts",
+        "src/markdown/editor-view-registry.ts",
+        "src/markdown/markdown-conversion.ts",
+        "src/markdown/rich-text-editor.css",
+        "src/markdown/url-policy.ts",
+        "src/media/gateway.ts",
+        "src/media/image-reference.ts",
+        "src/occlusion/OcclusionEditor.tsx",
+        "src/occlusion/OcclusionImageFrame.tsx",
+        "src/occlusion/OcclusionImagePicker.tsx",
+        "src/occlusion/geometry.ts",
+        "src/occlusion/image-formats.ts",
+        "src/occlusion/occlusion.css",
+        "src/review/contracts.ts",
+        "src/review/controller.ts",
+        "src/review/errors.ts",
+        "src/review/gateway.ts",
+        "src/review/index.ts",
+        "src/review/uuid-v7.ts",
+        "src/scheduling/config.ts",
+        "src/scheduling/index.ts",
+        "src/scheduling/maintenance.ts",
+        "src/scheduling/scheduler.ts",
+        "src/scheduling/study-clock.ts",
+        "src/scheduling/types.ts",
+        "src/settings/appearance.ts",
+        "src/settings/gateway.ts",
+        "src/settings/index.ts",
+        "src/settings/types.ts",
+        "src/styles/base.css",
+        "src/windows/shared/CardForm.tsx",
+        "src/windows/shared/basic-card-form.css",
+        "src/windows/shared/card-form.ts",
+        "src/zoom/app-zoom.ts"
+      ]
+    },
+    {
+      "facadeModuleId": "src/markdown/CodeBlockNodeView.ts",
+      "fileName": "assets/CodeBlockNodeView-Beb96e1G.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+commands@6.10.4/node_modules/@codemirror/commands/dist/index.js",
+        "src/markdown/CodeBlockNodeView.ts"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-python@6.2.1/node_modules/@codemirror/lang-python/dist/index.js",
+      "fileName": "assets/dist-BgxCxhJv.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-python@6.2.1/node_modules/@codemirror/lang-python/dist/index.js",
+        "node_modules/.pnpm/@lezer+python@1.1.19/node_modules/@lezer/python/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-markdown@6.5.0/node_modules/@codemirror/lang-markdown/dist/index.js",
+      "fileName": "assets/dist-BHasUbSO.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-markdown@6.5.0/node_modules/@codemirror/lang-markdown/dist/index.js",
+        "node_modules/.pnpm/@lezer+markdown@1.7.1/node_modules/@lezer/markdown/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-json@6.0.2/node_modules/@codemirror/lang-json/dist/index.js",
+      "fileName": "assets/dist-BpThq9PP.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-json@6.0.2/node_modules/@codemirror/lang-json/dist/index.js",
+        "node_modules/.pnpm/@lezer+json@1.0.3/node_modules/@lezer/json/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/dist-BsMqfhyJ.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-css@6.3.1/node_modules/@codemirror/lang-css/dist/index.js",
+        "node_modules/.pnpm/@lezer+css@1.3.4/node_modules/@lezer/css/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/dist-c5ZE_DOB.js",
+      "isEntry": false,
+      "modules": [
+        "\u0000@oxc-project+runtime@0.139.0/helpers/esm/defineProperty.js",
+        "\u0000@oxc-project+runtime@0.139.0/helpers/esm/toPrimitive.js",
+        "\u0000@oxc-project+runtime@0.139.0/helpers/esm/toPropertyKey.js",
+        "\u0000@oxc-project+runtime@0.139.0/helpers/esm/typeof.js",
+        "node_modules/.pnpm/orderedmap@2.1.1/node_modules/orderedmap/dist/index.js",
+        "node_modules/.pnpm/prosemirror-commands@1.7.1/node_modules/prosemirror-commands/dist/index.js",
+        "node_modules/.pnpm/prosemirror-history@1.5.0/node_modules/prosemirror-history/dist/index.js",
+        "node_modules/.pnpm/prosemirror-model@1.25.11/node_modules/prosemirror-model/dist/index.js",
+        "node_modules/.pnpm/prosemirror-state@1.4.4/node_modules/prosemirror-state/dist/index.js",
+        "node_modules/.pnpm/prosemirror-transform@1.12.0/node_modules/prosemirror-transform/dist/index.js",
+        "node_modules/.pnpm/rope-sequence@1.3.4/node_modules/rope-sequence/dist/index.js",
+        "src/components/writing-assistance.ts",
+        "src/markdown/languages.ts"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-html@6.4.11/node_modules/@codemirror/lang-html/dist/index.js",
+      "fileName": "assets/dist-CHuKjrBw.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-html@6.4.11/node_modules/@codemirror/lang-html/dist/index.js",
+        "node_modules/.pnpm/@lezer+html@1.3.13/node_modules/@lezer/html/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-java@6.0.2/node_modules/@codemirror/lang-java/dist/index.js",
+      "fileName": "assets/dist-CJbrm2oc.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-java@6.0.2/node_modules/@codemirror/lang-java/dist/index.js",
+        "node_modules/.pnpm/@lezer+java@1.1.3/node_modules/@lezer/java/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-cpp@6.0.3/node_modules/@codemirror/lang-cpp/dist/index.js",
+      "fileName": "assets/dist-Ck3TtbgS.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-cpp@6.0.3/node_modules/@codemirror/lang-cpp/dist/index.js",
+        "node_modules/.pnpm/@lezer+cpp@1.1.6/node_modules/@lezer/cpp/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/dist-ClGu8AXG.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-javascript@6.2.5/node_modules/@codemirror/lang-javascript/dist/index.js",
+        "node_modules/.pnpm/@lezer+javascript@1.5.4/node_modules/@lezer/javascript/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/dist-CqRsFdSK.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@lezer+lr@1.4.10/node_modules/@lezer/lr/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/dist-CtumrwL1.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+autocomplete@6.20.3/node_modules/@codemirror/autocomplete/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-go@6.0.1/node_modules/@codemirror/lang-go/dist/index.js",
+      "fileName": "assets/dist-D3mVsjjm.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-go@6.0.1/node_modules/@codemirror/lang-go/dist/index.js",
+        "node_modules/.pnpm/@lezer+go@1.0.1/node_modules/@lezer/go/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-rust@6.0.2/node_modules/@codemirror/lang-rust/dist/index.js",
+      "fileName": "assets/dist-Da3pFdZr.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-rust@6.0.2/node_modules/@codemirror/lang-rust/dist/index.js",
+        "node_modules/.pnpm/@lezer+rust@1.0.2/node_modules/@lezer/rust/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-sql@6.10.0/node_modules/@codemirror/lang-sql/dist/index.js",
+      "fileName": "assets/dist-DvBpUWej.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-sql@6.10.0/node_modules/@codemirror/lang-sql/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-xml@6.1.0/node_modules/@codemirror/lang-xml/dist/index.js",
+      "fileName": "assets/dist-DwOJgjuS.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-xml@6.1.0/node_modules/@codemirror/lang-xml/dist/index.js",
+        "node_modules/.pnpm/@lezer+xml@1.0.6/node_modules/@lezer/xml/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/dist-DZrxVdSw.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+language@6.12.4/node_modules/@codemirror/language/dist/index.js",
+        "node_modules/.pnpm/@codemirror+state@6.7.1/node_modules/@codemirror/state/dist/index.js",
+        "node_modules/.pnpm/@codemirror+view@6.43.6/node_modules/@codemirror/view/dist/index.js",
+        "node_modules/.pnpm/@lezer+common@1.5.2/node_modules/@lezer/common/dist/index.js",
+        "node_modules/.pnpm/@lezer+highlight@1.2.3/node_modules/@lezer/highlight/dist/index.js",
+        "node_modules/.pnpm/@marijn+find-cluster-break@1.0.3/node_modules/@marijn/find-cluster-break/src/index.js",
+        "node_modules/.pnpm/style-mod@4.1.3/node_modules/style-mod/src/style-mod.js"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/@codemirror+lang-yaml@6.1.3/node_modules/@codemirror/lang-yaml/dist/index.js",
+      "fileName": "assets/dist-uh18tg46.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@codemirror+lang-yaml@6.1.3/node_modules/@codemirror/lang-yaml/dist/index.js",
+        "node_modules/.pnpm/@lezer+yaml@1.0.4/node_modules/@lezer/yaml/dist/index.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/index-B3Gga1-_-CVoDKvbt.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/_lib/addLeadingZeros.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/_lib/getTimezoneOffsetInMilliseconds.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/_lib/normalizeDates.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/_lib/normalizeInterval.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/addDays.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/addWeeks.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/constants.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/constructFrom.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/differenceInCalendarDays.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/eachDayOfInterval.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/formatISO.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/getDay.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/getMonth.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/getYear.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/isDate.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/isValid.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/nextDay.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/parseISO.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/startOfDay.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/subWeeks.js",
+        "node_modules/.pnpm/date-fns@4.4.0/node_modules/date-fns/toDate.js",
+        "node_modules/.pnpm/react-activity-calendar@3.2.1_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/react-activity-calendar/build/chunks/index-B3Gga1-_.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/jsx-runtime-B8yzmMeA.js",
+      "isEntry": false,
+      "modules": [
+        "\u0000rolldown/runtime.js",
+        "node_modules/.pnpm/react-dom@19.2.7_react@19.2.7/node_modules/react-dom/cjs/react-dom.production.js",
+        "node_modules/.pnpm/react-dom@19.2.7_react@19.2.7/node_modules/react-dom/index.js",
+        "node_modules/.pnpm/react@19.2.7/node_modules/react/cjs/react-jsx-runtime.production.js",
+        "node_modules/.pnpm/react@19.2.7/node_modules/react/cjs/react.production.js",
+        "node_modules/.pnpm/react@19.2.7/node_modules/react/index.js",
+        "node_modules/.pnpm/react@19.2.7/node_modules/react/jsx-runtime.js"
+      ]
+    },
+    {
+      "facadeModuleId": "index.html",
+      "fileName": "assets/main-2EO0kcoU.js",
+      "isEntry": true,
+      "modules": [
+        "index.html",
+        "node_modules/.pnpm/@ungap+structured-clone@1.3.3/node_modules/@ungap/structured-clone/esm/deserialize.js",
+        "node_modules/.pnpm/@ungap+structured-clone@1.3.3/node_modules/@ungap/structured-clone/esm/index.js",
+        "node_modules/.pnpm/@ungap+structured-clone@1.3.3/node_modules/@ungap/structured-clone/esm/serialize.js",
+        "node_modules/.pnpm/comma-separated-tokens@2.0.3/node_modules/comma-separated-tokens/index.js",
+        "node_modules/.pnpm/estree-util-is-identifier-name@3.0.0/node_modules/estree-util-is-identifier-name/lib/index.js",
+        "node_modules/.pnpm/hast-util-from-dom@5.0.1/node_modules/hast-util-from-dom/lib/index.js",
+        "node_modules/.pnpm/hast-util-from-html-isomorphic@2.0.0/node_modules/hast-util-from-html-isomorphic/lib/browser.js",
+        "node_modules/.pnpm/hast-util-is-element@3.0.0/node_modules/hast-util-is-element/lib/index.js",
+        "node_modules/.pnpm/hast-util-parse-selector@4.0.0/node_modules/hast-util-parse-selector/lib/index.js",
+        "node_modules/.pnpm/hast-util-sanitize@5.0.2/node_modules/hast-util-sanitize/lib/index.js",
+        "node_modules/.pnpm/hast-util-sanitize@5.0.2/node_modules/hast-util-sanitize/lib/schema.js",
+        "node_modules/.pnpm/hast-util-to-jsx-runtime@2.3.6/node_modules/hast-util-to-jsx-runtime/lib/index.js",
+        "node_modules/.pnpm/hast-util-to-text@4.0.2/node_modules/hast-util-to-text/lib/index.js",
+        "node_modules/.pnpm/hast-util-whitespace@3.0.0/node_modules/hast-util-whitespace/lib/index.js",
+        "node_modules/.pnpm/hastscript@9.0.1/node_modules/hastscript/lib/create-h.js",
+        "node_modules/.pnpm/hastscript@9.0.1/node_modules/hastscript/lib/index.js",
+        "node_modules/.pnpm/hastscript@9.0.1/node_modules/hastscript/lib/svg-case-sensitive-tag-names.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/core.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/arduino.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/bash.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/c.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/cpp.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/csharp.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/css.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/diff.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/go.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/graphql.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/ini.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/java.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/javascript.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/json.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/kotlin.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/less.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/lua.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/makefile.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/markdown.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/objectivec.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/perl.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/php-template.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/php.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/plaintext.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/python-repl.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/python.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/r.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/ruby.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/rust.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/scss.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/shell.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/sql.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/swift.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/typescript.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/vbnet.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/wasm.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/xml.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/es/languages/yaml.js",
+        "node_modules/.pnpm/highlight.js@11.11.1/node_modules/highlight.js/lib/core.js",
+        "node_modules/.pnpm/html-url-attributes@3.0.1/node_modules/html-url-attributes/lib/index.js",
+        "node_modules/.pnpm/inline-style-parser@0.2.7/node_modules/inline-style-parser/cjs/index.js",
+        "node_modules/.pnpm/katex@0.16.47/node_modules/katex/dist/katex.mjs",
+        "node_modules/.pnpm/lowlight@3.3.0/node_modules/lowlight/lib/common.js",
+        "node_modules/.pnpm/lowlight@3.3.0/node_modules/lowlight/lib/index.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/footer.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/blockquote.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/break.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/code.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/delete.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/emphasis.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/footnote-reference.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/heading.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/html.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/image-reference.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/image.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/index.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/inline-code.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/link-reference.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/link.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/list-item.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/list.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/paragraph.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/root.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/strong.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table-cell.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table-row.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/table.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/text.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/handlers/thematic-break.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/index.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/revert.js",
+        "node_modules/.pnpm/mdast-util-to-hast@13.2.1/node_modules/mdast-util-to-hast/lib/state.js",
+        "node_modules/.pnpm/micromark-util-sanitize-uri@2.0.1/node_modules/micromark-util-sanitize-uri/index.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/index.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/aria.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/find.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/hast-to-react.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/html.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/normalize.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/svg.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/case-insensitive-transform.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/case-sensitive-transform.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/create.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/defined-info.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/info.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/merge.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/schema.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/util/types.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/xlink.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/xml.js",
+        "node_modules/.pnpm/property-information@7.2.0/node_modules/property-information/lib/xmlns.js",
+        "node_modules/.pnpm/react-activity-calendar@3.2.1_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/react-activity-calendar/build/index.js",
+        "node_modules/.pnpm/react-activity-calendar@3.2.1_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/react-activity-calendar/build/tooltips.css",
+        "node_modules/.pnpm/react-markdown@10.1.0_@types+react@19.2.17_react@19.2.7/node_modules/react-markdown/lib/index.js",
+        "node_modules/.pnpm/rehype-highlight@7.0.2/node_modules/rehype-highlight/lib/index.js",
+        "node_modules/.pnpm/rehype-katex@7.0.1/node_modules/rehype-katex/lib/index.js",
+        "node_modules/.pnpm/rehype-sanitize@6.0.0/node_modules/rehype-sanitize/lib/index.js",
+        "node_modules/.pnpm/remark-rehype@11.1.2/node_modules/remark-rehype/lib/index.js",
+        "node_modules/.pnpm/space-separated-tokens@2.0.2/node_modules/space-separated-tokens/index.js",
+        "node_modules/.pnpm/style-to-js@1.1.21/node_modules/style-to-js/cjs/index.js",
+        "node_modules/.pnpm/style-to-js@1.1.21/node_modules/style-to-js/cjs/utilities.js",
+        "node_modules/.pnpm/style-to-object@1.0.14/node_modules/style-to-object/cjs/index.js",
+        "node_modules/.pnpm/trim-lines@3.0.1/node_modules/trim-lines/index.js",
+        "node_modules/.pnpm/unist-util-find-after@5.0.0/node_modules/unist-util-find-after/lib/index.js",
+        "node_modules/.pnpm/unist-util-position@5.0.0/node_modules/unist-util-position/lib/index.js",
+        "node_modules/.pnpm/web-namespaces@2.0.1/node_modules/web-namespaces/index.js",
+        "src/cloze/ClozeMarkdownRenderer.tsx",
+        "src/components/DaraPercentageControl.tsx",
+        "src/components/DaraShortcutRecorder.tsx",
+        "src/components/DaraToggle.tsx",
+        "src/components/shortcut-accelerator.ts",
+        "src/main.tsx",
+        "src/markdown/CardSource.tsx",
+        "src/markdown/MarkdownRenderer.tsx",
+        "src/markdown/markdown-renderer.css",
+        "src/markdown/renderer-config.ts",
+        "src/occlusion/OcclusionReview.tsx",
+        "src/occlusion/occlusion.ts",
+        "src/windows/main/CardBrowser.tsx",
+        "src/windows/main/Home.tsx",
+        "src/windows/main/MainNavigation.tsx",
+        "src/windows/main/MainWindow.tsx",
+        "src/windows/main/Settings.tsx",
+        "src/windows/main/home-activity.ts",
+        "src/windows/main/home-stats-cache.ts",
+        "src/windows/main/main-window.css"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/preload-helper-DaercurD.js",
+      "isEntry": false,
+      "modules": [
+        "\u0000vite/preload-helper.js"
+      ]
+    },
+    {
+      "facadeModuleId": "quick-add.html",
+      "fileName": "assets/quickAdd-DgWtuWup.js",
+      "isEntry": true,
+      "modules": [
+        "quick-add.html",
+        "src/quick-add.tsx",
+        "src/windows/quick-add/QuickAddWindow.tsx",
+        "src/windows/quick-add/quick-add-window.css"
+      ]
+    },
+    {
+      "facadeModuleId": "node_modules/.pnpm/react-activity-calendar@3.2.1_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/react-activity-calendar/build/chunks/Tooltip-D5idU7TC.js",
+      "fileName": "assets/Tooltip-D5idU7TC-DGZH5do9.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/@floating-ui+core@1.8.0/node_modules/@floating-ui/core/dist/floating-ui.core.mjs",
+        "node_modules/.pnpm/@floating-ui+dom@1.8.0/node_modules/@floating-ui/dom/dist/floating-ui.dom.mjs",
+        "node_modules/.pnpm/@floating-ui+react-dom@2.1.9_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/@floating-ui/react-dom/dist/floating-ui.react-dom.mjs",
+        "node_modules/.pnpm/@floating-ui+react@0.27.20_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/@floating-ui/react/dist/floating-ui.react.mjs",
+        "node_modules/.pnpm/@floating-ui+react@0.27.20_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/@floating-ui/react/dist/floating-ui.react.utils.mjs",
+        "node_modules/.pnpm/@floating-ui+utils@0.2.12/node_modules/@floating-ui/utils/dist/floating-ui.utils.dom.mjs",
+        "node_modules/.pnpm/@floating-ui+utils@0.2.12/node_modules/@floating-ui/utils/dist/floating-ui.utils.mjs",
+        "node_modules/.pnpm/react-activity-calendar@3.2.1_react-dom@19.2.7_react@19.2.7__react@19.2.7/node_modules/react-activity-calendar/build/chunks/Tooltip-D5idU7TC.js",
+        "node_modules/.pnpm/tabbable@6.5.0/node_modules/tabbable/dist/index.esm.js"
+      ]
+    },
+    {
+      "facadeModuleId": null,
+      "fileName": "assets/w3c-keyname-BOAvb0qz.js",
+      "isEntry": false,
+      "modules": [
+        "node_modules/.pnpm/w3c-keyname@2.2.8/node_modules/w3c-keyname/index.js"
+      ]
+    }
+  ],
+  "files": [
+    {
+      "fileName": "assets/CodeBlockNodeView-Beb96e1G.js",
+      "gzipBytes": 9710,
+      "kind": "javascript",
+      "rawBytes": 30126
+    },
+    {
+      "fileName": "assets/KaTeX_AMS-Regular-BQhdFMY1.woff2",
+      "gzipBytes": 28104,
+      "kind": "font",
+      "rawBytes": 28076
+    },
+    {
+      "fileName": "assets/KaTeX_AMS-Regular-DMm9YOAa.woff",
+      "gzipBytes": 33536,
+      "kind": "font",
+      "rawBytes": 33516
+    },
+    {
+      "fileName": "assets/KaTeX_AMS-Regular-DRggAlZN.ttf",
+      "gzipBytes": 34713,
+      "kind": "font",
+      "rawBytes": 63632
+    },
+    {
+      "fileName": "assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf",
+      "gzipBytes": 7856,
+      "kind": "font",
+      "rawBytes": 12368
+    },
+    {
+      "fileName": "assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff",
+      "gzipBytes": 7677,
+      "kind": "font",
+      "rawBytes": 7716
+    },
+    {
+      "fileName": "assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2",
+      "gzipBytes": 6935,
+      "kind": "font",
+      "rawBytes": 6912
+    },
+    {
+      "fileName": "assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff",
+      "gzipBytes": 7621,
+      "kind": "font",
+      "rawBytes": 7656
+    },
+    {
+      "fileName": "assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2",
+      "gzipBytes": 6931,
+      "kind": "font",
+      "rawBytes": 6908
+    },
+    {
+      "fileName": "assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf",
+      "gzipBytes": 7796,
+      "kind": "font",
+      "rawBytes": 12344
+    },
+    {
+      "fileName": "assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf",
+      "gzipBytes": 13494,
+      "kind": "font",
+      "rawBytes": 19584
+    },
+    {
+      "fileName": "assets/KaTeX_Fraktur-Bold-BsDP51OF.woff",
+      "gzipBytes": 13279,
+      "kind": "font",
+      "rawBytes": 13296
+    },
+    {
+      "fileName": "assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2",
+      "gzipBytes": 11371,
+      "kind": "font",
+      "rawBytes": 11348
+    },
+    {
+      "fileName": "assets/KaTeX_Fraktur-Regular-CB_wures.ttf",
+      "gzipBytes": 13431,
+      "kind": "font",
+      "rawBytes": 19572
+    },
+    {
+      "fileName": "assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2",
+      "gzipBytes": 11339,
+      "kind": "font",
+      "rawBytes": 11316
+    },
+    {
+      "fileName": "assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff",
+      "gzipBytes": 13192,
+      "kind": "font",
+      "rawBytes": 13208
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Bold-Cx986IdX.woff2",
+      "gzipBytes": 25352,
+      "kind": "font",
+      "rawBytes": 25324
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Bold-Jm3AIy58.woff",
+      "gzipBytes": 29940,
+      "kind": "font",
+      "rawBytes": 29912
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Bold-waoOVXN0.ttf",
+      "gzipBytes": 30811,
+      "kind": "font",
+      "rawBytes": 51336
+    },
+    {
+      "fileName": "assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2",
+      "gzipBytes": 16808,
+      "kind": "font",
+      "rawBytes": 16780
+    },
+    {
+      "fileName": "assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf",
+      "gzipBytes": 19667,
+      "kind": "font",
+      "rawBytes": 32968
+    },
+    {
+      "fileName": "assets/KaTeX_Main-BoldItalic-SpSLRI95.woff",
+      "gzipBytes": 19405,
+      "kind": "font",
+      "rawBytes": 19412
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Italic-3WenGoN9.ttf",
+      "gzipBytes": 19927,
+      "kind": "font",
+      "rawBytes": 33580
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Italic-BMLOBm91.woff",
+      "gzipBytes": 19665,
+      "kind": "font",
+      "rawBytes": 19676
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Italic-NWA7e6Wa.woff2",
+      "gzipBytes": 17016,
+      "kind": "font",
+      "rawBytes": 16988
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Regular-B22Nviop.woff2",
+      "gzipBytes": 26300,
+      "kind": "font",
+      "rawBytes": 26272
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Regular-Dr94JaBh.woff",
+      "gzipBytes": 30795,
+      "kind": "font",
+      "rawBytes": 30772
+    },
+    {
+      "fileName": "assets/KaTeX_Main-Regular-ypZvNtVU.ttf",
+      "gzipBytes": 31728,
+      "kind": "font",
+      "rawBytes": 53580
+    },
+    {
+      "fileName": "assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf",
+      "gzipBytes": 19007,
+      "kind": "font",
+      "rawBytes": 31196
+    },
+    {
+      "fileName": "assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2",
+      "gzipBytes": 16423,
+      "kind": "font",
+      "rawBytes": 16400
+    },
+    {
+      "fileName": "assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff",
+      "gzipBytes": 18647,
+      "kind": "font",
+      "rawBytes": 18668
+    },
+    {
+      "fileName": "assets/KaTeX_Math-Italic-DA0__PXp.woff",
+      "gzipBytes": 18738,
+      "kind": "font",
+      "rawBytes": 18748
+    },
+    {
+      "fileName": "assets/KaTeX_Math-Italic-flOr_0UB.ttf",
+      "gzipBytes": 19080,
+      "kind": "font",
+      "rawBytes": 31308
+    },
+    {
+      "fileName": "assets/KaTeX_Math-Italic-t53AETM-.woff2",
+      "gzipBytes": 16468,
+      "kind": "font",
+      "rawBytes": 16440
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf",
+      "gzipBytes": 14778,
+      "kind": "font",
+      "rawBytes": 24504
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2",
+      "gzipBytes": 12239,
+      "kind": "font",
+      "rawBytes": 12216
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff",
+      "gzipBytes": 14398,
+      "kind": "font",
+      "rawBytes": 14408
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2",
+      "gzipBytes": 12051,
+      "kind": "font",
+      "rawBytes": 12028
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Italic-DN2j7dab.woff",
+      "gzipBytes": 14087,
+      "kind": "font",
+      "rawBytes": 14112
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf",
+      "gzipBytes": 14432,
+      "kind": "font",
+      "rawBytes": 22364
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf",
+      "gzipBytes": 12547,
+      "kind": "font",
+      "rawBytes": 19436
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff",
+      "gzipBytes": 12298,
+      "kind": "font",
+      "rawBytes": 12316
+    },
+    {
+      "fileName": "assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2",
+      "gzipBytes": 10367,
+      "kind": "font",
+      "rawBytes": 10344
+    },
+    {
+      "fileName": "assets/KaTeX_Script-Regular-C5JkGWo-.ttf",
+      "gzipBytes": 10813,
+      "kind": "font",
+      "rawBytes": 16648
+    },
+    {
+      "fileName": "assets/KaTeX_Script-Regular-D3wIWfF6.woff2",
+      "gzipBytes": 9667,
+      "kind": "font",
+      "rawBytes": 9644
+    },
+    {
+      "fileName": "assets/KaTeX_Script-Regular-D5yQViql.woff",
+      "gzipBytes": 10550,
+      "kind": "font",
+      "rawBytes": 10588
+    },
+    {
+      "fileName": "assets/KaTeX_Size1-Regular-C195tn64.woff",
+      "gzipBytes": 6465,
+      "kind": "font",
+      "rawBytes": 6496
+    },
+    {
+      "fileName": "assets/KaTeX_Size1-Regular-Dbsnue_I.ttf",
+      "gzipBytes": 6540,
+      "kind": "font",
+      "rawBytes": 12228
+    },
+    {
+      "fileName": "assets/KaTeX_Size1-Regular-mCD8mA8B.woff2",
+      "gzipBytes": 5491,
+      "kind": "font",
+      "rawBytes": 5468
+    },
+    {
+      "fileName": "assets/KaTeX_Size2-Regular-B7gKUWhC.ttf",
+      "gzipBytes": 6241,
+      "kind": "font",
+      "rawBytes": 11508
+    },
+    {
+      "fileName": "assets/KaTeX_Size2-Regular-Dy4dx90m.woff2",
+      "gzipBytes": 5231,
+      "kind": "font",
+      "rawBytes": 5208
+    },
+    {
+      "fileName": "assets/KaTeX_Size2-Regular-oD1tc_U0.woff",
+      "gzipBytes": 6161,
+      "kind": "font",
+      "rawBytes": 6188
+    },
+    {
+      "fileName": "assets/KaTeX_Size3-Regular-CTq5MqoE.woff",
+      "gzipBytes": 4380,
+      "kind": "font",
+      "rawBytes": 4420
+    },
+    {
+      "fileName": "assets/KaTeX_Size3-Regular-DgpXs0kz.ttf",
+      "gzipBytes": 4389,
+      "kind": "font",
+      "rawBytes": 7588
+    },
+    {
+      "fileName": "assets/KaTeX_Size4-Regular-BF-4gkZK.woff",
+      "gzipBytes": 5944,
+      "kind": "font",
+      "rawBytes": 5980
+    },
+    {
+      "fileName": "assets/KaTeX_Size4-Regular-DWFBv043.ttf",
+      "gzipBytes": 6061,
+      "kind": "font",
+      "rawBytes": 10364
+    },
+    {
+      "fileName": "assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2",
+      "gzipBytes": 4951,
+      "kind": "font",
+      "rawBytes": 4928
+    },
+    {
+      "fileName": "assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff",
+      "gzipBytes": 16010,
+      "kind": "font",
+      "rawBytes": 16028
+    },
+    {
+      "fileName": "assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2",
+      "gzipBytes": 13591,
+      "kind": "font",
+      "rawBytes": 13568
+    },
+    {
+      "fileName": "assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf",
+      "gzipBytes": 16479,
+      "kind": "font",
+      "rawBytes": 27556
+    },
+    {
+      "fileName": "assets/Tooltip-D5idU7TC-DGZH5do9.js",
+      "gzipBytes": 16719,
+      "kind": "javascript",
+      "rawBytes": 46363
+    },
+    {
+      "fileName": "assets/app-zoom-CCj1LA2O.css",
+      "gzipBytes": 13164,
+      "kind": "css",
+      "rawBytes": 53278
+    },
+    {
+      "fileName": "assets/app-zoom-D97HNCK1.js",
+      "gzipBytes": 249458,
+      "kind": "javascript",
+      "rawBytes": 831736
+    },
+    {
+      "fileName": "assets/dist-BHasUbSO.js",
+      "gzipBytes": 14981,
+      "kind": "javascript",
+      "rawBytes": 43748
+    },
+    {
+      "fileName": "assets/dist-BgxCxhJv.js",
+      "gzipBytes": 19078,
+      "kind": "javascript",
+      "rawBytes": 44687
+    },
+    {
+      "fileName": "assets/dist-BpThq9PP.js",
+      "gzipBytes": 1257,
+      "kind": "javascript",
+      "rawBytes": 1991
+    },
+    {
+      "fileName": "assets/dist-BsMqfhyJ.js",
+      "gzipBytes": 12596,
+      "kind": "javascript",
+      "rawBytes": 26773
+    },
+    {
+      "fileName": "assets/dist-CHuKjrBw.js",
+      "gzipBytes": 11493,
+      "kind": "javascript",
+      "rawBytes": 28400
+    },
+    {
+      "fileName": "assets/dist-CJbrm2oc.js",
+      "gzipBytes": 16721,
+      "kind": "javascript",
+      "rawBytes": 40704
+    },
+    {
+      "fileName": "assets/dist-Ck3TtbgS.js",
+      "gzipBytes": 34347,
+      "kind": "javascript",
+      "rawBytes": 103892
+    },
+    {
+      "fileName": "assets/dist-ClGu8AXG.js",
+      "gzipBytes": 33468,
+      "kind": "javascript",
+      "rawBytes": 84687
+    },
+    {
+      "fileName": "assets/dist-CqRsFdSK.js",
+      "gzipBytes": 8605,
+      "kind": "javascript",
+      "rawBytes": 26501
+    },
+    {
+      "fileName": "assets/dist-CtumrwL1.js",
+      "gzipBytes": 3569,
+      "kind": "javascript",
+      "rawBytes": 8446
+    },
+    {
+      "fileName": "assets/dist-D3mVsjjm.js",
+      "gzipBytes": 12590,
+      "kind": "javascript",
+      "rawBytes": 30722
+    },
+    {
+      "fileName": "assets/dist-DZrxVdSw.js",
+      "gzipBytes": 85681,
+      "kind": "javascript",
+      "rawBytes": 265360
+    },
+    {
+      "fileName": "assets/dist-Da3pFdZr.js",
+      "gzipBytes": 25829,
+      "kind": "javascript",
+      "rawBytes": 70787
+    },
+    {
+      "fileName": "assets/dist-DvBpUWej.js",
+      "gzipBytes": 5935,
+      "kind": "javascript",
+      "rawBytes": 13818
+    },
+    {
+      "fileName": "assets/dist-DwOJgjuS.js",
+      "gzipBytes": 5858,
+      "kind": "javascript",
+      "rawBytes": 14591
+    },
+    {
+      "fileName": "assets/dist-c5ZE_DOB.js",
+      "gzipBytes": 32735,
+      "kind": "javascript",
+      "rawBytes": 110105
+    },
+    {
+      "fileName": "assets/dist-uh18tg46.js",
+      "gzipBytes": 5148,
+      "kind": "javascript",
+      "rawBytes": 11557
+    },
+    {
+      "fileName": "assets/index-B3Gga1-_-CVoDKvbt.js",
+      "gzipBytes": 6327,
+      "kind": "javascript",
+      "rawBytes": 15720
+    },
+    {
+      "fileName": "assets/jsx-runtime-B8yzmMeA.js",
+      "gzipBytes": 4283,
+      "kind": "javascript",
+      "rawBytes": 12022
+    },
+    {
+      "fileName": "assets/main-2EO0kcoU.js",
+      "gzipBytes": 165844,
+      "kind": "javascript",
+      "rawBytes": 530330
+    },
+    {
+      "fileName": "assets/main-Bh6fB85y.css",
+      "gzipBytes": 5042,
+      "kind": "css",
+      "rawBytes": 22947
+    },
+    {
+      "fileName": "assets/preload-helper-DaercurD.js",
+      "gzipBytes": 686,
+      "kind": "javascript",
+      "rawBytes": 1228
+    },
+    {
+      "fileName": "assets/quickAdd-Brfb8qFQ.css",
+      "gzipBytes": 399,
+      "kind": "css",
+      "rawBytes": 717
+    },
+    {
+      "fileName": "assets/quickAdd-DgWtuWup.js",
+      "gzipBytes": 816,
+      "kind": "javascript",
+      "rawBytes": 1484
+    },
+    {
+      "fileName": "assets/reddit-mono-latin-ext-wght-normal-DCLCrQhA.woff2",
+      "gzipBytes": 29756,
+      "kind": "font",
+      "rawBytes": 29728
+    },
+    {
+      "fileName": "assets/reddit-mono-latin-wght-normal-BvKtqVOO.woff2",
+      "gzipBytes": 30524,
+      "kind": "font",
+      "rawBytes": 30496
+    },
+    {
+      "fileName": "assets/reddit-mono-vietnamese-wght-normal-CEcALQr8.woff2",
+      "gzipBytes": 9971,
+      "kind": "font",
+      "rawBytes": 9948
+    },
+    {
+      "fileName": "assets/w3c-keyname-BOAvb0qz.js",
+      "gzipBytes": 816,
+      "kind": "javascript",
+      "rawBytes": 1487
+    },
+    {
+      "fileName": "favicon.svg",
+      "gzipBytes": 1490,
+      "kind": "other",
+      "rawBytes": 9522
+    },
+    {
+      "fileName": "icons.svg",
+      "gzipBytes": 2104,
+      "kind": "other",
+      "rawBytes": 5031
+    },
+    {
+      "fileName": "index.html",
+      "gzipBytes": 411,
+      "kind": "html",
+      "rawBytes": 1006
+    },
+    {
+      "fileName": "quick-add.html",
+      "gzipBytes": 397,
+      "kind": "html",
+      "rawBytes": 934
+    }
+  ],
+  "totals": {
+    "css": {
+      "files": 3,
+      "gzipBytes": 18605,
+      "rawBytes": 76942
+    },
+    "font": {
+      "files": 62,
+      "gzipBytes": 939464,
+      "rawBytes": 1143120
+    },
+    "html": {
+      "files": 2,
+      "gzipBytes": 808,
+      "rawBytes": 1940
+    },
+    "javascript": {
+      "files": 26,
+      "gzipBytes": 784550,
+      "rawBytes": 2397265
+    },
+    "other": {
+      "files": 2,
+      "gzipBytes": 3594,
+      "rawBytes": 14553
+    }
+  }
+}

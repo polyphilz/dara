@@ -2,6 +2,7 @@
   "name": "dara",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@10.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,7 +12,12 @@
     "tauri": "DARA_DATA_DIR=\"$PWD/.data/local\" tauri",
     "test": "pnpm test:domain && pnpm test:ui",
     "test:domain": "tsc -p tsconfig.test.json && node --test node_modules/.tmp/dara-tests/tests/scheduling/*.test.js node_modules/.tmp/dara-tests/tests/review/*.test.js",
-    "test:ui": "tsc -p tsconfig.ui-test.json && vitest run"
+    "test:ui": "tsc -p tsconfig.ui-test.json && vitest run",
+    "test:coverage": "tsc -p tsconfig.ui-test.json && vitest run --coverage",
+    "test:bundle-report": "DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build",
+    "test:bundle-safety:check": "node scripts/check-bundle-safety.mjs",
+    "test:bundle-safety": "pnpm test:bundle-report && pnpm test:bundle-safety:check",
+    "check": "pnpm lint && DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build && pnpm test && pnpm test:bundle-safety:check"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -73,6 +79,7 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "4.1.10",
     "jsdom": "29.1.1",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",

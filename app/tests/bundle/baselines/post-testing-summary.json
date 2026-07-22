@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "baseline": "pre-browser-native.json",
+  "productionHtmlEntries": [
+    "index.html",
+    "quick-add.html"
+  ],
+  "moduleGraphChunks": 26,
+  "outputFiles": 95,
+  "totals": {
+    "css": {
+      "files": 3,
+      "gzipBytes": 18625,
+      "rawBytes": 77032
+    },
+    "font": {
+      "files": 62,
+      "gzipBytes": 939464,
+      "rawBytes": 1143120
+    },
+    "html": {
+      "files": 2,
+      "gzipBytes": 800,
+      "rawBytes": 1940
+    },
+    "javascript": {
+      "files": 26,
+      "gzipBytes": 785086,
+      "rawBytes": 2398739
+    },
+    "other": {
+      "files": 2,
+      "gzipBytes": 3594,
+      "rawBytes": 14553
+    }
+  },
+  "reviewedDelta": {
+    "javascriptRawBytes": 1474,
+    "javascriptGzipBytes": 536,
+    "cssRawBytes": 90,
+    "cssGzipBytes": 20,
+    "reason": "Intentional production command/event registries, review keyboard interpreter, heading/keyboard fixes, shared canvas token, and shared-control accessibility corrections discovered while adding tests. Test harness, Playwright, WDIO, screenshots, and E2E bootstrap are absent from this graph."
+  }
+}
