@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { DaraIpcCommand } from '../lib/tauri-contracts.ts'
 import type {
   Appearance,
   KeyboardBinding,
@@ -19,22 +20,22 @@ export interface SettingsGateway {
 
 export const tauriSettingsGateway: SettingsGateway = {
   adoptLegacyZoom: (expectedRevision, zoomPercent) =>
-    invoke<SettingsSnapshot>('adopt_legacy_zoom', {
+    invoke<SettingsSnapshot>(DaraIpcCommand.AdoptLegacyZoom, {
       input: { expectedRevision, zoomPercent },
     }),
-  loadSettings: () => invoke<SettingsSnapshot>('load_settings'),
+  loadSettings: () => invoke<SettingsSnapshot>(DaraIpcCommand.LoadSettings),
   setAppearance: (expectedRevision, appearance) =>
-    invoke<SettingsSnapshot>('set_appearance', {
+    invoke<SettingsSnapshot>(DaraIpcCommand.SetAppearance, {
       input: { appearance, expectedRevision },
     }),
   setKeyboardBindings: (expectedRevision, keyboardBindings) =>
-    invoke<SettingsSnapshot>('set_keyboard_bindings', {
+    invoke<SettingsSnapshot>(DaraIpcCommand.SetKeyboardBindings, {
       input: { expectedRevision, keyboardBindings },
     }),
   setLaunchAtLogin: (enabled) =>
-    invoke<SettingsSnapshot>('set_launch_at_login', { input: { enabled } }),
+    invoke<SettingsSnapshot>(DaraIpcCommand.SetLaunchAtLogin, { input: { enabled } }),
   setZoomPercent: (expectedRevision, zoomPercent) =>
-    invoke<SettingsSnapshot>('set_zoom_percent', {
+    invoke<SettingsSnapshot>(DaraIpcCommand.SetZoomPercent, {
       input: { expectedRevision, zoomPercent },
     }),
 }

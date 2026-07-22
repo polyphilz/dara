@@ -1,17 +1,11 @@
 import { invoke } from '@tauri-apps/api/core'
+import { DaraIpcCommand } from '../lib/tauri-contracts.ts'
 import type { ImageRecord } from './image-reference.ts'
 
 const MEDIA_LEASE_ID_BYTE_LENGTH = 36
 
-const MediaCommand = {
-  IngestClipboardImage: 'ingest_clipboard_image',
-  IngestImageBytes: 'ingest_image_bytes',
-  Maintain: 'maintain_media',
-  RenewLease: 'renew_media_lease',
-} as const
-
 export function ingestClipboardImage(leaseId: string): Promise<ImageRecord> {
-  return invoke<ImageRecord>(MediaCommand.IngestClipboardImage, { leaseId })
+  return invoke<ImageRecord>(DaraIpcCommand.IngestClipboardImage, { leaseId })
 }
 
 export async function ingestImageFile(
@@ -33,11 +27,11 @@ export function ingestImageBytes(
   const payload = new Uint8Array(leaseBytes.byteLength + imageBytes.byteLength)
   payload.set(leaseBytes)
   payload.set(imageBytes, leaseBytes.byteLength)
-  return invoke<ImageRecord>(MediaCommand.IngestImageBytes, payload)
+  return invoke<ImageRecord>(DaraIpcCommand.IngestImageBytes, payload)
 }
 
 export function renewMediaLease(leaseId: string): Promise<number> {
-  return invoke<number>(MediaCommand.RenewLease, { leaseId })
+  return invoke<number>(DaraIpcCommand.RenewMediaLease, { leaseId })
 }
 
 export interface MediaMaintenanceReport {
@@ -56,5 +50,5 @@ export interface MediaMaintenanceReport {
 }
 
 export function maintainMedia(): Promise<MediaMaintenanceReport> {
-  return invoke<MediaMaintenanceReport>(MediaCommand.Maintain)
+  return invoke<MediaMaintenanceReport>(DaraIpcCommand.MaintainMedia)
 }
