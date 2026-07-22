@@ -29,13 +29,13 @@ import {
   DEFAULT_ZOOM_PERCENT,
   MAX_ZOOM_PERCENT,
   MIN_ZOOM_PERCENT,
-  SETTINGS_CHANGED_EVENT,
   ZOOM_STEP_PERCENT,
   tauriSettingsGateway,
   type KeyboardBinding,
   type SettingsGateway,
   type SettingsSnapshot,
 } from '../../settings/index.ts'
+import { DaraEvent } from '../../lib/tauri-contracts.ts'
 
 const MIN_RETENTION_PERCENT = 70
 const MAX_RETENTION_PERCENT = 99
@@ -148,7 +148,7 @@ export function Settings({
   useEffect(() => {
     let disposed = false
     let stopListening: (() => void) | undefined
-    void listen<SettingsSnapshot>(SETTINGS_CHANGED_EVENT, (event) => {
+    void listen<SettingsSnapshot>(DaraEvent.SettingsChanged, (event) => {
       if (!disposed) {
         applySnapshot(event.payload)
       }

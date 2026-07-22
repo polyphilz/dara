@@ -41,13 +41,13 @@ import {
 import { errorMessage } from '../../review/errors.ts'
 import { ReviewCardState } from '../../scheduling/index.ts'
 import { captureStudyMoment } from '../../scheduling/study-clock.ts'
+import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { studyDayToIsoDate } from './home-activity.ts'
 import { CardForm } from '../shared/CardForm.tsx'
 import { CardFormVariant } from '../shared/card-form.ts'
 
 const SEARCH_PAGE_SIZE = 50
 const SEARCH_FETCH_LIMIT = SEARCH_PAGE_SIZE + 1
-const BROWSE_COMMAND_EVENT = 'browse-command'
 
 const BrowseCommand = {
   FocusSearch: 'FOCUS_SEARCH',
@@ -378,7 +378,7 @@ export function CardBrowser({
   useEffect(() => {
     let disposed = false
     let stopListening: (() => void) | undefined
-    void listen<unknown>(BROWSE_COMMAND_EVENT, (event) => {
+    void listen<unknown>(DaraEvent.BrowseCommand, (event) => {
       if (isBrowseCommand(event.payload)) {
         runBrowseCommandRef.current(event.payload)
       }
@@ -580,12 +580,12 @@ export function CardBrowser({
               </DaraButton>
             )
           })}
-          {!loading && results.length === 0 && (
-            <p className="card-result-empty">
-              {searchPending ? 'Press Enter to search.' : 'No cards found.'}
-            </p>
-          )}
         </div>
+        {!loading && results.length === 0 && (
+          <p className="card-result-empty">
+            {searchPending ? 'Press Enter to search.' : 'No cards found.'}
+          </p>
+        )}
         {hasMore && (
           <DaraButton
             className="card-browser-load-more"

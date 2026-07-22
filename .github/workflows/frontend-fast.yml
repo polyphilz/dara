@@ -43,6 +43,9 @@ jobs:
       - name: Run domain tests
         run: pnpm test:domain
 
+      - name: Run fixed-seed properties
+        run: pnpm test:properties
+
       - name: Run UI tests and collect frontend coverage
         run: pnpm test:coverage
 

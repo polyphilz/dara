@@ -1,8 +1,8 @@
 import { listen } from '@tauri-apps/api/event'
 import { tauriSettingsGateway } from './gateway.ts'
+import { DaraEvent } from '../lib/tauri-contracts.ts'
 import {
   Appearance,
-  SETTINGS_CHANGED_EVENT,
   type SettingsSnapshot,
 } from './types.ts'
 
@@ -11,7 +11,7 @@ const appearances = new Set<Appearance>(Object.values(Appearance))
 export async function installAppAppearance(): Promise<void> {
   applyAppearance((await tauriSettingsGateway.loadSettings()).appearance)
   const stopListening = await listen<unknown>(
-    SETTINGS_CHANGED_EVENT,
+    DaraEvent.SettingsChanged,
     (event) => {
       if (isSettingsSnapshotAppearance(event.payload)) {
         applyAppearance(event.payload.appearance)
