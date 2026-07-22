@@ -236,46 +236,51 @@ export function DaraSelect<Value extends string>({
         position &&
         createPortal(
           <div
-            aria-label={ariaLabel}
-            className={popoverClasses}
-            id={menuId}
-            onKeyDown={handleMenuKeyDown}
-            ref={menuRef}
-            role="listbox"
-            style={{ ...position, width: menuWidth, maxHeight: menuHeight }}
+            aria-label={`${ariaLabel} options`}
+            role="region"
           >
-            {options.map((option, index) => {
-              const selected = option.value === value
-              return (
-                <DaraButton
-                  aria-selected={selected}
-                  className={
-                    selected
-                      ? 'dara-select-option dara-select-option-selected'
-                      : 'dara-select-option'
-                  }
-                  key={option.value}
-                  onClick={() => selectValue(option.value)}
-                  onMouseDown={(event) => {
-                    event.preventDefault()
-                    selectValue(option.value)
-                  }}
-                  ref={(element) => {
-                    optionRefs.current[index] = element
-                  }}
-                  role="option"
-                  size={DaraButtonSize.Custom}
-                  tabIndex={selected ? 0 : -1}
-                  type="button"
-                  variant={DaraButtonVariant.Custom}
-                >
-                  <span aria-hidden="true" className="dara-select-check">
-                    {selected ? '✓' : ''}
-                  </span>
-                  {option.label}
-                </DaraButton>
-              )
-            })}
+            <div
+              aria-label={ariaLabel}
+              className={popoverClasses}
+              id={menuId}
+              onKeyDown={handleMenuKeyDown}
+              ref={menuRef}
+              role="listbox"
+              style={{ ...position, width: menuWidth, maxHeight: menuHeight }}
+            >
+              {options.map((option, index) => {
+                const selected = option.value === value
+                return (
+                  <DaraButton
+                    aria-selected={selected}
+                    className={
+                      selected
+                        ? 'dara-select-option dara-select-option-selected'
+                        : 'dara-select-option'
+                    }
+                    key={option.value}
+                    onClick={() => selectValue(option.value)}
+                    onMouseDown={(event) => {
+                      event.preventDefault()
+                      selectValue(option.value)
+                    }}
+                    ref={(element) => {
+                      optionRefs.current[index] = element
+                    }}
+                    role="option"
+                    size={DaraButtonSize.Custom}
+                    tabIndex={selected ? 0 : -1}
+                    type="button"
+                    variant={DaraButtonVariant.Custom}
+                  >
+                    <span aria-hidden="true" className="dara-select-check">
+                      {selected ? '✓' : ''}
+                    </span>
+                    {option.label}
+                  </DaraButton>
+                )
+              })}
+            </div>
           </div>,
           document.body,
         )}

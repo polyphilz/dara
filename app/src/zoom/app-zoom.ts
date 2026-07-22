@@ -1,11 +1,11 @@
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebview } from '@tauri-apps/api/webview'
 import { tauriSettingsGateway } from '../settings/gateway.ts'
+import { DaraEvent } from '../lib/tauri-contracts.ts'
 import {
   DEFAULT_ZOOM_PERCENT,
   MAX_ZOOM_PERCENT,
   MIN_ZOOM_PERCENT,
-  SETTINGS_CHANGED_EVENT,
   ZOOM_STEP_PERCENT,
   type SettingsSnapshot,
 } from '../settings/types.ts'
@@ -27,7 +27,6 @@ export type AppZoomCommand =
   (typeof AppZoomCommand)[keyof typeof AppZoomCommand]
 
 const ZOOM_STORAGE_KEY = 'dara.appZoomPercent'
-const ZOOM_COMMAND_EVENT = 'app-zoom-command'
 const appZoomCommands = new Set<AppZoomCommand>(Object.values(AppZoomCommand))
 
 let currentZoomPercent = DEFAULT_ZOOM_PERCENT
@@ -36,7 +35,7 @@ let currentSettingsRevision = 0
 export async function installAppZoom(): Promise<void> {
   const webview = getCurrentWebview()
   const stopCommandListener = await listen<unknown>(
-    ZOOM_COMMAND_EVENT,
+    DaraEvent.ZoomCommand,
     (event) => {
       if (isAppZoomCommand(event.payload)) {
         void executeZoomCommand(event.payload, true)
@@ -44,7 +43,7 @@ export async function installAppZoom(): Promise<void> {
     },
   )
   const stopChangedListener = await listen<unknown>(
-    SETTINGS_CHANGED_EVENT,
+    DaraEvent.SettingsChanged,
     (event) => {
       if (isSettingsSnapshotZoom(event.payload)) {
         currentSettingsRevision = event.payload.revision

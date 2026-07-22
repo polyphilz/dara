@@ -2,16 +2,36 @@
   "name": "dara",
   "private": true,
   "version": "0.1.0",
+  "packageManager": "pnpm@10.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:e2e": "tsc -b && vite build --config vite.e2e.config.ts",
     "lint": "oxlint",
     "preview": "vite preview",
     "tauri": "DARA_DATA_DIR=\"$PWD/.data/local\" tauri",
     "test": "pnpm test:domain && pnpm test:ui",
     "test:domain": "tsc -p tsconfig.test.json && node --test node_modules/.tmp/dara-tests/tests/scheduling/*.test.js node_modules/.tmp/dara-tests/tests/review/*.test.js",
-    "test:ui": "tsc -p tsconfig.ui-test.json && vitest run"
+    "test:ui": "tsc -p tsconfig.ui-test.json && vitest run",
+    "test:coverage": "tsc -p tsconfig.ui-test.json && vitest run --coverage",
+    "test:bundle-report": "DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build",
+    "test:bundle-safety:check": "node scripts/check-bundle-safety.mjs",
+    "test:bundle-safety": "pnpm test:bundle-report && pnpm test:bundle-safety:check",
+    "test:browser:typecheck": "tsc -p tsconfig.browser-test.json",
+    "test:browser": "pnpm test:browser:typecheck && playwright test --project=chromium-functional --project=webkit-contract",
+    "test:visual": "playwright test --project=chromium-visual --project=chromium-hidpi-visual",
+    "test:visual:update": "playwright test --project=chromium-visual --project=chromium-hidpi-visual --update-snapshots",
+    "test:a11y": "playwright test --project=chromium-functional tests/browser/accessibility",
+    "test:properties": "DARA_PROPERTY_SEED=20260717 vitest run tests/ui/properties",
+    "test:properties:stress": "node scripts/run-property-stress.mjs",
+    "test:native:typecheck": "tsc -p tsconfig.native-test.json",
+    "test:native-bundle-safety": "node scripts/check-native-bundle-safety.mjs",
+    "test:native": "pnpm test:native:typecheck && node scripts/run-native-tests.mjs",
+    "test:native:stress": "node scripts/run-native-stress.mjs",
+    "test:frontend": "pnpm test && pnpm test:browser",
+    "test:frontend:stress": "playwright test --project=chromium-functional --repeat-each=10 --fail-on-flaky-tests",
+    "check": "pnpm lint && DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build && pnpm test:frontend && pnpm test:bundle-safety:check"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",
@@ -65,6 +85,8 @@
     "unified": "11.0.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
+    "@playwright/test": "1.61.0",
     "@tauri-apps/cli": "^2.11.4",
     "@testing-library/react": "16.3.2",
     "@testing-library/user-event": "14.6.1",
@@ -73,10 +95,25 @@
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
+    "@vitest/coverage-v8": "4.1.10",
+    "@wdio/cli": "9.29.1",
+    "@wdio/globals": "9.29.1",
+    "@wdio/local-runner": "9.29.1",
+    "@wdio/mocha-framework": "9.29.1",
+    "@wdio/spec-reporter": "9.29.1",
+    "@wdio/tauri-plugin": "1.2.0",
+    "@wdio/tauri-service": "1.2.0",
+    "@wdio/types": "9.29.1",
+    "fast-check": "4.9.0",
     "jsdom": "29.1.1",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
     "vitest": "4.1.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "@wdio/native-utils": "2.5.0"
+    }
   }
 }

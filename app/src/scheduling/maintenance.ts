@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { DaraIpcCommand } from '../lib/tauri-contracts.ts'
 import { parseSchedulerConfig } from './config.ts'
 import { replayReviews } from './scheduler.ts'
 import type {
@@ -125,13 +126,13 @@ const REPLAY_YIELD_INTERVAL = 100
 
 export const tauriSchedulerMaintenanceGateway: SchedulerMaintenanceGateway = {
   loadSchedulerReplaySnapshot: () =>
-    invoke<SchedulerReplaySnapshot>('load_scheduler_replay_snapshot'),
+    invoke<SchedulerReplaySnapshot>(DaraIpcCommand.LoadSchedulerReplaySnapshot),
   prepareDesiredRetentionReplay: (desiredRetention: number) =>
-    invoke<SchedulerReplaySnapshot>('prepare_desired_retention_replay', {
+    invoke<SchedulerReplaySnapshot>(DaraIpcCommand.PrepareDesiredRetentionReplay, {
       input: { desiredRetention },
     }),
   installSchedulerReplay: (input: InstallSchedulerReplayInput) =>
-    invoke<SchedulerReplayInstallReport>('install_scheduler_replay', { input }),
+    invoke<SchedulerReplayInstallReport>(DaraIpcCommand.InstallSchedulerReplay, { input }),
 }
 
 export async function checkSchedulingData(

@@ -314,6 +314,22 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
       }
     }
 
+    const handleEditorSaveKeyDownCapture = (event: KeyboardEvent) => {
+      const target = event.target
+      if (
+        event.defaultPrevented ||
+        event.key !== 'Enter' ||
+        (!event.metaKey && !event.ctrlKey) ||
+        !(target instanceof Element) ||
+        !target.closest('.dara-rich-text-content') ||
+        target.closest('.cm-editor')
+      ) {
+        return
+      }
+      event.preventDefault()
+      void save()
+    }
+
     const handlePasteCapture = (event: ClipboardEvent<HTMLElement>) => {
       if (
         cardType !== CardContentType.Occlusion ||
@@ -349,6 +365,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
         className={`basic-card-form basic-card-form-${variant}`}
         aria-label={formLabel}
         onKeyDown={handleKeyDown}
+        onKeyDownCapture={handleEditorSaveKeyDownCapture}
         onPasteCapture={handlePasteCapture}
       >
         {editing ? (

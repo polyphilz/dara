@@ -12,6 +12,9 @@ import {
   CardContentType,
   ReviewController,
   ReviewControllerPhase,
+  ReviewKeyboardActionKind,
+  interpretReviewKeyDown,
+  interpretReviewKeyUp,
   tauriReviewGateway,
   type CardContent,
   type ReviewControllerState,
@@ -19,7 +22,6 @@ import {
 import {
   nextStudyDayBoundary,
   type ReviewCardCache,
-  type ReviewGrade,
 } from '../../scheduling/index.ts'
 import { MarkdownRenderer } from '../../markdown/MarkdownRenderer.tsx'
 import { CardSource } from '../../markdown/CardSource.tsx'
@@ -28,6 +30,7 @@ import { ClozeProjection } from '../../cloze/cloze.ts'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import { DaraButtonVariant } from '../../components/dara-button-types.ts'
 import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
+import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { occlusionLayerId } from '../../occlusion/occlusion.ts'
 import { CardForm } from '../shared/CardForm.tsx'
 import { CardFormVariant } from '../shared/card-form.ts'
@@ -46,7 +49,6 @@ const grades = [
 
 const MAX_TIMER_DELAY = 2_147_000_000
 const CLOCK_REFRESH_GRACE = 25
-const REVIEW_CLOCK_REFRESH_EVENT = 'review-clock-refresh'
 
 const MainWindowMode = {
   Home: 'HOME',
@@ -120,7 +122,7 @@ export function MainWindow() {
 
     let disposed = false
     let stopListening: (() => void) | undefined
-    void listen(REVIEW_CLOCK_REFRESH_EVENT, refreshClock).then((unlisten) => {
+    void listen(DaraEvent.ReviewClockRefresh, refreshClock).then((unlisten) => {
       if (disposed) {
         unlisten()
       } else {
@@ -140,7 +142,7 @@ export function MainWindow() {
     let disposed = false
     let stopListening: (() => void) | undefined
 
-    void listen('card-created', () => {
+    void listen(DaraEvent.CardCreated, () => {
       controller.notifyCardCreated()
       refreshHomeStats()
       setBrowseRefreshToken((value) => value + 1)
@@ -165,72 +167,48 @@ export function MainWindow() {
       if (mode !== MainWindowMode.Review) {
         return
       }
-      if (
-        event.metaKey &&
-        !event.altKey &&
-        !event.ctrlKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === 'z'
-      ) {
-        if (canUndo(state)) {
-          event.preventDefault()
+      const interpreted = interpretReviewKeyDown({
+        altKey: event.altKey,
+        canUndo: canUndo(state),
+        ctrlKey: event.ctrlKey,
+        isComposing: event.isComposing,
+        key: event.key,
+        metaKey: event.metaKey,
+        phase: state.phase,
+        repeat: event.repeat,
+        shiftKey: event.shiftKey,
+        spaceCanSubmit: spaceCanSubmit.current,
+      })
+      spaceCanSubmit.current = interpreted.nextSpaceCanSubmit
+      if (interpreted.preventDefault) {
+        event.preventDefault()
+      }
+      switch (interpreted.action.kind) {
+        case ReviewKeyboardActionKind.None:
+          break
+        case ReviewKeyboardActionKind.Reveal:
+          controller.reveal()
+          break
+        case ReviewKeyboardActionKind.MoveGradeFocus:
+          controller.moveGradeFocus(interpreted.action.delta)
+          break
+        case ReviewKeyboardActionKind.SubmitFocusedGrade:
+          void controller.submitFocusedGrade()
+          break
+        case ReviewKeyboardActionKind.DirectGrade:
+          void controller.submitGrade(interpreted.action.grade)
+          break
+        case ReviewKeyboardActionKind.Undo:
           void controller.undo()
-        }
-        return
-      }
-
-      if (event.metaKey || event.altKey || event.ctrlKey) {
-        return
-      }
-
-      if (
-        state.phase === ReviewControllerPhase.Question &&
-        event.key === ' ' &&
-        !event.repeat
-      ) {
-        event.preventDefault()
-        spaceCanSubmit.current = false
-        controller.reveal()
-        return
-      }
-
-      if (state.phase !== ReviewControllerPhase.Revealed) {
-        return
-      }
-
-      if (event.key === 'Tab') {
-        event.preventDefault()
-        controller.moveGradeFocus(event.shiftKey ? -1 : 1)
-        return
-      }
-
-      if (event.repeat) {
-        return
-      }
-
-      if (event.key === 'Enter') {
-        event.preventDefault()
-        void controller.submitFocusedGrade()
-        return
-      }
-
-      if (event.key === ' ' && spaceCanSubmit.current) {
-        event.preventDefault()
-        void controller.submitFocusedGrade()
-        return
-      }
-
-      const numericGrade = Number(event.key)
-      if (isReviewGrade(numericGrade)) {
-        event.preventDefault()
-        void controller.submitGrade(numericGrade)
+          break
       }
     }
 
     const handleKeyUp = (event: KeyboardEvent) => {
-      if (event.key === ' ') {
-        spaceCanSubmit.current = true
-      }
+      spaceCanSubmit.current = interpretReviewKeyUp(
+        event.key,
+        spaceCanSubmit.current,
+      )
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -288,8 +266,8 @@ export function MainWindow() {
 
     let disposed = false
     const listeners = Promise.all([
-      listen('open-settings', showSettings),
-      listen('open-home', showHome),
+      listen(DaraEvent.OpenSettings, showSettings),
+      listen(DaraEvent.OpenHome, showHome),
     ]).then((unlisteners) => {
       if (disposed) {
         unlisteners.forEach((unlisten) => unlisten())
@@ -316,6 +294,7 @@ export function MainWindow() {
     <main
       className={`main-window${mode === MainWindowMode.Home ? ' main-window-home' : ''}${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}${mode === MainWindowMode.Settings ? ' main-window-settings' : ''}`}
     >
+      <h1 className="visually-hidden">Dara</h1>
       <header className="main-header">
         <MainNavigation
           disabled={settingsBusy}
@@ -411,7 +390,7 @@ function ReviewContent({
               variantKey={state.card.context.reviewCard.variantKey}
             />
           </article>
-          <div className="grade-grid" aria-label="Grade this card">
+          <div className="grade-grid" aria-label="Grade this card" role="group">
             {grades.map(({ grade, label }) => (
               <DaraButton
                 className={
@@ -595,10 +574,6 @@ const undoablePhases = new Set<ReviewControllerState['phase']>([
   ReviewControllerPhase.Revealed,
   ReviewControllerPhase.CaughtUp,
 ])
-
-function isReviewGrade(value: number): value is ReviewGrade {
-  return Number.isInteger(value) && value >= 1 && value <= 4
-}
 
 function formatInterval(cache: ReviewCardCache, previewedAt: number): string {
   if (cache.dueAt === null) {

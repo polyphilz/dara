@@ -1,4 +1,11 @@
 export { ReviewController, ReviewControllerPhase } from './controller.ts'
+export {
+  ReviewKeyboardActionKind,
+  interpretReviewKeyDown,
+  interpretReviewKeyUp,
+  type ReviewKeyboardInput,
+  type ReviewKeyboardResult,
+} from './keyboard.ts'
 export type {
   ReviewControllerOptions,
   ReviewControllerState,

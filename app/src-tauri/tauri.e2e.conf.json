@@ -1,0 +1,30 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Dara E2E",
+  "identifier": "com.rohan.dara.e2e",
+  "build": {
+    "beforeBuildCommand": "pnpm build:e2e"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "capabilities": [
+        "main",
+        "quick-add",
+        {
+          "identifier": "e2e",
+          "description": "Test-driver permissions for Dara's feature-gated native E2E build",
+          "windows": ["main", "quick-add"],
+          "platforms": ["macOS"],
+          "permissions": [
+            "wdio:default",
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}
