@@ -22,6 +22,7 @@
   "include": [
     "build",
     "playwright.config.ts",
+    "vite.browser.config.ts",
     "vite.config.ts",
     "vite.e2e.config.ts",
     "vitest.config.ts",

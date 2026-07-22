@@ -9,8 +9,12 @@ test('rich-text selection saves canonical Markdown through the public result', a
   )
   const front = page.getByRole('textbox', { name: 'Front' })
   await front.fill('retrieval')
-  await front.press('Meta+a')
-  await page.getByTestId('front-editor').getByRole('button', { name: 'Bold' }).click()
+  await front.press('ControlOrMeta+a')
+  const bold = page
+    .getByTestId('front-editor')
+    .getByRole('button', { name: 'Bold' })
+  await bold.click()
+  await expect(bold).toHaveAttribute('aria-pressed', 'true')
   await page.getByRole('textbox', { name: 'Back' }).fill('practice')
   await page.keyboard.press('Meta+Enter')
 
