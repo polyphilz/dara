@@ -91,7 +91,7 @@ test('focuses Front and follows the logical editor and form focus order', async 
   const { getByRole, queryByRole } = render(<QuickAddWindow />)
   expect(getByRole('region', { name: 'Quick add' })).toBeTruthy()
   expect(getByRole('button', { name: 'Card type: Basic' })).toBeTruthy()
-  expect(queryByRole('heading', { name: 'Quick add' })).toBeNull()
+  expect(queryByRole('heading', { name: 'Quick add', level: 1 })).toBeTruthy()
   const front = getByRole('textbox', { name: 'Front' })
   const back = getByRole('textbox', { name: 'Back' })
   const source = getByRole('textbox', { name: /Source/ })
