@@ -1,11 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
+import { DaraIpcCommand } from './tauri-contracts.ts'
 
 export const native = {
-  dismissQuickAdd: () => invoke<void>('dismiss_quick_add'),
+  dismissQuickAdd: () => invoke<void>(DaraIpcCommand.DismissQuickAdd),
   openExternalUrl: (url: string) =>
-    invoke<void>('open_external_url', { url }),
+    invoke<void>(DaraIpcCommand.OpenExternalUrl, { url }),
   setQuickAddFileDialogOpen: (open: boolean) =>
-    invoke<void>('set_quick_add_file_dialog_open', { open }),
-  showMain: () => invoke<void>('show_main'),
-  showQuickAdd: () => invoke<void>('show_quick_add'),
+    invoke<void>(DaraIpcCommand.SetQuickAddFileDialogOpen, { open }),
+  showMain: () => invoke<void>(DaraIpcCommand.ShowMain),
+  showQuickAdd: () => invoke<void>(DaraIpcCommand.ShowQuickAdd),
 }

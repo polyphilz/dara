@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { DaraIpcCommand } from '../lib/tauri-contracts.ts'
 import type {
   CardContentDraft,
   CardContentListItem,
@@ -23,25 +24,25 @@ import type {
 
 export const tauriReviewGateway: ReviewGateway = {
   selectNextReviewCard: (input: SelectNextReviewCardInput) =>
-    invoke<ReviewQueueSelection>('select_next_review_card', { input }),
+    invoke<ReviewQueueSelection>(DaraIpcCommand.SelectNextReviewCard, { input }),
   recordGrade: (input: RecordGradeInput) =>
-    invoke<ReviewMutationResult>('record_grade', { input }),
+    invoke<ReviewMutationResult>(DaraIpcCommand.RecordGrade, { input }),
   undoLastGrade: (input: UndoLastGradeInput) =>
-    invoke<ReviewMutationResult>('undo_last_grade', { input }),
+    invoke<ReviewMutationResult>(DaraIpcCommand.UndoLastGrade, { input }),
 }
 
 export function createCardContent(
   input: CardContentDraft,
   mediaLeaseId: string,
 ): Promise<ReviewContext> {
-  return invoke<ReviewContext>('create_card_content', { input, mediaLeaseId })
+  return invoke<ReviewContext>(DaraIpcCommand.CreateCardContent, { input, mediaLeaseId })
 }
 
 export function updateCardContent(
   input: UpdateCardContentInput,
   mediaLeaseId: string,
 ): Promise<CardContentListItem> {
-  return invoke<CardContentListItem>('update_card_content', {
+  return invoke<CardContentListItem>(DaraIpcCommand.UpdateCardContent, {
     input,
     mediaLeaseId,
   })
@@ -50,33 +51,33 @@ export function updateCardContent(
 export function searchCardContent(
   input: SearchCardContentInput,
 ): Promise<SearchCardContentResult> {
-  return invoke<SearchCardContentResult>('search_card_content', { input })
+  return invoke<SearchCardContentResult>(DaraIpcCommand.SearchCardContent, { input })
 }
 
 export function searchStatus(): Promise<SemanticSearchStatus> {
-  return invoke<SemanticSearchStatus>('search_status')
+  return invoke<SemanticSearchStatus>(DaraIpcCommand.SearchStatus)
 }
 
 export function maintainSearch(
   operation: SearchMaintenanceOperation,
 ): Promise<SearchMaintenanceReport> {
-  return invoke<SearchMaintenanceReport>('maintain_search', { operation })
+  return invoke<SearchMaintenanceReport>(DaraIpcCommand.MaintainSearch, { operation })
 }
 
 export function setCardContentSuspended(
   input: SetCardContentSuspendedInput,
 ): Promise<CardContentListItem> {
-  return invoke<CardContentListItem>('set_card_content_suspended', { input })
+  return invoke<CardContentListItem>(DaraIpcCommand.SetCardContentSuspended, { input })
 }
 
 export function deleteCardContent(
   input: DeleteCardContentInput,
 ): Promise<void> {
-  return invoke<void>('delete_card_content', { input })
+  return invoke<void>(DaraIpcCommand.DeleteCardContent, { input })
 }
 
 export function loadHomeStats(
   input: LoadHomeStatsInput,
 ): Promise<HomeStats> {
-  return invoke<HomeStats>('load_home_stats', { input })
+  return invoke<HomeStats>(DaraIpcCommand.LoadHomeStats, { input })
 }
