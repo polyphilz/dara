@@ -1,5 +1,12 @@
 # Repository guidance
 
+## Git staging, commits, and pushes
+
+- Never run `git add`, `git commit`, or `git push` without first receiving the user's explicit approval for those specific actions.
+- Do not infer approval from a request to implement a change, fix an issue, address review feedback, prepare a pull request, rebase branches, or otherwise complete a development task.
+- Approval applies only to the specific batch of staging, commits, or pushes being discussed. Do not treat prior approval as permission for later Git mutations.
+- Without approval, leave changes unstaged and uncommitted, report their status, and provide a suggested commit message if useful.
+
 ## Local development database
 
 - Any development work that reads from or writes to a Dara database must use a repository-local testing database under `app/.data/`. This includes manual SQL inspection, migration work, smoke tests, benchmarks, development scripts, and direct application launches.
