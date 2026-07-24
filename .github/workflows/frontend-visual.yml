@@ -1,0 +1,42 @@
+name: Frontend visual
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: frontend-visual-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend-visual:
+    runs-on: ubuntu-24.04
+    container:
+      image: mcr.microsoft.com/playwright:v1.61.0-noble@sha256:57b65fdc9ceabe0ef613124c7bbe2babcf9362c4d85e382fe3b03604e84b428a
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.12.0
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Compare canonical DPR-1 and focused DPR-2 baselines
+        run: pnpm test:visual
+      - name: Upload visual diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-visual-diagnostics
+          path: |
+            app/playwright-report/
+            app/test-results/playwright/
+          if-no-files-found: warn
+          retention-days: 14

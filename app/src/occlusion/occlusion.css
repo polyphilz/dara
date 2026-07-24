@@ -44,7 +44,7 @@
 }
 
 .occlusion-image-picker > span:not(.occlusion-picker-icon) {
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 88%, var(--ink));
   font-size: 12px;
 }
 
