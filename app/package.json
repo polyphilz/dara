@@ -24,11 +24,13 @@
     "test:visual:update": "playwright test --project=chromium-visual --project=chromium-hidpi-visual --update-snapshots",
     "test:a11y": "playwright test --project=chromium-functional tests/browser/accessibility",
     "test:properties": "DARA_PROPERTY_SEED=20260717 vitest run tests/ui/properties",
+    "test:properties:stress": "node scripts/run-property-stress.mjs",
     "test:native:typecheck": "tsc -p tsconfig.native-test.json",
     "test:native-bundle-safety": "node scripts/check-native-bundle-safety.mjs",
     "test:native": "pnpm test:native:typecheck && node scripts/run-native-tests.mjs",
     "test:native:stress": "node scripts/run-native-stress.mjs",
     "test:frontend": "pnpm test && pnpm test:browser",
+    "test:frontend:stress": "playwright test --project=chromium-functional --repeat-each=10 --fail-on-flaky-tests",
     "check": "pnpm lint && DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build && pnpm test:frontend && pnpm test:bundle-safety:check"
   },
   "dependencies": {
