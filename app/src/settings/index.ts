@@ -9,7 +9,6 @@ export {
   DEFAULT_ZOOM_PERCENT,
   MAX_ZOOM_PERCENT,
   MIN_ZOOM_PERCENT,
-  SETTINGS_CHANGED_EVENT,
   ZOOM_STEP_PERCENT,
   type KeyboardBinding,
   type SettingsSnapshot,

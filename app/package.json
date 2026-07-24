@@ -19,6 +19,7 @@
     "test:bundle-safety": "pnpm test:bundle-report && pnpm test:bundle-safety:check",
     "test:browser:typecheck": "tsc -p tsconfig.browser-test.json",
     "test:browser": "pnpm test:browser:typecheck && playwright test --project=chromium-functional --project=webkit-contract",
+    "test:properties": "DARA_PROPERTY_SEED=20260717 vitest run tests/ui/properties",
     "test:frontend": "pnpm test && pnpm test:browser",
     "check": "pnpm lint && DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build && pnpm test:frontend && pnpm test:bundle-safety:check"
   },
@@ -84,6 +85,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.3",
     "@vitest/coverage-v8": "4.1.10",
+    "fast-check": "4.9.0",
     "jsdom": "29.1.1",
     "oxlint": "^1.71.0",
     "typescript": "~6.0.2",

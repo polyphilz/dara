@@ -36,8 +36,6 @@ export const DEFAULT_ZOOM_PERCENT = 100
 export const MIN_ZOOM_PERCENT = 50
 export const MAX_ZOOM_PERCENT = 200
 export const ZOOM_STEP_PERCENT = 10
-export const SETTINGS_CHANGED_EVENT = 'settings-changed'
-
 export const DEFAULT_KEYBOARD_BINDINGS: readonly KeyboardBinding[] = [
   {
     accelerator: DEFAULT_QUICK_ADD_ACCELERATOR,
