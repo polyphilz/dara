@@ -1,7 +1,8 @@
+import { Appearance } from '../../../src/settings/types.ts'
 import { BrowserHarnessSurface, BrowserScenarioId } from '../harness/scenarios.ts'
 import { expect, test } from '../fixtures/test.ts'
 
-for (const appearance of ['LIGHT', 'DARK'] as const) {
+for (const appearance of [Appearance.Light, Appearance.Dark]) {
   test(`shared controls in ${appearance.toLowerCase()} appearance`, async ({ page }) => {
     await page.setViewportSize({ width: 1000, height: 720 })
     await page.goto(
