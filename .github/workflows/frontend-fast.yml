@@ -60,5 +60,6 @@ jobs:
           path: |
             app/coverage/frontend/coverage-summary.json
             app/node_modules/.tmp/dara-bundle-report.json
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
