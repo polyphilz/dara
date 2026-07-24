@@ -7,6 +7,7 @@ import '../../../src/markdown/rich-text-editor.css'
 import '../../../src/occlusion/occlusion.css'
 import '../../../src/windows/shared/basic-card-form.css'
 import '../../../src/windows/quick-add/quick-add-window.css'
+import { Appearance } from '../../../src/settings/types.ts'
 import { installIpcDriver, type DaraBrowserTestApi } from './ipc-driver.ts'
 import {
   BrowserHarnessSurface,
@@ -24,7 +25,7 @@ const parameters = new URLSearchParams(window.location.search)
 const scenario = parseBrowserScenario(parameters.get('scenario'))
 const surface = parseBrowserHarnessSurface(parameters.get('surface'))
 const appearance = parameters.get('appearance')
-if (appearance === 'DARK' || appearance === 'LIGHT') {
+if (appearance === Appearance.Dark || appearance === Appearance.Light) {
   document.documentElement.dataset.appearance = appearance
 }
 const driver = await installIpcDriver(scenario, surface)
