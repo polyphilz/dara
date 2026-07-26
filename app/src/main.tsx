@@ -1,5 +1,6 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+import { createHashHistory } from '@tanstack/react-router'
 import '@fontsource-variable/reddit-mono/wght.css'
 import 'katex/dist/katex.min.css'
 import 'react-activity-calendar/tooltips.css'
@@ -13,6 +14,8 @@ import { MainWindow } from './windows/main/MainWindow.tsx'
 import { installAppZoom } from './zoom/app-zoom.ts'
 import { installAppAppearance } from './settings/index.ts'
 
+const mainWindowHistory = createHashHistory()
+
 void installAppZoom().catch((error: unknown) => {
   console.error('Could not initialize app zoom', error)
 })
@@ -22,6 +25,6 @@ void installAppAppearance().catch((error: unknown) => {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MainWindow />
+    <MainWindow history={mainWindowHistory} />
   </StrictMode>,
 )

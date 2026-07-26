@@ -11,6 +11,7 @@ import {
 import {
   createCardContent,
   deleteCardContent,
+  loadCardContent,
   loadHomeStats,
   maintainSearch,
   searchCardContent,
@@ -66,6 +67,16 @@ describe('Tauri gateway contracts', () => {
     ).toEqual({
       command: DaraIpcCommand.UpdateCardContent,
       payload: { input: updateInput, mediaLeaseId: MEDIA_LEASE_ID },
+    })
+  })
+
+  test('load card content uses the addressable card ID envelope', async () => {
+    const cardContentId = '01980c8e-6c00-7000-8000-000000000102'
+    expect(
+      await captureInvocation(() => loadCardContent(cardContentId)),
+    ).toEqual({
+      command: DaraIpcCommand.LoadCardContent,
+      payload: { cardContentId },
     })
   })
 

@@ -36,6 +36,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             database::commands::create_card_content,
             database::commands::delete_card_content,
+            database::commands::load_card_content,
             database::commands::load_home_stats,
             database::commands::load_review_context,
             database::commands::load_scheduler_replay_snapshot,

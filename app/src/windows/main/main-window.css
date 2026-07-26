@@ -31,7 +31,8 @@ body {
 }
 
 .main-window-browsing > .card-browser,
-.main-window-browsing > .basic-card-form-main {
+.main-window-browsing > .basic-card-form-main,
+.main-window-browsing > .card-editor-route-status {
   min-height: 0;
   flex: 1 1 auto;
 }
@@ -42,6 +43,18 @@ body {
 
 .main-window-settings {
   width: min(var(--wide-workspace-width), 100%);
+}
+
+.card-editor-route-status {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  color: var(--muted);
+}
+
+.card-editor-route-status p {
+  margin: 0;
 }
 
 .card-detail-actions,

@@ -98,6 +98,11 @@ impl Database {
     }
 
     #[cfg(test)]
+    fn load_card_content(&self, card_content_id: String) -> Result<CardContentListItem> {
+        self.client.load_card_content(card_content_id)
+    }
+
+    #[cfg(test)]
     fn search_card_content(
         &self,
         input: SearchCardContentInput,
@@ -367,6 +372,12 @@ fn writer_loop(
                     input,
                     &media_lease_id,
                 ));
+            }
+            WriterMessage::LoadCardContent {
+                card_content_id,
+                reply,
+            } => {
+                let _ = reply.send(domain::load_card_content_list_item(&main, &card_content_id));
             }
             WriterMessage::SearchCardContent { input, reply } => {
                 let _ = reply.send(domain::search_card_content(&mut main, input, None));

@@ -149,11 +149,11 @@ afterEach(() => {
 })
 
 test('Add card opens a persistent main-window editor rather than Quick Add', async () => {
-  const { getByRole, queryByRole, queryByText } = render(<MainWindow />)
+  const { findByRole, getByRole, queryByRole, queryByText } = render(<MainWindow />)
 
-  fireEvent.click(getByRole('button', { name: 'Add' }))
+  fireEvent.click(await findByRole('button', { name: 'Add' }))
 
-  expect(getByRole('region', { name: 'Add a card' })).toBeTruthy()
+  expect(await findByRole('region', { name: 'Add a card' })).toBeTruthy()
   expect(getByRole('button', { name: 'Card type: Basic' })).toBeTruthy()
   expect(queryByRole('heading', { name: 'Add a card' })).toBeNull()
   expect(queryByText('Both fields are required.')).toBeNull()
@@ -166,10 +166,10 @@ test('Add card opens a persistent main-window editor rather than Quick Add', asy
   )
 })
 
-test('Escape is inert in the persistent Add view and preserves the draft', () => {
-  const { getByRole } = render(<MainWindow />)
-  fireEvent.click(getByRole('button', { name: 'Add' }))
-  const front = getByRole('textbox', { name: 'Front' })
+test('Escape is inert in the persistent Add view and preserves the draft', async () => {
+  const { findByRole, getByRole } = render(<MainWindow />)
+  fireEvent.click(await findByRole('button', { name: 'Add' }))
+  const front = await findByRole('textbox', { name: 'Front' })
   replaceEditorDocument(front, 'unfinished question')
 
   fireEvent.keyDown(front, { key: 'Escape' })
@@ -181,8 +181,9 @@ test('Escape is inert in the persistent Add view and preserves the draft', () =>
 })
 
 test('saving in the main editor creates the card and returns home', async () => {
-  const { getByRole } = render(<MainWindow />)
-  fireEvent.click(getByRole('button', { name: 'Add' }))
+  const { findByRole, getByRole } = render(<MainWindow />)
+  fireEvent.click(await findByRole('button', { name: 'Add' }))
+  await findByRole('region', { name: 'Add a card' })
 
   replaceEditorDocument(getByRole('textbox', { name: 'Front' }), '**front**')
   replaceEditorDocument(getByRole('textbox', { name: 'Back' }), 'back')
@@ -208,7 +209,7 @@ test('saving in the main editor creates the card and returns home', async () => 
 })
 
 test('home shows review and queue stats and opens the review flow', async () => {
-  const { findByText, getByRole, queryByText } = render(<MainWindow />)
+  const { findByRole, findByText, getByRole, queryByText } = render(<MainWindow />)
 
   expect(queryByText('dara')).toBeNull()
   expect(queryByText('Last 365 days')).toBeNull()
@@ -217,7 +218,9 @@ test('home shows review and queue stats and opens the review flow', async () => 
 
   fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
 
-  expect(getByRole('heading', { name: 'Caught up for now' })).toBeTruthy()
+  expect(
+    await findByRole('heading', { name: 'Caught up for now' }),
+  ).toBeTruthy()
   expect(mocks.refresh).toHaveBeenCalled()
 })
 
@@ -255,9 +258,7 @@ test('renders the selected CLOZE variant in the review question', async () => {
 
   fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
 
-  expect(getByRole('article').textContent).toContain(
-    'The capital of France is [city].',
-  )
+  expect(await findByText('The capital of France is [city].')).toBeTruthy()
   expect(queryByText(/Paris/)).toBeNull()
   fireEvent.click(getByRole('button', { name: 'Reveal answer' }))
   expect(mocks.reveal).toHaveBeenCalledTimes(1)
@@ -288,7 +289,7 @@ test('uses the same navigation with Settings rightmost on every surface', async 
 test('opens Settings from the header and Command-comma', async () => {
   const { findByRole, getByRole } = render(<MainWindow />)
 
-  fireEvent.click(getByRole('button', { name: 'Settings' }))
+  fireEvent.click(await findByRole('button', { name: 'Settings' }))
   expect(await findByRole('heading', { name: 'Settings' })).toBeTruthy()
 
   fireEvent.click(getByRole('button', { name: 'Home' }))
@@ -305,8 +306,8 @@ test('opens Home when the global Home shortcut event arrives', async () => {
       return () => handlers.delete(event)
     },
   )
-  const { findByRole, getByRole } = render(<MainWindow />)
-  fireEvent.click(getByRole('button', { name: 'Browse' }))
+  const { findByRole } = render(<MainWindow />)
+  fireEvent.click(await findByRole('button', { name: 'Browse' }))
   expect(await findByRole('searchbox', { name: 'Search cards' })).toBeTruthy()
   await waitFor(() => expect(handlers.has('open-home')).toBe(true))
 
@@ -330,22 +331,24 @@ test('keeps the rendered home dashboard mounted while reviewing', async () => {
   expect(mocks.loadHomeStats).toHaveBeenCalledTimes(1)
 })
 
-test('automatically rechecks the queue when the next learning deadline arrives', () => {
+test('automatically rechecks the queue when the next learning deadline arrives', async () => {
   vi.useFakeTimers()
   const now = Date.now()
   caughtUpState.nextDueAt = now + 500
   render(<MainWindow />)
+  await act(async () => undefined)
 
   act(() => vi.advanceTimersByTime(526))
 
   expect(mocks.notifyClockChanged).toHaveBeenCalledTimes(1)
 })
 
-test('automatically refreshes at the next 4AM study-day boundary', () => {
+test('automatically refreshes at the next 4AM study-day boundary', async () => {
   vi.useFakeTimers()
   const boundary = nextStudyDayBoundary()
   vi.setSystemTime(boundary - 500)
   render(<MainWindow />)
+  await act(async () => undefined)
 
   act(() => vi.advanceTimersByTime(526))
 

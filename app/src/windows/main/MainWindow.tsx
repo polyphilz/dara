@@ -1,5 +1,16 @@
 import { listen } from '@tauri-apps/api/event'
 import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  useBlocker,
+  useMatchRoute,
+  useNavigate,
+  type RouterHistory,
+} from '@tanstack/react-router'
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -32,13 +43,13 @@ import { DaraButtonVariant } from '../../components/dara-button-types.ts'
 import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { occlusionLayerId } from '../../occlusion/occlusion.ts'
-import { CardForm } from '../shared/CardForm.tsx'
-import { CardFormVariant } from '../shared/card-form.ts'
 import { CardBrowser } from './CardBrowser.tsx'
 import { Home } from './Home.tsx'
 import { invalidateHomeStats } from './home-stats-cache.ts'
 import { MainNavigation } from './MainNavigation.tsx'
+import { RoutedCardForm } from './RoutedCardForm.tsx'
 import { Settings } from './Settings.tsx'
+import { MainWindowRoutePath } from './main-window-routes.ts'
 
 const grades = [
   { grade: 1, label: 'Again' },
@@ -61,14 +72,108 @@ const MainWindowMode = {
 type MainWindowMode =
   (typeof MainWindowMode)[keyof typeof MainWindowMode]
 
-export function MainWindow() {
-  const [mode, setMode] = useState<MainWindowMode>(MainWindowMode.Home)
+const rootRoute = createRootRoute({
+  component: MainWindowContent,
+})
+
+const routeTree = rootRoute.addChildren([
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: MainWindowRoutePath.Home,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: MainWindowRoutePath.Add,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: MainWindowRoutePath.Browse,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: MainWindowRoutePath.BrowseCard,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: MainWindowRoutePath.BrowseEdit,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: MainWindowRoutePath.Review,
+  }),
+  createRoute({
+    getParentRoute: () => rootRoute,
+    path: MainWindowRoutePath.Settings,
+  }),
+])
+
+function createMainWindowRouter(
+  history: RouterHistory = createMemoryHistory({
+    initialEntries: [MainWindowRoutePath.Home],
+  }),
+) {
+  return createRouter({ history, routeTree })
+}
+
+type MainWindowRouter = ReturnType<typeof createMainWindowRouter>
+
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: MainWindowRouter
+  }
+}
+
+interface MainWindowProps {
+  history?: RouterHistory
+}
+
+export function MainWindow({ history }: MainWindowProps = {}) {
+  const [router] = useState(() => createMainWindowRouter(history))
+  return <RouterProvider router={router} />
+}
+
+function MainWindowContent() {
+  const matchRoute = useMatchRoute()
+  const navigate = useNavigate()
+  const editRouteParams = matchRoute({
+    fuzzy: false,
+    to: MainWindowRoutePath.BrowseEdit,
+  })
+  const browseCardRouteParams = matchRoute({
+    fuzzy: false,
+    to: MainWindowRoutePath.BrowseCard,
+  })
+  const editingCardContentId = editRouteParams
+    ? editRouteParams.cardContentId
+    : null
+  const mode: MainWindowMode = editRouteParams
+    ? MainWindowMode.Browse
+    : browseCardRouteParams
+      ? MainWindowMode.Browse
+      : matchRoute({ fuzzy: false, to: MainWindowRoutePath.Add })
+        ? MainWindowMode.Create
+        : matchRoute({ fuzzy: false, to: MainWindowRoutePath.Browse })
+          ? MainWindowMode.Browse
+          : matchRoute({ fuzzy: false, to: MainWindowRoutePath.Review })
+            ? MainWindowMode.Review
+            : matchRoute({ fuzzy: false, to: MainWindowRoutePath.Settings })
+              ? MainWindowMode.Settings
+              : MainWindowMode.Home
   const [browseNavigationToken, setBrowseNavigationToken] = useState(0)
   const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
   const [homeRefreshToken, setHomeRefreshToken] = useState(0)
   const [settingsNavigationToken, setSettingsNavigationToken] = useState(0)
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [clockScheduleToken, setClockScheduleToken] = useState(0)
+  const shouldBlockSettingsNavigation = useCallback(
+    () => settingsBusy,
+    [settingsBusy],
+  )
+  useBlocker({
+    disabled: !settingsBusy,
+    enableBeforeUnload: settingsBusy,
+    shouldBlockFn: shouldBlockSettingsNavigation,
+  })
   const refreshHomeStats = useCallback(() => {
     invalidateHomeStats()
     setHomeRefreshToken((value) => value + 1)
@@ -81,11 +186,23 @@ export function MainWindow() {
     [refreshHomeStats],
   )
   const state = useSyncExternalStore(controller.subscribe, controller.getSnapshot)
+  const previousMode = useRef(mode)
   const spaceCanSubmit = useRef(true)
 
   useEffect(() => {
     void controller.start()
   }, [controller])
+
+  useEffect(() => {
+    const priorMode = previousMode.current
+    previousMode.current = mode
+    if (
+      mode === MainWindowMode.Review &&
+      priorMode !== MainWindowMode.Review
+    ) {
+      void controller.refresh()
+    }
+  }, [controller, mode])
 
   useEffect(() => {
     const nextLearningDueAt =
@@ -228,26 +345,67 @@ export function MainWindow() {
     void controller.refresh()
   }, [controller])
 
-  const showHome = useCallback(() => setMode(MainWindowMode.Home), [])
-  const showCreate = useCallback(() => setMode(MainWindowMode.Create), [])
+  const showHome = useCallback(() => {
+    void navigate({ to: MainWindowRoutePath.Home })
+  }, [navigate])
+  const showCreate = useCallback(() => {
+    void navigate({ to: MainWindowRoutePath.Add })
+  }, [navigate])
   const showBrowse = useCallback(() => {
-    setMode(MainWindowMode.Browse)
     setBrowseNavigationToken((value) => value + 1)
-  }, [])
+    void navigate({ to: MainWindowRoutePath.Browse })
+  }, [navigate])
   const showReview = useCallback(() => {
     if (settingsBusy) {
       return
     }
-    setMode(MainWindowMode.Review)
-    void controller.refresh()
-  }, [controller, settingsBusy])
+    void navigate({ to: MainWindowRoutePath.Review })
+  }, [navigate, settingsBusy])
   const showSettings = useCallback(() => {
     if (settingsBusy) {
       return
     }
-    setMode(MainWindowMode.Settings)
     setSettingsNavigationToken((value) => value + 1)
-  }, [settingsBusy])
+    void navigate({ to: MainWindowRoutePath.Settings })
+  }, [navigate, settingsBusy])
+  const cancelCreate = useCallback(() => {
+    void navigate({
+      ignoreBlocker: true,
+      replace: true,
+      to: MainWindowRoutePath.Home,
+    })
+  }, [navigate])
+  const editCard = useCallback(
+    (cardContentId: string) => {
+      void navigate({
+        params: { cardContentId },
+        to: MainWindowRoutePath.BrowseEdit,
+      })
+    },
+    [navigate],
+  )
+  const selectBrowseCard = useCallback(
+    (cardContentId: string, replace: boolean) => {
+      void navigate({
+        params: { cardContentId },
+        replace,
+        to: MainWindowRoutePath.BrowseCard,
+      })
+    },
+    [navigate],
+  )
+  const exitEdit = useCallback(() => {
+    void navigate({
+      ignoreBlocker: true,
+      params: editingCardContentId
+        ? { cardContentId: editingCardContentId }
+        : undefined,
+      replace: true,
+      to: editingCardContentId
+        ? MainWindowRoutePath.BrowseCard
+        : MainWindowRoutePath.Browse,
+    })
+  }, [editingCardContentId, navigate])
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -313,21 +471,29 @@ export function MainWindow() {
       </div>
 
       {mode === MainWindowMode.Create ? (
-        <CardForm
-          onCancel={showHome}
+        <RoutedCardForm
+          onCancel={cancelCreate}
           onSaved={() => {
             controller.notifyCardCreated()
             refreshHomeStats()
-            showHome()
+            cancelCreate()
           }}
-          variant={CardFormVariant.Main}
         />
       ) : mode === MainWindowMode.Browse ? (
         <CardBrowser
+          editingCardContentId={editingCardContentId}
           navigationToken={browseNavigationToken}
           onCardContentChanged={cardContentChanged}
+          onEdit={editCard}
+          onExitEdit={exitEdit}
           onQueueChanged={queueChanged}
+          onSelect={selectBrowseCard}
           refreshToken={browseRefreshToken}
+          selectedCardContentId={
+            browseCardRouteParams
+              ? browseCardRouteParams.cardContentId
+              : editingCardContentId
+          }
         />
       ) : mode === MainWindowMode.Review ? (
         <ReviewContent controller={controller} state={state} />

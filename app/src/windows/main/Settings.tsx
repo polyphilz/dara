@@ -36,6 +36,7 @@ import {
   type SettingsSnapshot,
 } from '../../settings/index.ts'
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
+import { ConfirmationDialog } from './ConfirmationDialog.tsx'
 
 const MIN_RETENTION_PERCENT = 70
 const MAX_RETENTION_PERCENT = 99
@@ -685,100 +686,6 @@ function SettingRow({
         <span>{description}</span>
       </div>
       {control}
-    </div>
-  )
-}
-
-function ConfirmationDialog({
-  allowCancelWhileBusy = false,
-  busy,
-  children,
-  confirmLabel,
-  onCancel,
-  onConfirm,
-  title,
-}: {
-  allowCancelWhileBusy?: boolean
-  busy: boolean
-  children: ReactNode
-  confirmLabel: string
-  onCancel: () => void
-  onConfirm: () => void
-  title: string
-}) {
-  const confirmRef = useRef<HTMLButtonElement>(null)
-  const formRef = useRef<HTMLFormElement>(null)
-  useEffect(() => {
-    confirmRef.current?.focus()
-  }, [])
-  return (
-    <div className="settings-dialog-backdrop">
-      <form
-        aria-label={title}
-        className="settings-dialog"
-        onKeyDown={(event) => {
-          event.stopPropagation()
-          if (event.key === 'Escape') {
-            event.preventDefault()
-            onCancel()
-            return
-          }
-          if (event.key === 'Tab') {
-            const focusable = Array.from(
-              formRef.current?.querySelectorAll<HTMLButtonElement>(
-                'button:not(:disabled)',
-              ) ?? [],
-            )
-            if (focusable.length === 0) {
-              event.preventDefault()
-            } else if (
-              event.shiftKey &&
-              document.activeElement === focusable[0]
-            ) {
-              event.preventDefault()
-              focusable.at(-1)?.focus()
-            } else if (
-              !event.shiftKey &&
-              document.activeElement === focusable.at(-1)
-            ) {
-              event.preventDefault()
-              focusable[0]?.focus()
-            }
-          }
-        }}
-        onSubmit={(event) => {
-          event.preventDefault()
-          if (!busy) {
-            onConfirm()
-          }
-        }}
-        role="alertdialog"
-        ref={formRef}
-      >
-        <div>
-          <span>Confirm change</span>
-          <h2>{title}</h2>
-        </div>
-        <div className="settings-dialog-copy">{children}</div>
-        <div className="settings-dialog-actions">
-          <DaraButton
-            disabled={busy && !allowCancelWhileBusy}
-            onClick={onCancel}
-            type="button"
-            variant={DaraButtonVariant.Ghost}
-          >
-            Cancel
-          </DaraButton>
-          <DaraButton
-            disabled={busy}
-            ref={confirmRef}
-            type="submit"
-            variant={DaraButtonVariant.Primary}
-          >
-            {confirmLabel}
-          </DaraButton>
-        </div>
-      </form>
     </div>
   )
 }

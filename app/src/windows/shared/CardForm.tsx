@@ -60,6 +60,7 @@ export interface CardFormHandle {
 interface CardFormProps {
   initialContent?: CardContent
   onCancel: () => void | Promise<void>
+  onDirtyChange?: (dirty: boolean) => void
   onFileDialogOpenChange?: (open: boolean) => void
   onSaved: (item?: CardContentListItem) => void | Promise<void>
   variant: CardFormVariantType
@@ -72,6 +73,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
     {
       initialContent,
       onCancel,
+      onDirtyChange,
       onFileDialogOpenChange,
       onSaved,
       variant,
@@ -100,6 +102,17 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
     const [occlusionMediaPending, setOcclusionMediaPending] = useState(false)
     const [mediaLeaseId, setMediaLeaseId] = useState(() => createUuidV7())
     const hasOcclusion = occlusion !== null
+    const dirty =
+      cardType !== (initialContent?.type ?? CardContentType.Basic) ||
+      front !== (initialContent?.frontMd ?? '') ||
+      back !== (initialContent?.backMd ?? '') ||
+      source !== (initialContent?.source ?? '') ||
+      !occlusionDefinitionsEqual(
+        occlusion,
+        initialContent?.type === CardContentType.Occlusion
+          ? initialContent.occlusion
+          : null,
+      )
 
     const resetForm = useCallback(() => {
       setCardType(initialContent?.type ?? CardContentType.Basic)
@@ -185,6 +198,10 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
     useEffect(() => {
       resetForm()
     }, [resetForm])
+
+    useEffect(() => {
+      onDirtyChange?.(dirty)
+    }, [dirty, onDirtyChange])
 
     const save = async () => {
       if (saving) {
@@ -566,3 +583,10 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
     )
   },
 )
+
+function occlusionDefinitionsEqual(
+  left: OcclusionDefinition | null,
+  right: OcclusionDefinition | null,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right)
+}

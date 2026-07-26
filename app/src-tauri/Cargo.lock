@@ -857,6 +857,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "objc2-vision",
+ "objc2-web-kit",
  "pulldown-cmark",
  "refinery",
  "reqwest",

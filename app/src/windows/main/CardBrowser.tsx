@@ -31,6 +31,7 @@ import {
   SearchExecutionMode,
   SemanticSearchPhase,
   deleteCardContent,
+  loadCardContent,
   searchCardContent,
   searchStatus,
   setCardContentSuspended,
@@ -43,8 +44,7 @@ import { ReviewCardState } from '../../scheduling/index.ts'
 import { captureStudyMoment } from '../../scheduling/study-clock.ts'
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { studyDayToIsoDate } from './home-activity.ts'
-import { CardForm } from '../shared/CardForm.tsx'
-import { CardFormVariant } from '../shared/card-form.ts'
+import { RoutedCardForm } from './RoutedCardForm.tsx'
 
 const SEARCH_PAGE_SIZE = 50
 const SEARCH_FETCH_LIMIT = SEARCH_PAGE_SIZE + 1
@@ -59,14 +59,24 @@ type BrowseCommand = (typeof BrowseCommand)[keyof typeof BrowseCommand]
 const browseCommands = new Set<BrowseCommand>(Object.values(BrowseCommand))
 
 interface CardBrowserProps {
+  editingCardContentId: string | null
+  onEdit: (cardContentId: string) => void
+  onExitEdit: () => void
   onCardContentChanged?: () => void
   onQueueChanged: () => void
+  onSelect: (cardContentId: string, replace: boolean) => void
+  selectedCardContentId: string | null
   navigationToken?: number
   refreshToken?: number
 }
 
 export function CardBrowser({
+  editingCardContentId,
+  onEdit,
+  onExitEdit,
   onQueueChanged,
+  onSelect,
+  selectedCardContentId,
   onCardContentChanged = onQueueChanged,
   navigationToken = 0,
   refreshToken = 0,
@@ -75,16 +85,27 @@ export function CardBrowser({
   const detailContentRef = useRef<HTMLElement>(null)
   const resultRefs = useRef(new Map<string, HTMLButtonElement>())
   const requestId = useRef(0)
+  const addressedItemRef = useRef<CardContentListItem | null>(null)
+  const onSelectRef = useRef(onSelect)
+  const selectedRouteIdRef = useRef(selectedCardContentId)
   const [query, setQuery] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [searchPending, setSearchPending] = useState(false)
   const [revision, setRevision] = useState(0)
   const [results, setResults] = useState<CardContentListItem[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(
+    selectedCardContentId,
+  )
+  const selectedIdRef = useRef(selectedCardContentId)
   const [selectedReviewCardId, setSelectedReviewCardId] = useState<string | null>(
     null,
   )
-  const [editing, setEditing] = useState(false)
+  const [editingItem, setEditingItem] = useState<CardContentListItem | null>(null)
+  const [editingLoading, setEditingLoading] = useState(false)
+  const [editingError, setEditingError] = useState<string | null>(null)
+  const [addressedItem, setAddressedItem] =
+    useState<CardContentListItem | null>(null)
+  const [addressedLoading, setAddressedLoading] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -96,11 +117,21 @@ export function CardBrowser({
   )
   const [semanticStatus, setSemanticStatus] =
     useState<SemanticSearchStatus | null>(null)
+  const previousEditingCardContentId = useRef<string | null>(null)
+  onSelectRef.current = onSelect
+  selectedRouteIdRef.current = selectedCardContentId
 
   const selected = useMemo(
-    () => results.find((item) => item.cardContent.id === selectedId) ?? null,
-    [results, selectedId],
+    () =>
+      results.find((item) => item.cardContent.id === selectedId) ??
+      (addressedItem?.cardContent.id === selectedId ? addressedItem : null),
+    [addressedItem, results, selectedId],
   )
+  const selectedCardIsInResults =
+    selectedCardContentId !== null &&
+    results.some(
+      (item) => item.cardContent.id === selectedCardContentId,
+    )
   const reviewCards = useMemo(
     () => (selected ? orderedReviewCards(selected) : []),
     [selected],
@@ -119,9 +150,128 @@ export function CardBrowser({
   }, [])
 
   useEffect(() => {
-    setEditing(false)
     setConfirmingDelete(false)
   }, [navigationToken])
+
+  useEffect(() => {
+    if (selectedCardContentId === null) {
+      return
+    }
+    selectedIdRef.current = selectedCardContentId
+    setSelectedId(selectedCardContentId)
+    setConfirmingDelete(false)
+  }, [selectedCardContentId])
+
+  useEffect(() => {
+    if (editingCardContentId === null) {
+      setEditingItem(null)
+      setEditingLoading(false)
+      setEditingError(null)
+      if (previousEditingCardContentId.current !== null) {
+        const previousId = previousEditingCardContentId.current
+        requestAnimationFrame(() => {
+          const target =
+            resultRefs.current.get(previousId) ?? searchRef.current
+          target?.focus()
+        })
+      }
+      previousEditingCardContentId.current = null
+      return
+    }
+
+    previousEditingCardContentId.current = editingCardContentId
+    let disposed = false
+    setEditingItem(null)
+    setEditingLoading(true)
+    setEditingError(null)
+    void loadCardContent(editingCardContentId)
+      .then((item) => {
+        if (disposed) {
+          return
+        }
+        setEditingItem(item)
+        addressedItemRef.current = item
+        setAddressedItem(item)
+        selectedIdRef.current = item.cardContent.id
+        setSelectedId(item.cardContent.id)
+        setResults((current) =>
+          current.some(
+            (candidate) =>
+              candidate.cardContent.id === item.cardContent.id,
+          )
+            ? current.map((candidate) =>
+                candidate.cardContent.id === item.cardContent.id
+                  ? item
+                  : candidate,
+              )
+            : current,
+        )
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) {
+          setEditingError(errorMessage(cause))
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setEditingLoading(false)
+        }
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [editingCardContentId])
+
+  useEffect(() => {
+    if (
+      editingCardContentId !== null ||
+      selectedCardContentId === null ||
+      loading ||
+      selectedCardIsInResults
+    ) {
+      setAddressedLoading(false)
+      return
+    }
+    if (
+      addressedItemRef.current?.cardContent.id === selectedCardContentId
+    ) {
+      setAddressedItem(addressedItemRef.current)
+      setAddressedLoading(false)
+      return
+    }
+
+    let disposed = false
+    setAddressedItem(null)
+    setAddressedLoading(true)
+    void loadCardContent(selectedCardContentId)
+      .then((item) => {
+        if (disposed) {
+          return
+        }
+        addressedItemRef.current = item
+        setAddressedItem(item)
+      })
+      .catch((cause: unknown) => {
+        if (!disposed) {
+          setError(errorMessage(cause))
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setAddressedLoading(false)
+        }
+      })
+
+    return () => {
+      disposed = true
+    }
+  }, [
+    editingCardContentId,
+    loading,
+    selectedCardContentId,
+    selectedCardIsInResults,
+  ])
 
   useEffect(() => {
     setSelectedReviewCardId((current) =>
@@ -161,11 +311,25 @@ export function CardBrowser({
         setSearchMode(result.mode)
         setSemanticStatus(result.semanticStatus)
         setHasMore(nextResults.length > SEARCH_PAGE_SIZE)
-        setSelectedId((current) =>
-          current && page.some((item) => item.cardContent.id === current)
-            ? current
-            : (page[0]?.cardContent.id ?? null),
-        )
+        const requestedId = selectedRouteIdRef.current
+        const currentId = selectedIdRef.current
+        const preserveRequestedId =
+          requestedId !== null &&
+          (submittedQuery.trim() === '' ||
+            page.some((item) => item.cardContent.id === requestedId))
+        const nextSelectedId =
+          preserveRequestedId
+            ? requestedId
+            : currentId &&
+                page.some((item) => item.cardContent.id === currentId)
+              ? currentId
+              : (page[0]?.cardContent.id ?? null)
+        selectedIdRef.current = nextSelectedId
+        setSelectedId(nextSelectedId)
+        if (nextSelectedId && requestedId !== nextSelectedId) {
+          selectedRouteIdRef.current = nextSelectedId
+          onSelectRef.current(nextSelectedId, true)
+        }
       })
       .catch((cause: unknown) => {
         if (requestId.current === currentRequest) {
@@ -199,6 +363,21 @@ export function CardBrowser({
   const refresh = useCallback(() => {
     setRevision((value) => value + 1)
   }, [])
+
+  const selectCard = useCallback(
+    (cardContentId: string, replace = false) => {
+      const selectionChanged = selectedIdRef.current !== cardContentId
+      const routeChanged = selectedRouteIdRef.current !== cardContentId
+      selectedIdRef.current = cardContentId
+      setSelectedId(cardContentId)
+      setConfirmingDelete(false)
+      if (selectionChanged || routeChanged) {
+        selectedRouteIdRef.current = cardContentId
+        onSelect(cardContentId, replace)
+      }
+    },
+    [onSelect],
+  )
 
   const loadMore = async () => {
     if (loading || loadingMore || !hasMore) {
@@ -250,8 +429,7 @@ export function CardBrowser({
     )
     const nextIndex = Math.min(results.length - 1, Math.max(0, currentIndex + delta))
     const nextId = results[nextIndex]!.cardContent.id
-    setSelectedId(nextId)
-    setConfirmingDelete(false)
+    selectCard(nextId)
     if (moveFocus) {
       resultRefs.current.get(nextId)?.focus()
     }
@@ -263,6 +441,7 @@ export function CardBrowser({
     setSubmittedQuery('')
     setSearchPending(false)
     setResults([])
+    selectedIdRef.current = null
     setSelectedId(null)
     setHasMore(false)
     setRevision((value) => value + 1)
@@ -274,6 +453,7 @@ export function CardBrowser({
       setSearchPending(true)
       requestId.current += 1
       setResults([])
+      selectedIdRef.current = null
       setSelectedId(null)
       setHasMore(false)
       setLoading(false)
@@ -326,7 +506,7 @@ export function CardBrowser({
 
   const runBrowseCommand = useCallback(
     (command: BrowseCommand) => {
-      if (editing) {
+      if (editingCardContentId !== null) {
         return
       }
       switch (command) {
@@ -340,7 +520,7 @@ export function CardBrowser({
           return command satisfies never
       }
     },
-    [editing, focusSearch, toggleSuspended],
+    [editingCardContentId, focusSearch, toggleSuspended],
   )
   const runBrowseCommandRef = useRef(runBrowseCommand)
   runBrowseCommandRef.current = runBrowseCommand
@@ -419,7 +599,7 @@ export function CardBrowser({
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
-    if (editing || event.nativeEvent.isComposing) {
+    if (editingCardContentId !== null || event.nativeEvent.isComposing) {
       return
     }
     if (event.metaKey && !event.altKey && !event.ctrlKey) {
@@ -446,7 +626,7 @@ export function CardBrowser({
       moveSelection(-1, event.target instanceof Element && !!event.target.closest('.card-result'))
     } else if (event.key === 'Enter' && selected) {
       event.preventDefault()
-      setEditing(true)
+      onEdit(selected.cardContent.id)
     } else if (event.key === 'Escape') {
       if (confirmingDelete) {
         setConfirmingDelete(false)
@@ -469,16 +649,33 @@ export function CardBrowser({
       event.preventDefault()
       event.stopPropagation()
       const resultId = selectedId ?? results[0]!.cardContent.id
-      setSelectedId(resultId)
+      selectCard(resultId)
       resultRefs.current.get(resultId)?.focus()
     }
   }
 
-  if (editing && selected) {
+  if (editingCardContentId !== null) {
+    if (editingLoading) {
+      return (
+        <section aria-label="Edit card" className="card-editor-route-status">
+          <p role="status">Loading card…</p>
+        </section>
+      )
+    }
+    if (editingError || editingItem === null) {
+      return (
+        <section aria-label="Edit card" className="card-editor-route-status">
+          <p role="alert">{editingError ?? 'Card could not be loaded.'}</p>
+          <DaraButton onClick={onExitEdit} type="button">
+            Return to Browse
+          </DaraButton>
+        </section>
+      )
+    }
     return (
-      <CardForm
-        initialContent={selected.cardContent}
-        onCancel={() => setEditing(false)}
+      <RoutedCardForm
+        initialContent={editingItem.cardContent}
+        onCancel={onExitEdit}
         onSaved={(item) => {
           if (item) {
             setResults((current) =>
@@ -487,11 +684,10 @@ export function CardBrowser({
               ),
             )
           }
-          setEditing(false)
+          onExitEdit()
           onCardContentChanged()
           refresh()
         }}
-        variant={CardFormVariant.Main}
       />
     )
   }
@@ -544,12 +740,9 @@ export function CardBrowser({
                 aria-selected={active}
                 className={`card-result${active ? ' card-result-selected' : ''}${suspended ? ' card-result-suspended' : ''}`}
                 key={item.cardContent.id}
-                onClick={() => {
-                  setSelectedId(item.cardContent.id)
-                  setConfirmingDelete(false)
-                }}
-                onDoubleClick={() => setEditing(true)}
-                onFocus={() => setSelectedId(item.cardContent.id)}
+                onClick={() => selectCard(item.cardContent.id)}
+                onDoubleClick={() => onEdit(item.cardContent.id)}
+                onFocus={() => selectCard(item.cardContent.id)}
                 ref={(element) => {
                   if (element) {
                     resultRefs.current.set(item.cardContent.id, element)
@@ -628,7 +821,7 @@ export function CardBrowser({
                 </DaraButton>
                 <DaraButton
                   disabled={mutating}
-                  onClick={() => setEditing(true)}
+                  onClick={() => onEdit(selected.cardContent.id)}
                   type="button"
                 >
                   Edit <kbd>↵</kbd>
@@ -780,7 +973,13 @@ export function CardBrowser({
           </>
         ) : (
           <div className="card-browser-placeholder">
-            <h2>{loading ? 'Searching…' : 'No card selected'}</h2>
+            <h2>
+              {loading
+                ? 'Searching…'
+                : addressedLoading
+                  ? 'Loading card…'
+                  : 'No card selected'}
+            </h2>
             <p>Start typing to search, or choose a card.</p>
           </div>
         )}
