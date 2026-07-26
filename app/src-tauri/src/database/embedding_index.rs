@@ -1,4 +1,4 @@
-use rusqlite::{params, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
 use super::{now_millis, DatabaseError, Result};
@@ -217,11 +217,11 @@ pub(super) fn install_embedding(
     Ok(InstallEmbeddingDisposition::Installed)
 }
 
-pub(super) fn index_progress(transaction: &Transaction<'_>) -> Result<EmbeddingIndexProgress> {
+pub(super) fn index_progress(connection: &Connection) -> Result<EmbeddingIndexProgress> {
     let manifest = jina_v1_manifest();
     let total_documents =
-        transaction.query_row("SELECT count(*) FROM search_document", [], |row| row.get(0))?;
-    let current_documents = transaction.query_row(
+        connection.query_row("SELECT count(*) FROM search_document", [], |row| row.get(0))?;
+    let current_documents = connection.query_row(
         "SELECT count(*)
          FROM search_document AS document
          JOIN text_embedding AS metadata
@@ -235,7 +235,7 @@ pub(super) fn index_progress(transaction: &Transaction<'_>) -> Result<EmbeddingI
         [manifest.id.as_str()],
         |row| row.get(0),
     )?;
-    let active_index_id = transaction.query_row(
+    let active_index_id = connection.query_row(
         "SELECT active_text_embedding_index_id FROM app_settings WHERE singleton_id = 1",
         [],
         |row| row.get::<_, Option<String>>(0),

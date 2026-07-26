@@ -1,5 +1,6 @@
 pub mod commands;
 mod connection;
+mod diagnostics;
 mod domain;
 pub(crate) mod embedding_index;
 mod error;
@@ -26,6 +27,7 @@ use std::{
 use rusqlite::Connection;
 
 pub use connection::register_sqlite_vec;
+pub use diagnostics::DatabaseDiagnosticsSnapshot;
 pub use domain::{
     CardContentDraft, CardContentListItem, DeleteCardContentInput, InstallSchedulerReplayInput,
     PrepareDesiredRetentionReplayInput, RecordGradeInput, ReviewContext, ReviewMutationResult,
@@ -423,6 +425,11 @@ fn writer_loop(
                     .map_err(Into::into)
                     .and_then(|transaction| embedding_index::index_progress(&transaction));
                 let _ = reply.send(result);
+            }
+            WriterMessage::LoadDatabaseDiagnostics { reply } => {
+                let _ = reply.send(diagnostics::load_database_diagnostics(
+                    &mut main, &mut media,
+                ));
             }
             WriterMessage::ActivateEmbeddingIndexIfComplete { reply } => {
                 let result = (|| {

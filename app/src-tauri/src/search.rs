@@ -231,6 +231,19 @@ impl SearchService {
         lock(&self.inner.status).clone()
     }
 
+    pub fn model_name(&self) -> &str {
+        &self.inner.manifest.model_name
+    }
+
+    pub fn model_disk_usage_bytes(&self) -> std::io::Result<u64> {
+        if let Some(model_override) = self.inner.model_override.as_deref() {
+            return file_size_if_present(model_override);
+        }
+        let partial_path = self.inner.model_path.with_extension("gguf.part");
+        Ok(file_size_if_present(&self.inner.model_path)?
+            .saturating_add(file_size_if_present(&partial_path)?))
+    }
+
     pub fn search(&self, input: SearchCardContentInput) -> DatabaseResult<SearchCardContentResult> {
         if input.query.trim().is_empty() {
             let items = self.inner.database.search_card_content(input)?;
@@ -290,6 +303,14 @@ impl SearchService {
             }
         }
         release_lifecycle_lock(&self.inner);
+    }
+}
+
+fn file_size_if_present(path: &Path) -> std::io::Result<u64> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(error),
     }
 }
 

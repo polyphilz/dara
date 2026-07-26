@@ -14,6 +14,9 @@ test('main navigation order is stable and every Settings route focuses its headi
 
   await page.getByRole('button', { name: 'Settings' }).click()
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeFocused()
+  await expect(page.getByText('Dara 0.1.0', { exact: true })).toBeVisible()
+  await expect(page.getByText('Database main 7 · media 4')).toBeVisible()
+  await expect(page.getByText(/Jina Embeddings v5 Text Nano/)).toBeVisible()
 
   await page.getByRole('button', { name: 'Home', exact: true }).click()
   await page.keyboard.press('Meta+,')

@@ -33,6 +33,27 @@ describe('native Tauri boundary', () => {
     )
     expect(settings).toMatchObject({ zoomPercent: 100 })
 
+    const diagnostics = await browser.tauri.execute(
+      (tauri, command) => tauri.core.invoke(command),
+      DaraIpcCommand.LoadDiagnostics,
+    )
+    expect(diagnostics).toMatchObject({
+      applicationVersion: expect.any(String),
+      database: {
+        migrationHeads: {
+          main: expect.any(Number),
+          media: expect.any(Number),
+        },
+      },
+      semanticModel: {
+        modelName: expect.any(String),
+      },
+      storage: {
+        relationalDatabaseBytes: expect.any(Number),
+        mediaDatabaseBytes: expect.any(Number),
+      },
+    })
+
     await browser.tauri.execute(
       (tauri, command) => tauri.core.invoke(command),
       DaraIpcCommand.ShowMain,

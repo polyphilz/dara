@@ -1,4 +1,5 @@
 mod database;
+mod diagnostics;
 mod external;
 mod media;
 mod search;
@@ -45,6 +46,7 @@ pub fn run() {
             database::commands::record_grade,
             database::commands::prepare_desired_retention_replay,
             database::commands::install_scheduler_replay,
+            diagnostics::load_diagnostics,
             database::commands::renew_media_lease,
             database::commands::search_card_content,
             database::commands::search_status,

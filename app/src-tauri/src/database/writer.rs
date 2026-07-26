@@ -6,10 +6,10 @@ use super::embedding_index::{
 };
 use super::snapshot::CreatedSnapshot;
 use super::{
-    AdoptLegacyZoomInput, CanonicalImage, CardContentDraft, CardContentListItem, DatabaseError,
-    DeleteCardContentInput, HomeStats, ImageRecord, InstallSchedulerReplayInput,
-    LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob, OcrQueueRecovery,
-    PrepareDesiredRetentionReplayInput, RecordGradeInput, Result, ReviewContext,
+    AdoptLegacyZoomInput, CanonicalImage, CardContentDraft, CardContentListItem,
+    DatabaseDiagnosticsSnapshot, DatabaseError, DeleteCardContentInput, HomeStats, ImageRecord,
+    InstallSchedulerReplayInput, LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob,
+    OcrQueueRecovery, PrepareDesiredRetentionReplayInput, RecordGradeInput, Result, ReviewContext,
     ReviewMutationResult, ReviewQueueSelection, SchedulerReplayInstallReport,
     SchedulerReplaySnapshot, SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
     SetCardContentSuspendedInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
@@ -51,6 +51,9 @@ pub(super) enum WriterMessage {
     },
     LoadEmbeddingIndexProgress {
         reply: SyncSender<Result<EmbeddingIndexProgress>>,
+    },
+    LoadDatabaseDiagnostics {
+        reply: SyncSender<Result<DatabaseDiagnosticsSnapshot>>,
     },
     ActivateEmbeddingIndexIfComplete {
         reply: SyncSender<Result<bool>>,
@@ -432,6 +435,16 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::LoadSettings { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn load_database_diagnostics(&self) -> Result<DatabaseDiagnosticsSnapshot> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadDatabaseDiagnostics { reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

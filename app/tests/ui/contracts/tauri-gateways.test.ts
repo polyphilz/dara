@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'vitest'
 import { clearMocks, mockIPC } from '@tauri-apps/api/mocks'
 import { DaraIpcCommand } from '../../../src/lib/tauri-contracts.ts'
+import { tauriDiagnosticsGateway } from '../../../src/diagnostics/index.ts'
 import { native } from '../../../src/lib/native.ts'
 import {
   ingestClipboardImage,
@@ -138,6 +139,15 @@ describe('Tauri gateway contracts', () => {
     ).toEqual({
       command: DaraIpcCommand.SetZoomPercent,
       payload: { input: { expectedRevision: 10, zoomPercent: 130 } },
+    })
+  })
+
+  test('diagnostics uses its dedicated read-only command', async () => {
+    expect(
+      await captureInvocation(tauriDiagnosticsGateway.loadDiagnostics),
+    ).toEqual({
+      command: DaraIpcCommand.LoadDiagnostics,
+      payload: {},
     })
   })
 
