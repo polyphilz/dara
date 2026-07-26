@@ -46,6 +46,10 @@ const RECONCILIATION_POLL_DELAY: Duration = Duration::from_secs(1);
 const EMBEDDING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const LIFECYCLE_LOCK_WAIT: Duration = Duration::from_secs(30);
 const LIFECYCLE_LOCK_POLL_DELAY: Duration = Duration::from_millis(50);
+const SIDECAR_LOG_FILE_NAME: &str = "llama-server.log";
+const SIDECAR_LOG_MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
+const SIDECAR_LOG_ARCHIVE_COUNT: usize = 2;
+const SIDECAR_LOG_COPY_BUFFER_BYTES: usize = 8 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -274,7 +278,10 @@ impl SearchService {
                     set_failure(&self.inner, &error);
                     stop_sidecar(&self.inner);
                     if !self.inner.shutdown.load(Ordering::Acquire) {
-                        log::error!("semantic query failed; returning lexical results: {error}");
+                        log::error!(
+                            "semantic query failed; returning lexical results: {}",
+                            redacted_search_error(&error)
+                        );
                     }
                 }
             }
@@ -335,8 +342,30 @@ fn handle_worker_failure(inner: &SearchServiceInner, operation: &str, error: &Se
     if inner.shutdown.load(Ordering::Acquire) {
         log::debug!("semantic-search {operation} stopped during shutdown");
     } else {
-        log::error!("semantic-search {operation} failed: {error}");
+        log::error!(
+            "semantic-search {operation} failed: {}",
+            redacted_search_error(error)
+        );
     }
+}
+
+fn redacted_search_error(error: &SearchError) -> String {
+    let SearchError::Http(source) = error else {
+        return error.to_string();
+    };
+    if let Some(status) = source.status() {
+        return format!("search runtime HTTP request failed with status {status}");
+    }
+    if source.is_timeout() {
+        return "search runtime HTTP request timed out".into();
+    }
+    if source.is_connect() {
+        return "search runtime HTTP connection failed".into();
+    }
+    if source.is_decode() || source.is_body() {
+        return "search runtime HTTP response failed".into();
+    }
+    "search runtime HTTP request failed".into()
 }
 
 fn prepare_and_verify(inner: &SearchServiceInner) -> Result<(), SearchError> {
@@ -860,6 +889,7 @@ struct SidecarRuntime {
     endpoint: Option<String>,
     model_path: Option<PathBuf>,
     last_used: Option<Instant>,
+    log_threads: Vec<JoinHandle<()>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -931,13 +961,8 @@ fn ensure_sidecar(inner: &SearchServiceInner, model_path: &Path) -> Result<Strin
     let port = listener.local_addr()?.port();
     drop(listener);
     let log_dir = inner.data_root.join("logs");
-    fs::create_dir_all(&log_dir)?;
-    let log_path = log_dir.join("llama-server.log");
-    let stdout = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)?;
-    let stderr = stdout.try_clone()?;
+    let log_path = log_dir.join(SIDECAR_LOG_FILE_NAME);
+    let log_writer = Arc::new(Mutex::new(BoundedSidecarLog::open(&log_dir)?));
     let mut command = Command::new(sidecar_path);
     command
         .arg("--model")
@@ -956,8 +981,8 @@ fn ensure_sidecar(inner: &SearchServiceInner, model_path: &Path) -> Result<Strin
         .arg("--port")
         .arg(port.to_string())
         .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     if let Some(device) = inner.runtime_settings.device.as_deref() {
         command.arg("--device").arg(device);
     }
@@ -967,9 +992,17 @@ fn ensure_sidecar(inner: &SearchServiceInner, model_path: &Path) -> Result<Strin
         command.process_group(0);
     }
     let mut child = command.spawn()?;
+    let log_threads = match start_sidecar_log_pumps(&mut child, log_writer) {
+        Ok(threads) => threads,
+        Err(error) => {
+            terminate_process_group(&mut child);
+            return Err(error.into());
+        }
+    };
     let pid = child.id();
     if let Err(error) = write_pidfile(&inner.data_root, pid, sidecar_path, model_path) {
         terminate_process_group(&mut child);
+        join_sidecar_log_threads(log_threads);
         return Err(error);
     }
     let endpoint = format!("http://127.0.0.1:{port}");
@@ -977,6 +1010,7 @@ fn ensure_sidecar(inner: &SearchServiceInner, model_path: &Path) -> Result<Strin
     runtime.endpoint = Some(endpoint.clone());
     runtime.model_path = Some(model_path.to_owned());
     runtime.last_used = Some(Instant::now());
+    runtime.log_threads = log_threads;
     drop(runtime);
 
     let startup_deadline = Instant::now() + SIDECAR_STARTUP_TIMEOUT;
@@ -1040,9 +1074,234 @@ fn stop_runtime(runtime: &mut SidecarRuntime, data_root: &Path) {
         terminate_process_group(&mut child);
         remove_pidfile_if_owned(data_root, pid);
     }
+    join_sidecar_log_threads(runtime.log_threads.drain(..));
     runtime.endpoint = None;
     runtime.model_path = None;
     runtime.last_used = None;
+}
+
+fn start_sidecar_log_pumps(
+    child: &mut Child,
+    writer: Arc<Mutex<BoundedSidecarLog>>,
+) -> std::io::Result<Vec<JoinHandle<()>>> {
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("llama-server stdout pipe was unavailable"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| std::io::Error::other("llama-server stderr pipe was unavailable"))?;
+    let stdout_writer = Arc::clone(&writer);
+    let stdout_thread = thread::Builder::new()
+        .name("dara-llama-stdout".into())
+        .spawn(move || copy_sidecar_log(stdout, stdout_writer))?;
+    let stderr_thread = match thread::Builder::new()
+        .name("dara-llama-stderr".into())
+        .spawn(move || copy_sidecar_log(stderr, writer))
+    {
+        Ok(thread) => thread,
+        Err(error) => {
+            terminate_process_group(child);
+            join_sidecar_log_threads([stdout_thread]);
+            return Err(error);
+        }
+    };
+    Ok(vec![stdout_thread, stderr_thread])
+}
+
+fn copy_sidecar_log(mut source: impl Read, writer: Arc<Mutex<BoundedSidecarLog>>) {
+    let mut buffer = [0_u8; SIDECAR_LOG_COPY_BUFFER_BYTES];
+    loop {
+        let read = match source.read(&mut buffer) {
+            Ok(0) => return,
+            Ok(read) => read,
+            Err(error) => {
+                log::error!("could not read semantic sidecar output: {error}");
+                return;
+            }
+        };
+        if let Err(error) = lock(&writer).write_all(&buffer[..read]) {
+            log::error!("could not persist semantic sidecar output: {error}");
+            return;
+        }
+    }
+}
+
+fn join_sidecar_log_threads(threads: impl IntoIterator<Item = JoinHandle<()>>) {
+    for thread in threads {
+        if thread.join().is_err() {
+            log::error!("semantic sidecar log worker panicked");
+        }
+    }
+}
+
+struct BoundedSidecarLog {
+    directory: PathBuf,
+    max_file_bytes: u64,
+    archive_count: usize,
+    active_file: Option<File>,
+    active_bytes: u64,
+}
+
+impl BoundedSidecarLog {
+    fn open(directory: &Path) -> std::io::Result<Self> {
+        Self::open_with_limits(
+            directory,
+            SIDECAR_LOG_MAX_FILE_BYTES,
+            SIDECAR_LOG_ARCHIVE_COUNT,
+        )
+    }
+
+    fn open_with_limits(
+        directory: &Path,
+        max_file_bytes: u64,
+        archive_count: usize,
+    ) -> std::io::Result<Self> {
+        if max_file_bytes == 0 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "sidecar log limit must be greater than zero",
+            ));
+        }
+        fs::create_dir_all(directory)?;
+        remove_excess_sidecar_archives(directory, archive_count)?;
+        for archive in 1..=archive_count {
+            trim_log_to_tail(&sidecar_log_path(directory, Some(archive)), max_file_bytes)?;
+        }
+        let active_path = sidecar_log_path(directory, None);
+        trim_log_to_tail(&active_path, max_file_bytes)?;
+        if active_path
+            .metadata()
+            .is_ok_and(|metadata| metadata.len() >= max_file_bytes)
+        {
+            rotate_sidecar_log_files(directory, archive_count)?;
+        }
+        let active_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&active_path)?;
+        let active_bytes = active_file.metadata()?.len();
+        Ok(Self {
+            directory: directory.to_owned(),
+            max_file_bytes,
+            archive_count,
+            active_file: Some(active_file),
+            active_bytes,
+        })
+    }
+
+    fn write_all(&mut self, mut bytes: &[u8]) -> std::io::Result<()> {
+        while !bytes.is_empty() {
+            if self.active_bytes >= self.max_file_bytes {
+                self.rotate()?;
+            }
+            let remaining = self.max_file_bytes - self.active_bytes;
+            let write_length = bytes
+                .len()
+                .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+            let active_file = self
+                .active_file
+                .as_mut()
+                .ok_or_else(|| std::io::Error::other("sidecar log file is closed"))?;
+            active_file.write_all(&bytes[..write_length])?;
+            self.active_bytes += u64::try_from(write_length)
+                .map_err(|_| std::io::Error::other("sidecar log write length overflowed"))?;
+            bytes = &bytes[write_length..];
+        }
+        Ok(())
+    }
+
+    fn rotate(&mut self) -> std::io::Result<()> {
+        if let Some(mut file) = self.active_file.take() {
+            file.flush()?;
+        }
+        rotate_sidecar_log_files(&self.directory, self.archive_count)?;
+        self.active_file = Some(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(sidecar_log_path(&self.directory, None))?,
+        );
+        self.active_bytes = 0;
+        Ok(())
+    }
+}
+
+fn sidecar_log_path(directory: &Path, archive: Option<usize>) -> PathBuf {
+    match archive {
+        Some(index) => directory.join(format!("llama-server.{index}.log")),
+        None => directory.join(SIDECAR_LOG_FILE_NAME),
+    }
+}
+
+fn rotate_sidecar_log_files(directory: &Path, archive_count: usize) -> std::io::Result<()> {
+    let active_path = sidecar_log_path(directory, None);
+    if archive_count == 0 {
+        return remove_file_if_present(&active_path);
+    }
+    for archive in (1..=archive_count).rev() {
+        let source = if archive == 1 {
+            active_path.clone()
+        } else {
+            sidecar_log_path(directory, Some(archive - 1))
+        };
+        let destination = sidecar_log_path(directory, Some(archive));
+        remove_file_if_present(&destination)?;
+        if source.exists() {
+            fs::rename(source, destination)?;
+        }
+    }
+    Ok(())
+}
+
+fn remove_excess_sidecar_archives(directory: &Path, archive_count: usize) -> std::io::Result<()> {
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        let Some(index) = name
+            .strip_prefix("llama-server.")
+            .and_then(|name| name.strip_suffix(".log"))
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        if index == 0 || index > archive_count {
+            remove_file_if_present(&path)?;
+        }
+    }
+    Ok(())
+}
+
+fn trim_log_to_tail(path: &Path, max_file_bytes: u64) -> std::io::Result<()> {
+    let length = match path.metadata() {
+        Ok(metadata) => metadata.len(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    if length <= max_file_bytes {
+        return Ok(());
+    }
+    let mut source = File::open(path)?;
+    source.seek(SeekFrom::Start(length - max_file_bytes))?;
+    let capacity = usize::try_from(max_file_bytes)
+        .map_err(|_| std::io::Error::other("sidecar log limit exceeds addressable memory"))?;
+    let mut tail = Vec::with_capacity(capacity);
+    source.read_to_end(&mut tail)?;
+    drop(source);
+    let mut destination = OpenOptions::new().write(true).truncate(true).open(path)?;
+    destination.write_all(&tail)?;
+    destination.flush()
+}
+
+fn remove_file_if_present(path: &Path) -> std::io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 #[cfg(unix)]
@@ -1233,7 +1492,7 @@ fn set_failure(inner: &SearchServiceInner, error: &SearchError) {
             SearchError::RuntimeUnavailable(_) => SemanticSearchPhase::Unavailable,
             _ => SemanticSearchPhase::Failed,
         };
-        status.message = Some(error.to_string());
+        status.message = Some(redacted_search_error(error));
     });
 }
 
@@ -1335,6 +1594,98 @@ mod tests {
             embedding_normalization: LLAMA_EMBEDDING_NORMALIZATION.into(),
             parallel_slots: LLAMA_PARALLEL_SLOTS.into(),
         }
+    }
+
+    #[test]
+    fn bounded_sidecar_log_rotates_without_exceeding_its_budget() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let mut log =
+            BoundedSidecarLog::open_with_limits(directory.path(), 8, 2).expect("bounded log");
+
+        log.write_all(b"abcdefgh").expect("first log file");
+        log.write_all(b"ijklmnop").expect("second log file");
+        log.write_all(b"qrstuvwx").expect("third log file");
+        log.write_all(b"yz").expect("rotated active log");
+        drop(log);
+
+        assert_eq!(
+            fs::read(sidecar_log_path(directory.path(), None)).expect("active log"),
+            b"yz"
+        );
+        assert_eq!(
+            fs::read(sidecar_log_path(directory.path(), Some(1))).expect("first archive"),
+            b"qrstuvwx"
+        );
+        assert_eq!(
+            fs::read(sidecar_log_path(directory.path(), Some(2))).expect("second archive"),
+            b"ijklmnop"
+        );
+        assert!(!sidecar_log_path(directory.path(), Some(3)).exists());
+        for entry in fs::read_dir(directory.path()).expect("log directory") {
+            assert!(
+                entry
+                    .expect("log entry")
+                    .metadata()
+                    .expect("metadata")
+                    .len()
+                    <= 8
+            );
+        }
+    }
+
+    #[test]
+    fn bounded_sidecar_log_trims_legacy_files_and_removes_excess_archives() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        fs::write(sidecar_log_path(directory.path(), None), b"0123456789ab")
+            .expect("legacy active log");
+        fs::write(sidecar_log_path(directory.path(), Some(1)), b"abcdefghijkl")
+            .expect("legacy archive");
+        fs::write(
+            sidecar_log_path(directory.path(), Some(3)),
+            b"excess archive",
+        )
+        .expect("excess archive");
+
+        drop(
+            BoundedSidecarLog::open_with_limits(directory.path(), 8, 2)
+                .expect("bounded legacy log"),
+        );
+
+        assert_eq!(
+            fs::read(sidecar_log_path(directory.path(), None)).expect("new active log"),
+            b""
+        );
+        assert_eq!(
+            fs::read(sidecar_log_path(directory.path(), Some(1))).expect("trimmed active archive"),
+            b"456789ab"
+        );
+        assert_eq!(
+            fs::read(sidecar_log_path(directory.path(), Some(2))).expect("trimmed older archive"),
+            b"efghijkl"
+        );
+        assert!(!sidecar_log_path(directory.path(), Some(3)).exists());
+    }
+
+    #[test]
+    fn redacted_http_errors_do_not_expose_request_urls() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("temporary local port");
+        let address = listener.local_addr().expect("temporary local address");
+        drop(listener);
+        let error = Client::builder()
+            .connect_timeout(Duration::from_secs(1))
+            .build()
+            .expect("HTTP client")
+            .get(format!(
+                "http://{address}/private/path?api_key=not-for-logs"
+            ))
+            .send()
+            .expect_err("closed local port should reject the request");
+        let message = redacted_search_error(&SearchError::Http(error));
+
+        assert_eq!(message, "search runtime HTTP connection failed");
+        assert!(!message.contains("private"));
+        assert!(!message.contains("api_key"));
+        assert!(!message.contains("http://"));
     }
 
     #[test]
