@@ -224,6 +224,52 @@ test('an edit URL loads its card directly by ID', async ({ page }) => {
   )
 })
 
+test('a Browse URL preserves and loads a card beyond the first result page', async ({
+  page,
+}) => {
+  const addressedId = cardContentId(1)
+  await openMain(
+    page,
+    BrowserScenarioId.MainBrowseDeepRoute,
+    browseCardPath(addressedId),
+  )
+
+  await expect(page).toHaveURL(
+    new RegExp(`#${browseCardPath(addressedId)}$`),
+  )
+  await expect(page.getByText('Deep route answer 1')).toBeVisible()
+  await expect(page.getByRole('option')).toHaveCount(50)
+  await expect(
+    page.getByRole('option', { name: /^Deep route card 1\b/ }),
+  ).toHaveCount(0)
+  expect(
+    (await backendSnapshot(page)).commands.some(
+      ({ command, payload }) =>
+        command === DaraIpcCommand.LoadCardContent &&
+        JSON.stringify(payload) ===
+          JSON.stringify({ cardContentId: addressedId }),
+    ),
+  ).toBe(true)
+})
+
+test('an edit URL preserves a card beyond the first result page', async ({
+  page,
+}) => {
+  const addressedId = cardContentId(1)
+  await openMain(
+    page,
+    BrowserScenarioId.MainBrowseDeepRoute,
+    editPath(addressedId),
+  )
+
+  await expect(page).toHaveURL(
+    new RegExp(`#${editPath(addressedId)}$`),
+  )
+  await expect(page.getByRole('textbox', { name: 'Front' })).toHaveText(
+    'Deep route card 1',
+  )
+})
+
 async function openMain(
   page: Page,
   scenario: (typeof BrowserScenarioId)[keyof typeof BrowserScenarioId] =

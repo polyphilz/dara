@@ -1,5 +1,6 @@
 export const BrowserScenarioId = {
   MainBrowseBasic: 'MAIN_BROWSE_BASIC',
+  MainBrowseDeepRoute: 'MAIN_BROWSE_DEEP_ROUTE',
   MainBrowseHistory: 'MAIN_BROWSE_HISTORY',
   MainReviewBasic: 'MAIN_REVIEW_BASIC',
   QuickAddCreateFailsOnce: 'QUICK_ADD_CREATE_FAILS_ONCE',
@@ -25,6 +26,9 @@ export type BrowserHarnessSurface =
 export const browserScenarios: Record<BrowserScenarioId, BrowserScenario> = {
   [BrowserScenarioId.MainBrowseBasic]: {
     id: BrowserScenarioId.MainBrowseBasic,
+  },
+  [BrowserScenarioId.MainBrowseDeepRoute]: {
+    id: BrowserScenarioId.MainBrowseDeepRoute,
   },
   [BrowserScenarioId.MainBrowseHistory]: {
     id: BrowserScenarioId.MainBrowseHistory,
@@ -52,6 +56,9 @@ export function parseBrowserScenario(value: string | null): BrowserScenario {
   }
   if (value === BrowserScenarioId.MainBrowseBasic) {
     return browserScenarios[BrowserScenarioId.MainBrowseBasic]
+  }
+  if (value === BrowserScenarioId.MainBrowseDeepRoute) {
+    return browserScenarios[BrowserScenarioId.MainBrowseDeepRoute]
   }
   if (value === BrowserScenarioId.MainBrowseHistory) {
     return browserScenarios[BrowserScenarioId.MainBrowseHistory]

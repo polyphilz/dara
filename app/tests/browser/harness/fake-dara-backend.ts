@@ -67,6 +67,15 @@ export class FakeDaraBackend {
         'Testing notes',
       )
     }
+    if (scenario.id === BrowserScenarioId.MainBrowseDeepRoute) {
+      for (let sequence = 1; sequence <= 55; sequence += 1) {
+        this.#insertBasicCard(
+          `Deep route card ${sequence}`,
+          `Deep route answer ${sequence}`,
+          'Navigation testing',
+        )
+      }
+    }
     if (scenario.id === BrowserScenarioId.MainBrowseHistory) {
       for (const number of ['one', 'two', 'three', 'four', 'five']) {
         this.#insertBasicCard(
