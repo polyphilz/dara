@@ -229,7 +229,11 @@ pub fn prune_snapshots(backups: &Path) -> Result<()> {
         };
         let manifest: SnapshotManifest =
             match serde_json::from_reader::<_, SnapshotManifest>(BufReader::new(file)) {
-                Ok(manifest) if manifest.format_version == 1 => manifest,
+                Ok(manifest)
+                    if manifest.format_version == 1 && timestamp(manifest.created_at).is_ok() =>
+                {
+                    manifest
+                }
                 _ => continue,
             };
         snapshots.push((path, manifest));
@@ -292,7 +296,11 @@ pub(crate) fn latest_finalized_snapshot(
             Err(_) => continue,
         };
         let manifest = match serde_json::from_reader::<_, SnapshotManifest>(BufReader::new(file)) {
-            Ok(manifest) if manifest.format_version == 1 && manifest.relationship_validated => {
+            Ok(manifest)
+                if manifest.format_version == 1
+                    && manifest.relationship_validated
+                    && timestamp(manifest.created_at).is_ok() =>
+            {
                 manifest
             }
             _ => continue,
