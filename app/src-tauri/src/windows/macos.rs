@@ -10,6 +10,7 @@ use objc2_foundation::{
     NSNotification, NSNotificationCenter, NSSystemClockDidChangeNotification,
     NSSystemTimeZoneDidChangeNotification,
 };
+use objc2_web_kit::WKWebView;
 use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuBuilder, MenuItemBuilder, MenuItemKind, PredefinedMenuItem},
@@ -190,6 +191,7 @@ enum DismissFocus {
 
 pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    enable_main_navigation_gestures(app)?;
     let state = SpikeState::default();
     update_shortcut_status(&state, &settings.keyboard_bindings, Vec::new());
     app.manage(state);
@@ -201,6 +203,18 @@ pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     install_clock_change_observers(app.handle());
 
     Ok(())
+}
+
+fn enable_main_navigation_gestures(app: &App) -> tauri::Result<()> {
+    let window = app
+        .get_webview_window(MAIN_LABEL)
+        .ok_or(tauri::Error::WebviewNotFound)?;
+    window.with_webview(|webview| unsafe {
+        // SAFETY: Tauri supplies the main-thread WKWebView owned by this window for the
+        // duration of the closure.
+        let view: &WKWebView = &*webview.inner().cast();
+        view.setAllowsBackForwardNavigationGestures(true);
+    })
 }
 
 fn install_clock_change_observers(app: &AppHandle) {

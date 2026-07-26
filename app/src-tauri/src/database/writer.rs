@@ -27,6 +27,10 @@ pub(super) enum WriterMessage {
         media_lease_id: String,
         reply: SyncSender<Result<CardContentListItem>>,
     },
+    LoadCardContent {
+        card_content_id: String,
+        reply: SyncSender<Result<CardContentListItem>>,
+    },
     SearchCardContent {
         input: SearchCardContentInput,
         reply: SyncSender<Result<Vec<CardContentListItem>>>,
@@ -193,6 +197,19 @@ impl DatabaseClient {
             .send(WriterMessage::UpdateCardContent {
                 input,
                 media_lease_id,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn load_card_content(&self, card_content_id: String) -> Result<CardContentListItem> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadCardContent {
+                card_content_id,
                 reply,
             })
             .map_err(|_| DatabaseError::WriterUnavailable)?;

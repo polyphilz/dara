@@ -13,6 +13,7 @@ export type {
 export {
   createCardContent,
   deleteCardContent,
+  loadCardContent,
   loadHomeStats,
   maintainSearch,
   searchCardContent,

@@ -97,6 +97,15 @@ pub async fn update_card_content(
 }
 
 #[tauri::command]
+pub async fn load_card_content(
+    database: State<'_, Database>,
+    card_content_id: String,
+) -> CommandResult<CardContentListItem> {
+    let client = database.client();
+    run_writer(move || client.load_card_content(card_content_id)).await
+}
+
+#[tauri::command]
 pub async fn renew_media_lease(
     database: State<'_, Database>,
     lease_id: String,

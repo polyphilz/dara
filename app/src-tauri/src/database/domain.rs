@@ -2138,7 +2138,7 @@ fn load_card_content(connection: &Connection, card_content_id: &str) -> Result<C
     hydrate_card_content(connection, fields)
 }
 
-fn load_card_content_list_item(
+pub(super) fn load_card_content_list_item(
     connection: &Connection,
     card_content_id: &str,
 ) -> Result<CardContentListItem> {

@@ -7,6 +7,7 @@ export const DaraIpcCommand = {
   IngestClipboardImage: 'ingest_clipboard_image',
   IngestImageBytes: 'ingest_image_bytes',
   InstallSchedulerReplay: 'install_scheduler_replay',
+  LoadCardContent: 'load_card_content',
   LoadHomeStats: 'load_home_stats',
   LoadReviewContext: 'load_review_context',
   LoadSchedulerReplaySnapshot: 'load_scheduler_replay_snapshot',

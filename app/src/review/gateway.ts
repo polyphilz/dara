@@ -48,6 +48,14 @@ export function updateCardContent(
   })
 }
 
+export function loadCardContent(
+  cardContentId: string,
+): Promise<CardContentListItem> {
+  return invoke<CardContentListItem>(DaraIpcCommand.LoadCardContent, {
+    cardContentId,
+  })
+}
+
 export function searchCardContent(
   input: SearchCardContentInput,
 ): Promise<SearchCardContentResult> {

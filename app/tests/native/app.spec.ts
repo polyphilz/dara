@@ -93,6 +93,27 @@ describe('native Tauri boundary', () => {
       )
       return (result as { items: unknown[] }).items.length === 1
     })
+    const searchResult = await browser.tauri.execute(
+      (tauri, [command, input]) => tauri.core.invoke(command, { input }),
+      [
+        DaraIpcCommand.SearchCardContent,
+        { query: 'Native boundary question', limit: 2, offset: 0 },
+      ] as const,
+    ) as {
+      items: Array<{ cardContent: { id: string } }>
+    }
+    const cardContentId = searchResult.items[0]!.cardContent.id
+    const loaded = await browser.tauri.execute(
+      (tauri, [command, id]) =>
+        tauri.core.invoke(command, { cardContentId: id }),
+      [DaraIpcCommand.LoadCardContent, cardContentId] as const,
+    )
+    expect(loaded).toMatchObject({
+      cardContent: {
+        frontMd: 'Native boundary question',
+        id: cardContentId,
+      },
+    })
 
     await browser.tauri.execute(
       (tauri, command) => tauri.core.invoke(command),

@@ -67,6 +67,15 @@ export class FakeDaraBackend {
         'Testing notes',
       )
     }
+    if (scenario.id === BrowserScenarioId.MainBrowseHistory) {
+      for (const number of ['one', 'two', 'three', 'four', 'five']) {
+        this.#insertBasicCard(
+          `History card ${number}`,
+          `History answer ${number}`,
+          'Navigation testing',
+        )
+      }
+    }
     if (scenario.id === BrowserScenarioId.QuickAddCreateFailsOnce) {
       this.#remainingCreateFailures = 1
     }
@@ -118,6 +127,15 @@ export class FakeDaraBackend {
           },
           nextLearningDueAt: null,
         }
+      case DaraIpcCommand.LoadCardContent: {
+        const envelope = requireRecord(payload, command)
+        const cardContentId = requireString(
+          envelope.cardContentId,
+          'cardContentId',
+          command,
+        )
+        return structuredClone(this.#requireItem(cardContentId, command))
+      }
       case DaraIpcCommand.LoadSettings:
         requireEmptyPayload(payload, command)
         return {

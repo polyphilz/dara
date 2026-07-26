@@ -1,4 +1,11 @@
 import { act, fireEvent, render, waitFor } from '@testing-library/react'
+import {
+  RouterProvider,
+  createMemoryHistory,
+  createRootRoute,
+  createRouter,
+} from '@tanstack/react-router'
+import { useState, type ComponentProps } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
@@ -21,6 +28,7 @@ import { ReviewCardState } from '../../../src/scheduling/index.ts'
 const mocks = vi.hoisted(() => ({
   deleteCardContent: vi.fn(),
   listen: vi.fn(),
+  loadCardContent: vi.fn(),
   searchCardContent: vi.fn(),
   searchStatus: vi.fn(),
   setCardContentSuspended: vi.fn(),
@@ -42,13 +50,39 @@ vi.mock('../../../src/review/index.ts', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../../src/review/index.ts')>()),
   createCardContent: vi.fn(),
   deleteCardContent: mocks.deleteCardContent,
+  loadCardContent: mocks.loadCardContent,
   searchCardContent: mocks.searchCardContent,
   searchStatus: mocks.searchStatus,
   setCardContentSuspended: mocks.setCardContentSuspended,
   updateCardContent: mocks.updateCardContent,
 }))
 
-import { CardBrowser } from '../../../src/windows/main/CardBrowser.tsx'
+import { CardBrowser as RoutedCardBrowser } from '../../../src/windows/main/CardBrowser.tsx'
+
+function CardBrowser(
+  props: Omit<
+    ComponentProps<typeof RoutedCardBrowser>,
+    | 'editingCardContentId'
+    | 'onEdit'
+    | 'onExitEdit'
+    | 'onSelect'
+    | 'selectedCardContentId'
+  >,
+) {
+  const [selectedCardContentId, setSelectedCardContentId] = useState<
+    string | null
+  >(null)
+  return (
+    <RoutedCardBrowser
+      {...props}
+      editingCardContentId={null}
+      onEdit={() => undefined}
+      onExitEdit={() => undefined}
+      onSelect={setSelectedCardContentId}
+      selectedCardContentId={selectedCardContentId}
+    />
+  )
+}
 
 const activeItem: CardContentListItem = {
   cardContent: {
@@ -207,6 +241,7 @@ beforeEach(() => {
   mocks.searchCardContent.mockResolvedValue(searchResult([activeItem]))
   mocks.searchStatus.mockResolvedValue(readySemanticStatus)
   mocks.deleteCardContent.mockResolvedValue(undefined)
+  mocks.loadCardContent.mockResolvedValue(activeItem)
   mocks.setCardContentSuspended.mockResolvedValue({
     ...activeItem,
     lifecycleUpdatedAt: 3_001,
@@ -426,9 +461,11 @@ test.each([
 
 test('opens the selected BASIC card for editing and tombstone deletion requires confirmation', async () => {
   const onQueueChanged = vi.fn()
-  const { getByLabelText, getByRole, getByText, queryByRole } = render(
-    <CardBrowser onQueueChanged={onQueueChanged} />,
-  )
+  const { findByRole, getByLabelText, getByRole, getByText, queryByRole } =
+    renderRoutedCardBrowser(
+      { onQueueChanged },
+    )
+  await findByRole('searchbox', { name: 'Search cards' })
   await waitFor(() => expect(getByText('Why is copper conductive?')).toBeTruthy())
 
   fireEvent.keyDown(getByLabelText('Search cards'), { key: 'ArrowDown' })
@@ -437,7 +474,7 @@ test('opens the selected BASIC card for editing and tombstone deletion requires 
   })
   expect(document.activeElement).toBe(selectedResult)
   fireEvent.keyDown(selectedResult, { key: 'Enter' })
-  expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
+  expect(await findByRole('heading', { name: 'Edit card' })).toBeTruthy()
   fireEvent.click(getByRole('button', { name: 'Cancel' }))
 
   await waitFor(() =>
@@ -480,12 +517,17 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
     ],
   })
   const onCardContentChanged = vi.fn()
-  const { getAllByText, getByRole, queryByRole, queryByText } = render(
-    <CardBrowser
-      onCardContentChanged={onCardContentChanged}
-      onQueueChanged={vi.fn()}
-    />,
-  )
+  mocks.loadCardContent.mockResolvedValue(clozeItem)
+  const {
+    findByRole,
+    getAllByText,
+    getByRole,
+    queryByRole,
+    queryByText,
+  } = renderRoutedCardBrowser({
+    onCardContentChanged,
+    onQueueChanged: vi.fn(),
+  })
 
   await waitFor(() => {
     expect(getAllByText('The [...] of France is Paris.').length).toBeGreaterThan(0)
@@ -498,7 +540,7 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
   expect(getAllByText('The capital of France is [city].').length).toBeGreaterThan(0)
 
   fireEvent.click(getByRole('button', { name: /Edit/ }))
-  expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
+  expect(await findByRole('heading', { name: 'Edit card' })).toBeTruthy()
   expect(queryByRole('button', { name: /Card type:/ })).toBeNull()
   replaceEditorDocument(
     getByRole('textbox', { name: 'Text' }),
@@ -551,22 +593,24 @@ test('shows every occlusion review sibling and previews the selected layer', asy
   ).toBe('700')
 })
 
-test('returns from edit mode when Browse is invoked again', async () => {
+test('loads an addressable edit and returns focus to the selected result', async () => {
   const onQueueChanged = vi.fn()
-  const { getByLabelText, getByRole, queryByRole, rerender } = render(
-    <CardBrowser navigationToken={0} onQueueChanged={onQueueChanged} />,
+  const { findByRole, getByLabelText, getByRole, queryByRole } =
+    renderRoutedCardBrowser(
+      { onQueueChanged },
+      activeItem.cardContent.id,
+    )
+  expect(await findByRole('heading', { name: 'Edit card' })).toBeTruthy()
+  expect(mocks.loadCardContent).toHaveBeenCalledWith(
+    activeItem.cardContent.id,
   )
-  await waitFor(() => expect(getByLabelText('Search cards')).toBeTruthy())
-  fireEvent.keyDown(getByLabelText('Search cards'), { key: 'ArrowDown' })
-  fireEvent.keyDown(getByRole('option'), { key: 'Enter' })
-  expect(getByRole('heading', { name: 'Edit card' })).toBeTruthy()
+  fireEvent.click(getByRole('button', { name: 'Cancel' }))
 
-  rerender(
-    <CardBrowser navigationToken={1} onQueueChanged={onQueueChanged} />,
+  await waitFor(() =>
+    expect(queryByRole('heading', { name: 'Edit card' })).toBeNull(),
   )
-
-  expect(queryByRole('heading', { name: 'Edit card' })).toBeNull()
   expect(getByLabelText('Search cards')).toBeTruthy()
+  expect(document.activeElement).toBe(getByRole('option'))
 })
 
 test('loads Browse results incrementally beyond the first page', async () => {
@@ -620,4 +664,44 @@ function replaceEditorDocument(element: HTMLElement, value: string) {
       ),
     )
   })
+}
+
+function renderRoutedCardBrowser(
+  props: Omit<
+    ComponentProps<typeof RoutedCardBrowser>,
+    | 'editingCardContentId'
+    | 'onEdit'
+    | 'onExitEdit'
+    | 'onSelect'
+    | 'selectedCardContentId'
+  >,
+  initialEditingCardContentId: string | null = null,
+) {
+  function CardBrowserRouteHarness() {
+    const [editingCardContentId, setEditingCardContentId] = useState(
+      initialEditingCardContentId,
+    )
+    const [selectedCardContentId, setSelectedCardContentId] = useState<
+      string | null
+    >(initialEditingCardContentId)
+    return (
+      <RoutedCardBrowser
+        {...props}
+        editingCardContentId={editingCardContentId}
+        onEdit={setEditingCardContentId}
+        onExitEdit={() => setEditingCardContentId(null)}
+        onSelect={setSelectedCardContentId}
+        selectedCardContentId={selectedCardContentId}
+      />
+    )
+  }
+
+  const routeTree = createRootRoute({
+    component: CardBrowserRouteHarness,
+  })
+  const router = createRouter({
+    history: createMemoryHistory({ initialEntries: ['/'] }),
+    routeTree,
+  })
+  return render(<RouterProvider router={router} />)
 }

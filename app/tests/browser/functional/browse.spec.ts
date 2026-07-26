@@ -1,11 +1,15 @@
 import type { Page } from '@playwright/test'
 import { DaraIpcCommand } from '../../../src/lib/tauri-contracts.ts'
+import { MainWindowRoutePath } from '../../../src/windows/main/main-window-routes.ts'
 import type { DaraBrowserTestApi } from '../harness/ipc-driver.ts'
 import {
   BrowserHarnessSurface,
   BrowserScenarioId,
 } from '../harness/scenarios.ts'
 import { expect, test } from '../fixtures/test.ts'
+
+const SEEDED_CARD_CONTENT_ID =
+  '01980c8e-6c00-7000-8000-000000000001'
 
 test('Browse waits for Enter to search and clearing immediately restores browse', async ({ page }) => {
   await openMain(page)
@@ -92,15 +96,162 @@ test('Browse edits, pauses, resumes, and deletes a seeded card', async ({ page }
   expect(commandNames).toContain(DaraIpcCommand.DeleteCardContent)
 })
 
+test('Browse edit uses Back and Forward without losing Browse state or focus', async ({
+  page,
+}) => {
+  await openMain(page, BrowserScenarioId.MainBrowseBasic)
+  await page.getByRole('button', { name: 'Browse' }).click()
+  const search = page.getByRole('searchbox', { name: 'Search cards' })
+  await search.fill('retrieval')
+  await search.press('Enter')
+  const result = page.getByRole('option', {
+    name: /Why does retrieval practice work\?/,
+  })
+  await expect(result).toBeVisible()
+
+  await page.getByRole('button', { name: /Edit/ }).click()
+  const front = page.getByRole('textbox', { name: 'Front' })
+  await expect(front).toBeFocused()
+  await expect(page).toHaveURL(
+    new RegExp(`#${editPath(SEEDED_CARD_CONTENT_ID)}$`),
+  )
+
+  await page.goBack()
+  await expect(page).toHaveURL(
+    new RegExp(`#${browseCardPath(SEEDED_CARD_CONTENT_ID)}$`),
+  )
+  await expect(search).toHaveValue('retrieval')
+  await expect(result).toBeFocused()
+
+  await page.goForward()
+  await expect(page).toHaveURL(
+    new RegExp(`#${editPath(SEEDED_CARD_CONTENT_ID)}$`),
+  )
+  await expect(front).toBeFocused()
+})
+
+test('Browse Back and Forward traverse deliberate card selections', async ({
+  page,
+}) => {
+  await openMain(page, BrowserScenarioId.MainBrowseHistory)
+  await page.getByRole('button', { name: 'Browse' }).click()
+
+  await expect(page).toHaveURL(
+    new RegExp(`#${browseCardPath(cardContentId(5))}$`),
+  )
+  for (const number of ['one', 'two', 'three', 'four']) {
+    await page
+      .getByRole('option', { name: new RegExp(`History card ${number}`) })
+      .click()
+  }
+  await expect(page).toHaveURL(
+    new RegExp(`#${browseCardPath(cardContentId(4))}$`),
+  )
+
+  await page.goBack()
+  await expect(page).toHaveURL(
+    new RegExp(`#${browseCardPath(cardContentId(3))}$`),
+  )
+  await expect(
+    page.getByRole('option', { name: /History card three/ }),
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('History answer three')).toBeVisible()
+
+  await page.goBack()
+  await expect(
+    page.getByRole('option', { name: /History card two/ }),
+  ).toHaveAttribute('aria-selected', 'true')
+
+  await page.goForward()
+  await expect(
+    page.getByRole('option', { name: /History card three/ }),
+  ).toHaveAttribute('aria-selected', 'true')
+})
+
+test('dirty editors require an app-owned discard decision', async ({ page }) => {
+  await openMain(page, BrowserScenarioId.MainBrowseBasic)
+  await page.getByRole('button', { name: 'Browse' }).click()
+  await page.getByRole('button', { name: /Edit/ }).click()
+  const front = page.getByRole('textbox', { name: 'Front' })
+  await front.fill('unfinished route-aware draft')
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  const dialog = page.getByRole('alertdialog', {
+    name: 'Discard unsaved changes?',
+  })
+  await expect(dialog).toBeVisible()
+  await expect(page).toHaveURL(
+    new RegExp(`#${editPath(SEEDED_CARD_CONTENT_ID)}$`),
+  )
+  await expect(front).toHaveText('unfinished route-aware draft')
+  await expect(
+    dialog.getByRole('button', { name: 'Keep editing' }),
+  ).toBeFocused()
+
+  await dialog.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(dialog).toBeHidden()
+  await expect(front).toBeFocused()
+
+  await page.getByRole('button', { name: 'Home' }).click()
+  await page
+    .getByRole('alertdialog', { name: 'Discard unsaved changes?' })
+    .getByRole('button', { name: 'Discard changes' })
+    .click()
+  await expect(page.getByRole('region', { name: 'Review activity' })).toBeVisible()
+  await expect(page).toHaveURL(new RegExp(`#${MainWindowRoutePath.Home}$`))
+})
+
+test('an edit URL loads its card directly by ID', async ({ page }) => {
+  await openMain(
+    page,
+    BrowserScenarioId.MainBrowseBasic,
+    editPath(SEEDED_CARD_CONTENT_ID),
+  )
+
+  await expect(page.getByRole('heading', { name: 'Edit card' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Front' })).toHaveText(
+    'Why does retrieval practice work?',
+  )
+  const loadCommands = (await backendSnapshot(page)).commands.filter(
+    ({ command }) => command === DaraIpcCommand.LoadCardContent,
+  )
+  expect(loadCommands.length).toBeGreaterThan(0)
+  expect(loadCommands).toEqual(
+    loadCommands.map(() => ({
+      command: DaraIpcCommand.LoadCardContent,
+      payload: { cardContentId: SEEDED_CARD_CONTENT_ID },
+    })),
+  )
+})
+
 async function openMain(
   page: Page,
   scenario: (typeof BrowserScenarioId)[keyof typeof BrowserScenarioId] =
     BrowserScenarioId.MainReviewBasic,
+  routePath?: string,
 ) {
   await page.setViewportSize({ width: 1000, height: 720 })
   await page.goto(
-    `/tests/browser/harness/?scenario=${scenario}&surface=${BrowserHarnessSurface.Main}`,
+    `/tests/browser/harness/?scenario=${scenario}&surface=${BrowserHarnessSurface.Main}${routePath ? `#${routePath}` : ''}`,
   )
+}
+
+function editPath(cardContentId: string): string {
+  return MainWindowRoutePath.BrowseEdit.replace(
+    '$cardContentId',
+    cardContentId,
+  )
+}
+
+function browseCardPath(cardContentId: string): string {
+  return MainWindowRoutePath.BrowseCard.replace(
+    '$cardContentId',
+    cardContentId,
+  )
+}
+
+function cardContentId(sequence: number): string {
+  return `01980c8e-6c00-7000-8000-${sequence.toString(16).padStart(12, '0')}`
 }
 
 async function searchCommands(page: Page) {

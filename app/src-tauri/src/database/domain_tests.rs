@@ -1515,6 +1515,38 @@ fn browse_search_paginates_without_hiding_authored_items() {
 }
 
 #[test]
+fn addressable_card_content_loads_by_id_and_excludes_tombstones() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let created = database
+        .create_card_content(basic_draft(
+            "addressable front",
+            "addressable back",
+            Some("routing notes"),
+        ))
+        .expect("addressable card");
+    let card_content_id = created.card_content.id().to_owned();
+
+    let loaded = database
+        .load_card_content(card_content_id.clone())
+        .expect("card content by ID");
+    assert_eq!(loaded.card_content, created.card_content);
+    assert_eq!(loaded.review_cards.len(), 1);
+
+    database
+        .delete_card_content(DeleteCardContentInput {
+            card_content_id: card_content_id.clone(),
+            expected_updated_at: loaded.card_content.updated_at(),
+            expected_lifecycle_updated_at: loaded.lifecycle_updated_at,
+        })
+        .expect("tombstone card");
+    assert!(matches!(
+        database.load_card_content(card_content_id),
+        Err(DatabaseError::NotFound { .. })
+    ));
+}
+
+#[test]
 fn lexical_search_and_protected_edits_share_one_plain_text_document() {
     let fixture = fixture();
     let (_directory, paths) = test_paths();
