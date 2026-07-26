@@ -10,6 +10,7 @@ test('review reveal and grade focus work in WebKit', async ({ page }) => {
     `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewBasic}&surface=${BrowserHarnessSurface.Main}`,
   )
   await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
+  await expect(page.getByRole('button', { name: 'Reveal answer' })).toBeVisible()
   await page.keyboard.press('Space')
   await expect(page.getByRole('button', { name: /Good/ })).toHaveClass(
     /grade-focused/,

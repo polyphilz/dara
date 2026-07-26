@@ -11,6 +11,7 @@ test('Home populated and Review revealed surfaces', async ({ page }) => {
   )
   await expect(page.locator('.main-window')).toHaveScreenshot('home-populated.png')
   await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
+  await expect(page.getByRole('button', { name: 'Reveal answer' })).toBeVisible()
   await page.keyboard.press('Space')
   await expect(page.getByRole('group', { name: 'Grade this card' })).toBeVisible()
   await expect(page.locator('.main-window')).toHaveScreenshot(
