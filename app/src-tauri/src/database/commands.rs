@@ -118,10 +118,13 @@ pub async fn renew_media_lease(
 #[tauri::command]
 pub async fn maintain_media(
     database: State<'_, Database>,
+    ocr: State<'_, crate::media::OcrCoordinator>,
 ) -> CommandResult<MediaMaintenanceReport> {
     let client = database.client();
     let now = super::now_millis().map_err(CommandError::from)?;
-    run_writer(move || client.maintain_media(now, MEDIA_ORPHAN_GRACE_MILLIS)).await
+    let report = run_writer(move || client.maintain_media(now, MEDIA_ORPHAN_GRACE_MILLIS)).await?;
+    ocr.record_media_maintenance(report.clone());
+    Ok(report)
 }
 
 #[tauri::command]

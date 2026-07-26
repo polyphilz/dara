@@ -158,6 +158,9 @@ export class FakeDaraBackend {
           shortcutErrors: [],
           zoomPercent: 100,
         }
+      case DaraIpcCommand.LoadDiagnostics:
+        requireEmptyPayload(payload, command)
+        return diagnosticsSnapshot(this.#items.length)
       case DaraIpcCommand.RecordGrade: {
         const envelope = requireRecord(payload, command)
         const input = requireRecord(
@@ -430,6 +433,65 @@ function semanticReadyStatus() {
     modelBytes: 232_883_776,
     phase: SemanticSearchPhase.Ready,
     totalDocuments: 1,
+  }
+}
+
+function diagnosticsSnapshot(totalDocuments: number) {
+  const semanticStatus = {
+    ...semanticReadyStatus(),
+    indexedDocuments: totalDocuments,
+    totalDocuments,
+  }
+  return {
+    applicationVersion: '0.1.0',
+    database: {
+      migrationHeads: { main: 7, media: 4 },
+      scheduler: {
+        algorithm: DEFAULT_SCHEDULER_CONFIG.algorithm,
+        algorithmVersion: DEFAULT_SCHEDULER_CONFIG.algorithmVersion,
+        schedulerLibrary: DEFAULT_SCHEDULER_CONFIG.schedulerLibrary,
+        libraryVersion: DEFAULT_SCHEDULER_CONFIG.libraryVersion,
+        desiredRetention: DEFAULT_SCHEDULER_CONFIG.config.desiredRetention,
+      },
+      semanticIndex: {
+        id: 'jina_v1',
+        active: true,
+        indexedDocuments: totalDocuments,
+        totalDocuments,
+      },
+    },
+    semanticModel: {
+      modelName: 'jinaai/jina-embeddings-v5-text-nano-retrieval-GGUF',
+      phase: semanticStatus.phase,
+      downloadedBytes: semanticStatus.downloadedBytes,
+      expectedBytes: semanticStatus.modelBytes,
+      lastError: null,
+    },
+    storage: {
+      relationalDatabaseBytes: 1_048_576,
+      mediaDatabaseBytes: 524_288,
+      modelBytes: semanticStatus.modelBytes,
+      snapshotsBytes: 1_572_864,
+      logsBytes: 4_096,
+    },
+    latestSnapshot: {
+      createdAt: 1_788_512_400_000,
+      applicationVersion: '0.1.0',
+    },
+    lastMediaMaintenance: {
+      inspectedAt: 1_788_512_400_000,
+      integrity: {
+        orphanedImageIds: [],
+        extraBlobSha256: [],
+        missingReferencedBlobImageIds: [],
+        extraBlobBytes: 0,
+      },
+      cleanup: {
+        retiredImageCount: 0,
+        deletedBlobCount: 0,
+        reclaimedBytes: 0,
+      },
+    },
   }
 }
 

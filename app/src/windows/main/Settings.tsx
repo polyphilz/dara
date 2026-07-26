@@ -16,6 +16,10 @@ import { DaraSelect } from '../../components/DaraSelect.tsx'
 import { DaraShortcutRecorder } from '../../components/DaraShortcutRecorder.tsx'
 import { DaraToggle } from '../../components/DaraToggle.tsx'
 import {
+  tauriDiagnosticsGateway,
+  type DiagnosticsGateway,
+} from '../../diagnostics/index.ts'
+import {
   changeDesiredRetention,
   checkSchedulingData,
   repairSchedulingData,
@@ -37,6 +41,7 @@ import {
 } from '../../settings/index.ts'
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { ConfirmationDialog } from './ConfirmationDialog.tsx'
+import { DiagnosticsPanel } from './DiagnosticsPanel.tsx'
 
 const MIN_RETENTION_PERCENT = 70
 const MAX_RETENTION_PERCENT = 99
@@ -75,6 +80,7 @@ const appearanceOptions = [
 ] as const
 
 interface SettingsProps {
+  diagnosticsGateway?: DiagnosticsGateway
   navigationToken: number
   onBusyChange: (busy: boolean) => void
   onSchedulingChanged: () => void
@@ -90,6 +96,7 @@ interface RecalculationProgress {
 }
 
 export function Settings({
+  diagnosticsGateway = tauriDiagnosticsGateway,
   navigationToken,
   onBusyChange,
   onSchedulingChanged,
@@ -545,9 +552,10 @@ export function Settings({
 
       <SettingSection
         className="diagnostics-section"
-        description="Scheduling caches can be rebuilt from your unchanged review history."
+        description="A read-only summary of Dara’s local data and services."
         title="Data & diagnostics"
       >
+        <DiagnosticsPanel gateway={diagnosticsGateway} />
         <div className="diagnostic-action">
           <div>
             <strong>Scheduling data</strong>

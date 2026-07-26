@@ -2949,7 +2949,9 @@ fn update_replayed_card_cache(
     Ok(())
 }
 
-fn load_active_scheduler_config(connection: &Connection) -> Result<SchedulerConfigRecord> {
+pub(super) fn load_active_scheduler_config(
+    connection: &Connection,
+) -> Result<SchedulerConfigRecord> {
     let tuple = connection.query_row(
         "SELECT
             config.id, config.algorithm, config.algorithm_version,

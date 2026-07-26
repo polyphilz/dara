@@ -1,5 +1,10 @@
 import { fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
+import type {
+  DiagnosticsGateway,
+  DiagnosticsSnapshot,
+} from '../../../src/diagnostics/index.ts'
+import { SemanticSearchPhase } from '../../../src/review/index.ts'
 import { DEFAULT_SCHEDULER_CONFIG } from '../../../src/scheduling/config.ts'
 import type {
   InstallSchedulerReplayInput,
@@ -68,6 +73,7 @@ test('confirmed retention invokes the atomic replay workflow and refreshes the s
       onBusyChange={onBusyChange}
       onSchedulingChanged={onSchedulingChanged}
       reviewSaveInFlight={false}
+      diagnosticsGateway={diagnosticsFixture()}
       schedulerGateway={schedulerGateway}
       settingsGateway={settingsGateway}
     />,
@@ -124,6 +130,58 @@ test('launch-at-login applies through the system-backed settings command', async
   })
 })
 
+test('shows the cheap diagnostics snapshot without blocking settings', async () => {
+  const fixture = settingsFixture()
+  const diagnosticsGateway = diagnosticsFixture()
+  const { findByText, getByText } = render(
+    <Settings
+      diagnosticsGateway={diagnosticsGateway}
+      navigationToken={1}
+      onBusyChange={vi.fn()}
+      onSchedulingChanged={vi.fn()}
+      reviewSaveInFlight={false}
+      schedulerGateway={schedulerFixture(fixture)}
+      settingsGateway={fixture.gateway}
+    />,
+  )
+
+  expect(await findByText('Dara 0.1.0')).toBeTruthy()
+  expect(getByText('Database main 7 · media 4')).toBeTruthy()
+  expect(getByText(/Jina Embeddings v5 Text Nano/)).toBeTruthy()
+  expect(getByText(/12 of 12 cards indexed/)).toBeTruthy()
+  expect(getByText('No missing referenced media found')).toBeTruthy()
+  expect(diagnosticsGateway.loadDiagnostics).toHaveBeenCalledTimes(1)
+})
+
+test('keeps settings usable when diagnostics fail and retries independently', async () => {
+  const fixture = settingsFixture()
+  const diagnosticsGateway = diagnosticsFixture()
+  diagnosticsGateway.loadDiagnostics.mockRejectedValueOnce(
+    new Error('Diagnostics are temporarily unavailable.'),
+  )
+  const { findByRole, findByText, getByRole } = render(
+    <Settings
+      diagnosticsGateway={diagnosticsGateway}
+      navigationToken={1}
+      onBusyChange={vi.fn()}
+      onSchedulingChanged={vi.fn()}
+      reviewSaveInFlight={false}
+      schedulerGateway={schedulerFixture(fixture)}
+      settingsGateway={fixture.gateway}
+    />,
+  )
+
+  expect(
+    await findByText('Diagnostics are temporarily unavailable.'),
+  ).toBeTruthy()
+  expect(await findByRole('switch', { name: 'Launch at login' })).toBeTruthy()
+
+  fireEvent.click(getByRole('button', { name: 'Try again' }))
+
+  expect(await findByText('Dara 0.1.0')).toBeTruthy()
+  expect(diagnosticsGateway.loadDiagnostics).toHaveBeenCalledTimes(2)
+})
+
 function renderSettings(
   settingsGateway: MockSettingsGateway,
   schedulerGateway: MockSchedulerGateway,
@@ -134,6 +192,7 @@ function renderSettings(
       onBusyChange={vi.fn()}
       onSchedulingChanged={vi.fn()}
       reviewSaveInFlight={false}
+      diagnosticsGateway={diagnosticsFixture()}
       schedulerGateway={schedulerGateway}
       settingsGateway={settingsGateway}
     />,
@@ -153,6 +212,10 @@ type MockSchedulerGateway = SchedulerMaintenanceGateway & {
   installSchedulerReplay: ReturnType<typeof vi.fn>
   loadSchedulerReplaySnapshot: ReturnType<typeof vi.fn>
   prepareDesiredRetentionReplay: ReturnType<typeof vi.fn>
+}
+
+type MockDiagnosticsGateway = DiagnosticsGateway & {
+  loadDiagnostics: ReturnType<typeof vi.fn>
 }
 
 function settingsFixture(): SettingsFixture {
@@ -223,6 +286,63 @@ function schedulerFixture(fixture: SettingsFixture): MockSchedulerGateway {
       },
     ),
   } as MockSchedulerGateway
+}
+
+function diagnosticsFixture(): MockDiagnosticsGateway {
+  const snapshot: DiagnosticsSnapshot = {
+    applicationVersion: '0.1.0',
+    database: {
+      migrationHeads: { main: 7, media: 4 },
+      scheduler: {
+        algorithm: DEFAULT_SCHEDULER_CONFIG.algorithm,
+        algorithmVersion: DEFAULT_SCHEDULER_CONFIG.algorithmVersion,
+        schedulerLibrary: DEFAULT_SCHEDULER_CONFIG.schedulerLibrary,
+        libraryVersion: DEFAULT_SCHEDULER_CONFIG.libraryVersion,
+        desiredRetention: 0.9,
+      },
+      semanticIndex: {
+        id: 'jina_v1',
+        active: true,
+        indexedDocuments: 12,
+        totalDocuments: 12,
+      },
+    },
+    semanticModel: {
+      downloadedBytes: 232_883_776,
+      expectedBytes: 232_883_776,
+      lastError: null,
+      modelName: 'jinaai/jina-embeddings-v5-text-nano-retrieval-GGUF',
+      phase: SemanticSearchPhase.Ready,
+    },
+    storage: {
+      relationalDatabaseBytes: 1_048_576,
+      mediaDatabaseBytes: 524_288,
+      modelBytes: 232_883_776,
+      snapshotsBytes: 1_572_864,
+      logsBytes: 4_096,
+    },
+    latestSnapshot: {
+      applicationVersion: '0.1.0',
+      createdAt: 1_788_512_400_000,
+    },
+    lastMediaMaintenance: {
+      cleanup: {
+        deletedBlobCount: 0,
+        reclaimedBytes: 0,
+        retiredImageCount: 0,
+      },
+      inspectedAt: 1_788_512_400_000,
+      integrity: {
+        extraBlobBytes: 0,
+        extraBlobSha256: [],
+        missingReferencedBlobImageIds: [],
+        orphanedImageIds: [],
+      },
+    },
+  }
+  return {
+    loadDiagnostics: vi.fn(async () => structuredClone(snapshot)),
+  }
 }
 
 function replaySnapshot(

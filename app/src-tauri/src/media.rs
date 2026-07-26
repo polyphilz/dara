@@ -1,7 +1,7 @@
 use std::{
     io::Cursor,
     panic::{catch_unwind, AssertUnwindSafe},
-    sync::mpsc,
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::{Duration, Instant},
 };
@@ -31,6 +31,7 @@ enum OcrWorkerSignal {
 
 pub struct OcrCoordinator {
     sender: mpsc::SyncSender<OcrWorkerSignal>,
+    last_media_maintenance: Arc<Mutex<Option<crate::database::MediaMaintenanceReport>>>,
 }
 
 impl OcrCoordinator {
@@ -38,14 +39,19 @@ impl OcrCoordinator {
         let now = crate::database::now_millis()?;
         let report = client.maintain_media(now, crate::database::MEDIA_ORPHAN_GRACE_MILLIS)?;
         log_media_maintenance("launch", &report);
+        let last_media_maintenance = Arc::new(Mutex::new(Some(report)));
         let recovery = client.recover_interrupted_ocr_jobs(i64::MAX, now)?;
         log_ocr_recovery("launch", recovery);
         let (sender, receiver) = mpsc::sync_channel(1);
         let worker_client = client.clone();
+        let worker_last_media_maintenance = Arc::clone(&last_media_maintenance);
         thread::Builder::new()
             .name("dara-image-ocr".into())
-            .spawn(move || ocr_worker(worker_client, receiver))?;
-        let coordinator = Self { sender };
+            .spawn(move || ocr_worker(worker_client, receiver, worker_last_media_maintenance))?;
+        let coordinator = Self {
+            sender,
+            last_media_maintenance,
+        };
         coordinator.wake();
         Ok(coordinator)
     }
@@ -57,6 +63,20 @@ impl OcrCoordinator {
                 log::error!("image OCR worker is unavailable");
             }
         }
+    }
+
+    pub fn last_media_maintenance(&self) -> Option<crate::database::MediaMaintenanceReport> {
+        self.last_media_maintenance
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    pub fn record_media_maintenance(&self, report: crate::database::MediaMaintenanceReport) {
+        *self
+            .last_media_maintenance
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(report);
     }
 }
 
@@ -286,7 +306,11 @@ fn invalid_image(reason: String) -> CommandError {
     )))
 }
 
-fn ocr_worker(client: DatabaseClient, receiver: mpsc::Receiver<OcrWorkerSignal>) {
+fn ocr_worker(
+    client: DatabaseClient,
+    receiver: mpsc::Receiver<OcrWorkerSignal>,
+    last_media_maintenance: Arc<Mutex<Option<crate::database::MediaMaintenanceReport>>>,
+) {
     let mut next_reconciliation = Instant::now() + OCR_RECONCILIATION_INTERVAL;
     let mut next_media_maintenance = Instant::now() + MEDIA_MAINTENANCE_INTERVAL;
     loop {
@@ -302,18 +326,26 @@ fn ocr_worker(client: DatabaseClient, receiver: mpsc::Receiver<OcrWorkerSignal>)
             next_reconciliation = Instant::now() + OCR_RECONCILIATION_INTERVAL;
         }
         if Instant::now() >= next_media_maintenance {
-            reconcile_media(&client);
+            reconcile_media(&client, &last_media_maintenance);
             next_media_maintenance = Instant::now() + MEDIA_MAINTENANCE_INTERVAL;
         }
         drain_ocr_queue(&client, recognize_text);
     }
 }
 
-fn reconcile_media(client: &DatabaseClient) {
+fn reconcile_media(
+    client: &DatabaseClient,
+    last_media_maintenance: &Mutex<Option<crate::database::MediaMaintenanceReport>>,
+) {
     let result = crate::database::now_millis()
         .and_then(|now| client.maintain_media(now, crate::database::MEDIA_ORPHAN_GRACE_MILLIS));
     match result {
-        Ok(report) => log_media_maintenance("periodic reconciliation", &report),
+        Ok(report) => {
+            log_media_maintenance("periodic reconciliation", &report);
+            *last_media_maintenance
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(report);
+        }
         Err(error) => log::error!("could not reconcile orphaned media: {error}"),
     }
 }
@@ -559,5 +591,22 @@ mod tests {
                 .expect("deduplicated image");
             assert_eq!(record.ocr_status, ImageOcrStatus::Ready);
         }
+    }
+
+    #[test]
+    fn coordinator_tracks_the_latest_media_maintenance_report() {
+        let (sender, _receiver) = mpsc::sync_channel(1);
+        let coordinator = OcrCoordinator {
+            sender,
+            last_media_maintenance: Arc::new(Mutex::new(None)),
+        };
+        let report = crate::database::MediaMaintenanceReport {
+            inspected_at: 42,
+            ..Default::default()
+        };
+
+        coordinator.record_media_maintenance(report.clone());
+
+        assert_eq!(coordinator.last_media_maintenance(), Some(report));
     }
 }

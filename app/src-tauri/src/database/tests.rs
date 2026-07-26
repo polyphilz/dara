@@ -7,7 +7,10 @@ use tempfile::TempDir;
 
 use super::{
     connection::{self, DatabaseKind, FileState, MAIN_APPLICATION_ID, MEDIA_APPLICATION_ID},
-    domain::{CardContentType, ReviewCardState, ReviewCardStatus, ReviewEventType},
+    domain::{
+        CardContentType, ReviewCardState, ReviewCardStatus, ReviewEventType, SchedulerAlgorithm,
+        SchedulerLibrary,
+    },
     embedding_index, initialize,
     media::OcrQueueState,
     migrations, snapshot, DaraCommand, DatabaseError, DatabasePaths, ImageOcrStatus,
@@ -123,6 +126,92 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
         })
         .expect("history count");
     assert_eq!(history_rows, 7);
+}
+
+#[test]
+fn diagnostics_report_the_writer_serialized_database_state() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+
+    let diagnostics = database
+        .client()
+        .load_database_diagnostics()
+        .expect("database diagnostics");
+
+    assert_eq!(diagnostics.migration_heads, migrations::expected_heads());
+    assert_eq!(diagnostics.scheduler.algorithm, SchedulerAlgorithm::Fsrs);
+    assert_eq!(diagnostics.scheduler.algorithm_version, 6);
+    assert_eq!(
+        diagnostics.scheduler.scheduler_library,
+        SchedulerLibrary::TsFsrs
+    );
+    assert_eq!(diagnostics.scheduler.library_version, "5.4.1");
+    assert_eq!(diagnostics.scheduler.desired_retention, 0.9);
+    assert_eq!(
+        diagnostics.semantic_index.id,
+        embedding_index::jina_v1_manifest().id
+    );
+    assert!(!diagnostics.semantic_index.active);
+    assert_eq!(diagnostics.semantic_index.indexed_documents, 0);
+    assert_eq!(diagnostics.semantic_index.total_documents, 0);
+}
+
+#[test]
+fn latest_finalized_snapshot_ignores_incomplete_and_unfinalized_manifests() {
+    let (directory, paths) = test_paths();
+    fs::create_dir_all(&paths.backups).expect("backups directory");
+
+    let finalized = snapshot::SnapshotManifest {
+        format_version: 1,
+        created_at: 100,
+        application_version: "0.1.0".into(),
+        main: snapshot_file("complete-main.sqlite3"),
+        media: snapshot_file("complete-media.sqlite3"),
+        relationship_validated: true,
+    };
+    fs::write(paths.backups.join(&finalized.main.file_name), b"main").expect("finalized main");
+    fs::write(paths.backups.join(&finalized.media.file_name), b"media").expect("finalized media");
+    write_snapshot_manifest(&paths.backups.join("complete.json"), &finalized);
+
+    let unfinalized = snapshot::SnapshotManifest {
+        created_at: 300,
+        relationship_validated: false,
+        ..finalized.clone()
+    };
+    write_snapshot_manifest(&paths.backups.join("unfinalized.json"), &unfinalized);
+
+    let missing_pair = snapshot::SnapshotManifest {
+        created_at: 200,
+        main: snapshot_file("missing-main.sqlite3"),
+        media: snapshot_file("missing-media.sqlite3"),
+        ..finalized
+    };
+    write_snapshot_manifest(&paths.backups.join("missing.json"), &missing_pair);
+
+    assert_eq!(
+        snapshot::latest_finalized_snapshot(&paths.backups).expect("latest finalized snapshot"),
+        Some(snapshot::FinalizedSnapshotSummary {
+            created_at: 100,
+            application_version: "0.1.0".into(),
+        })
+    );
+    drop(directory);
+}
+
+fn snapshot_file(file_name: &str) -> snapshot::SnapshotFile {
+    snapshot::SnapshotFile {
+        file_name: file_name.into(),
+        sha256: "not-read-by-cheap-diagnostics".into(),
+        migration_head: None,
+    }
+}
+
+fn write_snapshot_manifest(path: &Path, manifest: &snapshot::SnapshotManifest) {
+    fs::write(
+        path,
+        serde_json::to_vec(manifest).expect("snapshot manifest JSON"),
+    )
+    .expect("snapshot manifest");
 }
 
 #[test]

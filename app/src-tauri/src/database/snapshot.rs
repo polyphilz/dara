@@ -45,6 +45,13 @@ pub struct CreatedSnapshot {
     pub manifest: SnapshotManifest,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FinalizedSnapshotSummary {
+    pub created_at: i64,
+    pub application_version: String,
+}
+
 pub fn create_snapshot_pair(
     paths: &DatabasePaths,
     application_version: &str,
@@ -265,6 +272,58 @@ pub fn prune_snapshots(backups: &Path) -> Result<()> {
     }
     sync_directory(backups)?;
     Ok(())
+}
+
+pub(crate) fn latest_finalized_snapshot(
+    backups: &Path,
+) -> Result<Option<FinalizedSnapshotSummary>> {
+    if !backups.exists() {
+        return Ok(None);
+    }
+
+    let mut latest: Option<FinalizedSnapshotSummary> = None;
+    for entry in fs::read_dir(backups)? {
+        let path = entry?.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(_) => continue,
+        };
+        let manifest = match serde_json::from_reader::<_, SnapshotManifest>(BufReader::new(file)) {
+            Ok(manifest) if manifest.format_version == 1 && manifest.relationship_validated => {
+                manifest
+            }
+            _ => continue,
+        };
+        let directory = match path.parent() {
+            Some(directory) => directory,
+            None => continue,
+        };
+        let main_path = match resolve_snapshot_file(directory, &manifest.main.file_name) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        let media_path = match resolve_snapshot_file(directory, &manifest.media.file_name) {
+            Ok(path) => path,
+            Err(_) => continue,
+        };
+        if !main_path.is_file() || !media_path.is_file() {
+            continue;
+        }
+        let candidate = FinalizedSnapshotSummary {
+            created_at: manifest.created_at,
+            application_version: manifest.application_version,
+        };
+        if latest
+            .as_ref()
+            .is_none_or(|current| candidate.created_at > current.created_at)
+        {
+            latest = Some(candidate);
+        }
+    }
+    Ok(latest)
 }
 
 fn vacuum_into(connection: &Connection, destination: &Path) -> Result<()> {
