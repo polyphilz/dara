@@ -157,7 +157,7 @@ fn diagnostics_report_the_writer_serialized_database_state() {
 }
 
 #[test]
-fn latest_finalized_snapshot_ignores_incomplete_and_unfinalized_manifests() {
+fn latest_finalized_snapshot_ignores_invalid_manifests() {
     let (directory, paths) = test_paths();
     fs::create_dir_all(&paths.backups).expect("backups directory");
 
@@ -180,6 +180,15 @@ fn latest_finalized_snapshot_ignores_incomplete_and_unfinalized_manifests() {
     };
     write_snapshot_manifest(&paths.backups.join("unfinalized.json"), &unfinalized);
 
+    let unrenderable_timestamp = snapshot::SnapshotManifest {
+        created_at: i64::MAX,
+        ..finalized.clone()
+    };
+    write_snapshot_manifest(
+        &paths.backups.join("unrenderable-timestamp.json"),
+        &unrenderable_timestamp,
+    );
+
     let missing_pair = snapshot::SnapshotManifest {
         created_at: 200,
         main: snapshot_file("missing-main.sqlite3"),
@@ -196,6 +205,28 @@ fn latest_finalized_snapshot_ignores_incomplete_and_unfinalized_manifests() {
         })
     );
     drop(directory);
+}
+
+#[test]
+fn snapshot_retention_ignores_unrenderable_timestamp_manifests() {
+    let (_directory, paths) = test_paths();
+    fs::create_dir_all(&paths.backups).expect("backups directory");
+    let manifest_path = paths.backups.join("unrenderable-timestamp.json");
+    write_snapshot_manifest(
+        &manifest_path,
+        &snapshot::SnapshotManifest {
+            format_version: 1,
+            created_at: i64::MAX,
+            application_version: "0.1.0".into(),
+            main: snapshot_file("unrenderable-main.sqlite3"),
+            media: snapshot_file("unrenderable-media.sqlite3"),
+            relationship_validated: true,
+        },
+    );
+
+    snapshot::prune_snapshots(&paths.backups).expect("retention ignores invalid timestamp");
+
+    assert!(manifest_path.exists());
 }
 
 fn snapshot_file(file_name: &str) -> snapshot::SnapshotFile {
