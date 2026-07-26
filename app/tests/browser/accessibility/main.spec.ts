@@ -14,6 +14,7 @@ test('Home and revealed Review have no detectable accessibility violations', asy
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
 
   await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
+  await expect(page.getByRole('button', { name: 'Reveal answer' })).toBeVisible()
   await page.keyboard.press('Space')
   await expect(page.getByRole('group', { name: 'Grade this card' })).toBeVisible()
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])

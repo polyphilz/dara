@@ -45,6 +45,7 @@ test('review grade focus clamps, direct grades, and Meta+Z undoes', async ({ pag
     `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewBasic}&surface=${BrowserHarnessSurface.Main}`,
   )
   await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
+  await expect(page.getByRole('button', { name: 'Reveal answer' })).toBeVisible()
   await page.keyboard.press('Space')
   const again = page.getByRole('button', { name: /Again/ })
   const good = page.getByRole('button', { name: /Good/ })
