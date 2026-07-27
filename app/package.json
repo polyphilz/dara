@@ -32,6 +32,7 @@
     "release:stage-sidecar": "../scripts/build-llama-sidecar.sh",
     "release:verify-resources": "node scripts/check-release-resources.mjs",
     "release:verify-app": "node scripts/check-packaged-app.mjs",
+    "release:acceptance": "node scripts/run-release-acceptance.mjs",
     "release:build:app": "pnpm release:stage-sidecar && pnpm release:verify-resources && tauri build --config src-tauri/tauri.release.conf.json --bundles app && pnpm release:verify-app",
     "test:frontend": "pnpm test && pnpm test:browser",
     "test:frontend:stress": "playwright test --project=chromium-functional --repeat-each=10 --fail-on-flaky-tests",

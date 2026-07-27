@@ -21,7 +21,7 @@ pub enum Appearance {
 }
 
 impl Appearance {
-    const fn as_db_str(self) -> &'static str {
+    pub(super) const fn as_db_str(self) -> &'static str {
         match self {
             Self::System => "SYSTEM",
             Self::Light => "LIGHT",

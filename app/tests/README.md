@@ -49,6 +49,7 @@ menus, and AppKit activation/focus behavior.
 | `pnpm check` | Ordinary local frontend gate; excludes Linux-canonical visual comparisons. |
 | `pnpm release:build:app` | Build, stage, verify, bundle, ad-hoc sign, and inspect the pinned arm64 release app. |
 | `pnpm release:verify-app` | Recheck an already-built `.app` without rebuilding llama.cpp. |
+| `pnpm release:acceptance help` | Drive clean-first-run and previous-schema upgrade acceptance against isolated `.data/` directories and the packaged app. |
 
 Canonical screenshots use
 `mcr.microsoft.com/playwright:v1.61.0-noble@sha256:57b65fdc9ceabe0ef613124c7bbe2babcf9362c4d85e382fe3b03604e84b428a`.
