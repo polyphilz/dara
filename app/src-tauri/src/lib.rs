@@ -1,6 +1,8 @@
 mod database;
 mod diagnostics;
 mod external;
+#[cfg(not(feature = "e2e"))]
+mod logging;
 mod media;
 mod search;
 mod windows;
@@ -11,7 +13,15 @@ use tauri::{Emitter, Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(
+        |app, _arguments, _cwd| {
+            if let Err(error) = windows::macos::show_main(app.clone()) {
+                log::error!("failed to show Dara for the secondary launch: {error}");
+            }
+        },
+    ));
+    #[cfg(not(feature = "e2e"))]
+    let builder = builder.plugin(logging::plugin());
     #[cfg(feature = "e2e")]
     let builder = builder
         .plugin(tauri_plugin_wdio::init())
@@ -21,13 +31,6 @@ pub fn run() {
         .register_uri_scheme_protocol("dara-media", |context, request| {
             media::protocol_response(context.app_handle(), request)
         })
-        .plugin(tauri_plugin_single_instance::init(
-            |app, _arguments, _cwd| {
-                if let Err(error) = windows::macos::show_main(app.clone()) {
-                    log::error!("failed to show Dara for the secondary launch: {error}");
-                }
-            },
-        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
@@ -70,14 +73,6 @@ pub fn run() {
             windows::macos::show_quick_add,
         ])
         .setup(|app| {
-            if cfg!(debug_assertions) && !cfg!(feature = "e2e") {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
-
             database::register_sqlite_vec()?;
             let data_root = std::env::var_os("DARA_DATA_DIR")
                 .map(PathBuf::from)
@@ -88,7 +83,7 @@ pub fn run() {
                 env!("CARGO_PKG_VERSION"),
                 database::InitializationOptions::default(),
             )?;
-            log::info!("database ready at {}", database.paths().root().display());
+            log::info!("database ready");
             let resource_dir = app.path().resource_dir()?;
             let search = search::SearchService::start(
                 database.client(),
