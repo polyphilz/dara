@@ -1,0 +1,73 @@
+{
+  "manifestVersion": 1,
+  "component": "llama-server",
+  "upstream": {
+    "repository": "https://github.com/ggml-org/llama.cpp.git",
+    "revision": "fdb1db877c526ec90f668eca1b858da5dba85560",
+    "build": 9860
+  },
+  "target": {
+    "operatingSystem": "macos",
+    "architecture": "arm64",
+    "minimumSystemVersion": "14.0"
+  },
+  "cmake": {
+    "buildType": "Release",
+    "flags": [
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DCMAKE_OSX_ARCHITECTURES=arm64",
+      "-DCMAKE_OSX_DEPLOYMENT_TARGET=14.0",
+      "-DBUILD_SHARED_LIBS=OFF",
+      "-DGGML_STATIC=ON",
+      "-DGGML_NATIVE=OFF",
+      "-DGGML_CCACHE=OFF",
+      "-DGGML_METAL=ON",
+      "-DGGML_METAL_EMBED_LIBRARY=ON",
+      "-DLLAMA_BUILD_TESTS=OFF",
+      "-DLLAMA_BUILD_EXAMPLES=ON",
+      "-DLLAMA_BUILD_TOOLS=ON",
+      "-DLLAMA_BUILD_SERVER=ON",
+      "-DLLAMA_BUILD_APP=OFF",
+      "-DLLAMA_BUILD_UI=OFF",
+      "-DLLAMA_USE_PREBUILT_UI=OFF",
+      "-DLLAMA_OPENSSL=OFF"
+    ]
+  },
+  "resourceDestinations": {
+    "binary": "bin/llama-server",
+    "releaseManifest": "release/llama-server.json"
+  },
+  "stagingPaths": {
+    "binary": "bin/llama-server",
+    "releaseManifest": "llama-server.json",
+    "license": "licenses/llama.cpp-LICENSE"
+  },
+  "licenseNotices": [
+    {
+      "component": "llama.cpp",
+      "spdxLicense": "MIT",
+      "sourcePath": "LICENSE",
+      "bundlePath": "licenses/llama.cpp-LICENSE",
+      "sha256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d"
+    }
+  ],
+  "binary": {
+    "bundlePath": "bin/llama-server",
+    "sha256": "804c1a16fb94be853bf6f416fdad28a5310707ae91daacddef6d13730268ed37",
+    "size": 12569152,
+    "versionOutput": "version: 1 (fdb1db8)\nbuilt with AppleClang 17.0.0.17000013 for Darwin arm64"
+  },
+  "verification": {
+    "modelBundled": false,
+    "embeddingManifest": {
+      "bundlePath": "embedding-indexes/jina-v1.json",
+      "sha256": "083ba341889d5e00a532fdaecd8efa21b2b7f95216a6d2e7fcf987676d296f6a"
+    },
+    "goldenFixtures": {
+      "bundlePath": "embedding-indexes/jina-v1-golden.json",
+      "sha256": "616cad22d3f38a776caaa0333252dc8537c8564fb597fc87ce587c01cef8649e"
+    },
+    "cpuPassed": true,
+    "metalPassed": true
+  }
+}
