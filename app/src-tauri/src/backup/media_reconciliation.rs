@@ -74,6 +74,26 @@ pub(crate) struct MediaBackupCoordinator {
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
+#[derive(Clone)]
+pub(crate) struct MediaBackupHandle {
+    sender: mpsc::Sender<WorkerSignal>,
+    cancellation: Arc<WorkCancellation>,
+    status: Arc<Mutex<MediaBackupStatus>>,
+}
+
+impl MediaBackupHandle {
+    pub(crate) fn wake(&self) {
+        if self.cancellation.shutdown.load(Ordering::Acquire) {
+            return;
+        }
+        let _ = self.sender.send(WorkerSignal::WorkAvailable);
+    }
+
+    pub(crate) fn status(&self) -> MediaBackupStatus {
+        lock_status(&self.status).clone()
+    }
+}
+
 impl MediaBackupCoordinator {
     pub(crate) fn start(client: DatabaseClient, media_path: PathBuf) -> Self {
         Self::start_with_parts(
@@ -133,6 +153,14 @@ impl MediaBackupCoordinator {
 
     pub(crate) fn wake(&self) {
         self.signal(WorkerSignal::WorkAvailable);
+    }
+
+    pub(crate) fn checkpoint_handle(&self) -> MediaBackupHandle {
+        MediaBackupHandle {
+            sender: self.sender.clone(),
+            cancellation: Arc::clone(&self.cancellation),
+            status: Arc::clone(&self.status),
+        }
     }
 
     pub(crate) fn reload_configuration(&self) {

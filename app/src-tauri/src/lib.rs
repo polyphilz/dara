@@ -44,6 +44,8 @@ impl ExitShutdownState {
 }
 
 fn shutdown_managed_services(app: &tauri::AppHandle) {
+    app.state::<backup::checkpoint::CheckpointCoordinator>()
+        .shutdown();
     app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
         .shutdown();
     app.state::<search::SearchService>().shutdown();
@@ -164,12 +166,22 @@ pub fn run() {
                 database.paths().main.clone(),
                 resource_dir.clone(),
             );
+            let offsite_checkpoint = backup::checkpoint::CheckpointCoordinator::start(
+                database.client(),
+                offsite_media.checkpoint_handle(),
+                litestream.checkpoint_handle(),
+                database.paths().root.clone(),
+                database.paths().main.clone(),
+                resource_dir.clone(),
+                env!("CARGO_PKG_VERSION").to_owned(),
+            );
             let startup_settings = database.client().load_settings()?;
             app.manage(database);
             app.manage(search);
             app.manage(ocr);
             app.manage(offsite_media);
             app.manage(litestream);
+            app.manage(offsite_checkpoint);
 
             windows::setup(app, startup_settings)?;
             recovery::confirm_restored_launch(&database_paths)?;
@@ -190,6 +202,8 @@ pub fn run() {
                 .connectivity_restored();
             app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
                 .connectivity_restored();
+            app.state::<backup::checkpoint::CheckpointCoordinator>()
+                .wake();
         }
         if let RunEvent::ExitRequested { code, api, .. } = event {
             if exit_shutdown.should_prevent_exit() {

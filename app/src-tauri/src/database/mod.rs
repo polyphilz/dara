@@ -7,6 +7,7 @@ mod error;
 mod media;
 pub(crate) mod migrations;
 mod offsite_backup;
+mod offsite_checkpoint;
 mod offsite_media;
 mod paths;
 mod queue;
@@ -47,6 +48,10 @@ pub use media::{
     OcrQueueRecovery, MEDIA_ORPHAN_GRACE_MILLIS,
 };
 pub(crate) use offsite_backup::{OffsiteBackupConfig, SaveOffsiteBackupConfigInput};
+pub(crate) use offsite_checkpoint::{
+    CheckpointMediaReference, LocalCheckpointSync, OffsiteCheckpointScheduleState,
+    PrepareOffsiteCheckpointInput, PreparedOffsiteCheckpoint, PublishedOffsiteCheckpoint,
+};
 pub(crate) use offsite_media::{
     OffsiteMediaAttemptOutcome, OffsiteMediaCandidate, OffsiteMediaReconciliationReport,
     OffsiteMediaSummary, RecordOffsiteMediaAttemptInput,
@@ -366,6 +371,7 @@ fn writer_loop(
     receiver: Receiver<WriterMessage>,
 ) {
     for message in receiver {
+        let _content_effect = message.content_effect();
         match message {
             WriterMessage::CreateCardContent {
                 input,
@@ -549,6 +555,17 @@ fn writer_loop(
                     now,
                 ));
             }
+            WriterMessage::ReleaseAllOffsiteMediaRetries {
+                backup_set_id,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(offsite_media::release_all_retries(
+                    &mut main,
+                    &backup_set_id,
+                    now,
+                ));
+            }
             WriterMessage::RequeueOffsiteMediaCredentialFailures {
                 backup_set_id,
                 now,
@@ -559,6 +576,63 @@ fn writer_loop(
                     &backup_set_id,
                     now,
                 ));
+            }
+            WriterMessage::PrepareOffsiteCheckpoint {
+                input,
+                local_sync,
+                reply,
+            } => {
+                let _ = reply.send(offsite_checkpoint::prepare_and_fence(
+                    &mut main, &media, input, local_sync,
+                ));
+            }
+            WriterMessage::MarkOffsiteCheckpointFenced {
+                checkpoint_id,
+                txid,
+                reply,
+            } => {
+                let _ = reply.send(offsite_checkpoint::mark_fenced(
+                    &mut main,
+                    &checkpoint_id,
+                    txid,
+                ));
+            }
+            WriterMessage::MarkOffsiteCheckpointReplicated {
+                checkpoint_id,
+                reply,
+            } => {
+                let _ = reply.send(offsite_checkpoint::mark_replicated(
+                    &mut main,
+                    &checkpoint_id,
+                ));
+            }
+            WriterMessage::MarkOffsiteCheckpointPublished {
+                checkpoint_id,
+                manifest_object_key,
+                reply,
+            } => {
+                let _ = reply.send(offsite_checkpoint::mark_published(
+                    &mut main,
+                    &checkpoint_id,
+                    &manifest_object_key,
+                ));
+            }
+            WriterMessage::MarkOffsiteCheckpointFailed {
+                checkpoint_id,
+                error_code,
+                reply,
+            } => {
+                let _ = reply.send(offsite_checkpoint::mark_failed(
+                    &mut main,
+                    &checkpoint_id,
+                    error_code,
+                ));
+            }
+            WriterMessage::FailIncompleteOffsiteCheckpoints { error_code, reply } => {
+                let _ = reply.send(offsite_checkpoint::fail_incomplete(&mut main, error_code));
+            }
+            WriterMessage::LoadOffsiteCheckpointScheduleState { reply } => {
+                let _ = reply.send(offsite_checkpoint::schedule_state(&main));
             }
             WriterMessage::IngestImage {
                 image,

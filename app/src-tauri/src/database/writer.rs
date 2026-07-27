@@ -1,4 +1,7 @@
-use std::sync::mpsc::{self, Sender, SyncSender};
+use std::sync::{
+    mpsc::{self, Sender, SyncSender},
+    Arc,
+};
 
 use super::embedding_index::{
     EmbeddingIndexProgress, InstallEmbeddingDisposition, PendingEmbeddingDocument,
@@ -7,18 +10,22 @@ use super::embedding_index::{
 use super::snapshot::CreatedSnapshot;
 use crate::backup::domain::BackupSetId;
 
+use super::LocalCheckpointSync;
 use super::{
     AdoptLegacyZoomInput, CanonicalImage, CardContentDraft, CardContentListItem,
     DatabaseDiagnosticsSnapshot, DatabaseError, DeleteCardContentInput, HomeStats, ImageRecord,
     InstallSchedulerReplayInput, LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob,
-    OcrQueueRecovery, OffsiteBackupConfig, OffsiteMediaCandidate, OffsiteMediaReconciliationReport,
-    OffsiteMediaSummary, PrepareDesiredRetentionReplayInput, RecordGradeInput,
+    OcrQueueRecovery, OffsiteBackupConfig, OffsiteCheckpointScheduleState, OffsiteMediaCandidate,
+    OffsiteMediaReconciliationReport, OffsiteMediaSummary, PrepareDesiredRetentionReplayInput,
+    PrepareOffsiteCheckpointInput, PreparedOffsiteCheckpoint, RecordGradeInput,
     RecordOffsiteMediaAttemptInput, Result, ReviewContext, ReviewMutationResult,
     ReviewQueueSelection, SaveOffsiteBackupConfigInput, SchedulerReplayInstallReport,
     SchedulerReplaySnapshot, SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
     SetCardContentSuspendedInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
     UndoLastGradeInput, UpdateCardContentInput,
 };
+use crate::backup::domain::{BackupErrorCode, CheckpointId};
+use crate::backup::litestream::LitestreamTxid;
 
 pub(super) enum WriterMessage {
     CreateCardContent {
@@ -155,10 +162,46 @@ pub(super) enum WriterMessage {
         now: i64,
         reply: SyncSender<Result<u64>>,
     },
+    ReleaseAllOffsiteMediaRetries {
+        backup_set_id: BackupSetId,
+        now: i64,
+        reply: SyncSender<Result<u64>>,
+    },
     RequeueOffsiteMediaCredentialFailures {
         backup_set_id: BackupSetId,
         now: i64,
         reply: SyncSender<Result<u64>>,
+    },
+    PrepareOffsiteCheckpoint {
+        input: PrepareOffsiteCheckpointInput,
+        local_sync: Arc<dyn LocalCheckpointSync>,
+        reply: SyncSender<Result<PreparedOffsiteCheckpoint>>,
+    },
+    MarkOffsiteCheckpointFenced {
+        checkpoint_id: CheckpointId,
+        txid: LitestreamTxid,
+        reply: SyncSender<Result<()>>,
+    },
+    MarkOffsiteCheckpointReplicated {
+        checkpoint_id: CheckpointId,
+        reply: SyncSender<Result<()>>,
+    },
+    MarkOffsiteCheckpointPublished {
+        checkpoint_id: CheckpointId,
+        manifest_object_key: String,
+        reply: SyncSender<Result<()>>,
+    },
+    MarkOffsiteCheckpointFailed {
+        checkpoint_id: CheckpointId,
+        error_code: BackupErrorCode,
+        reply: SyncSender<Result<()>>,
+    },
+    FailIncompleteOffsiteCheckpoints {
+        error_code: BackupErrorCode,
+        reply: SyncSender<Result<u64>>,
+    },
+    LoadOffsiteCheckpointScheduleState {
+        reply: SyncSender<Result<OffsiteCheckpointScheduleState>>,
     },
     IngestImage {
         image: CanonicalImage,
@@ -200,6 +243,71 @@ pub(super) enum WriterMessage {
         reply: SyncSender<Result<CreatedSnapshot>>,
     },
     Shutdown,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum WriterContentEffect {
+    ReadOnly,
+    RecoverableMutation,
+    BackupMutation,
+    Lifecycle,
+}
+
+impl WriterMessage {
+    pub(super) fn content_effect(&self) -> WriterContentEffect {
+        match self {
+            Self::CreateCardContent { .. }
+            | Self::UpdateCardContent { .. }
+            | Self::InstallTextEmbedding { .. }
+            | Self::ActivateEmbeddingIndexIfComplete { .. }
+            | Self::MaintainSearch { .. }
+            | Self::SetCardContentSuspended { .. }
+            | Self::DeleteCardContent { .. }
+            | Self::RecordGrade { .. }
+            | Self::UndoLastGrade { .. }
+            | Self::InstallSchedulerReplay { .. }
+            | Self::SetAppearance { .. }
+            | Self::SetZoomPercent { .. }
+            | Self::AdoptLegacyZoom { .. }
+            | Self::SetKeyboardBindings { .. }
+            | Self::IngestImage { .. }
+            | Self::RenewMediaLease { .. }
+            | Self::MaintainMedia { .. }
+            | Self::ClaimNextOcrJob { .. }
+            | Self::CompleteImageOcr { .. }
+            | Self::RecoverInterruptedOcrJobs { .. } => WriterContentEffect::RecoverableMutation,
+            Self::SaveOffsiteBackupConfig { .. }
+            | Self::ReconcileOffsiteMedia { .. }
+            | Self::RecordOffsiteMediaAttempt { .. }
+            | Self::ReleaseOffsiteMediaRetries { .. }
+            | Self::ReleaseAllOffsiteMediaRetries { .. }
+            | Self::RequeueOffsiteMediaCredentialFailures { .. }
+            | Self::PrepareOffsiteCheckpoint { .. }
+            | Self::MarkOffsiteCheckpointFenced { .. }
+            | Self::MarkOffsiteCheckpointReplicated { .. }
+            | Self::MarkOffsiteCheckpointPublished { .. }
+            | Self::MarkOffsiteCheckpointFailed { .. }
+            | Self::FailIncompleteOffsiteCheckpoints { .. } => WriterContentEffect::BackupMutation,
+            Self::LoadCardContent { .. }
+            | Self::SearchCardContent { .. }
+            | Self::HybridSearchCardContent { .. }
+            | Self::LoadEmbeddingReconciliationBatch { .. }
+            | Self::LoadEmbeddingIndexProgress { .. }
+            | Self::LoadDatabaseDiagnostics { .. }
+            | Self::LoadReviewContext { .. }
+            | Self::SelectNextReviewCard { .. }
+            | Self::LoadHomeStats { .. }
+            | Self::LoadSchedulerReplaySnapshot { .. }
+            | Self::PrepareDesiredRetentionReplay { .. }
+            | Self::LoadSettings { .. }
+            | Self::LoadOffsiteBackupConfig { .. }
+            | Self::LoadNextOffsiteMedia { .. }
+            | Self::LoadOffsiteMediaSummary { .. }
+            | Self::LoadMediaPayload { .. }
+            | Self::LoadOffsiteCheckpointScheduleState { .. } => WriterContentEffect::ReadOnly,
+            Self::CreateSnapshotPair { .. } | Self::Shutdown => WriterContentEffect::Lifecycle,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -634,6 +742,24 @@ impl DatabaseClient {
             .map_err(|_| DatabaseError::WriterUnavailable)?
     }
 
+    pub(crate) fn release_all_offsite_media_retries(
+        &self,
+        backup_set_id: BackupSetId,
+        now: i64,
+    ) -> Result<u64> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::ReleaseAllOffsiteMediaRetries {
+                backup_set_id,
+                now,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
     pub(crate) fn requeue_offsite_media_credential_failures(
         &self,
         backup_set_id: BackupSetId,
@@ -646,6 +772,119 @@ impl DatabaseClient {
                 now,
                 reply,
             })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn prepare_offsite_checkpoint(
+        &self,
+        input: PrepareOffsiteCheckpointInput,
+        local_sync: Arc<dyn LocalCheckpointSync>,
+    ) -> Result<PreparedOffsiteCheckpoint> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::PrepareOffsiteCheckpoint {
+                input,
+                local_sync,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn mark_offsite_checkpoint_fenced(
+        &self,
+        checkpoint_id: CheckpointId,
+        txid: LitestreamTxid,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::MarkOffsiteCheckpointFenced {
+                checkpoint_id,
+                txid,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn mark_offsite_checkpoint_replicated(
+        &self,
+        checkpoint_id: CheckpointId,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::MarkOffsiteCheckpointReplicated {
+                checkpoint_id,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn mark_offsite_checkpoint_published(
+        &self,
+        checkpoint_id: CheckpointId,
+        manifest_object_key: String,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::MarkOffsiteCheckpointPublished {
+                checkpoint_id,
+                manifest_object_key,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn mark_offsite_checkpoint_failed(
+        &self,
+        checkpoint_id: CheckpointId,
+        error_code: BackupErrorCode,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::MarkOffsiteCheckpointFailed {
+                checkpoint_id,
+                error_code,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn fail_incomplete_offsite_checkpoints(
+        &self,
+        error_code: BackupErrorCode,
+    ) -> Result<u64> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::FailIncompleteOffsiteCheckpoints { error_code, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_offsite_checkpoint_schedule_state(
+        &self,
+    ) -> Result<OffsiteCheckpointScheduleState> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadOffsiteCheckpointScheduleState { reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

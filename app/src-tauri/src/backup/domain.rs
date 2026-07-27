@@ -120,6 +120,21 @@ pub(crate) enum RelationalBackupPhase {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum CheckpointBackupPhase {
+    Off,
+    WaitingForMedia,
+    Fencing,
+    WaitingForReplica,
+    Validating,
+    Publishing,
+    Idle,
+    Degraded,
+    Blocked,
+    Unavailable,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CheckpointPhase {
     Prepared,
@@ -153,7 +168,7 @@ impl CheckpointPhase {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum BackupErrorCode {
+pub enum BackupErrorCode {
     NetworkOffline,
     NetworkTimeout,
     RateLimited,
@@ -893,6 +908,7 @@ impl CheckpointManifestV1 {
             || manifest.media.object_format_version != OBJECT_FORMAT_VERSION
             || manifest.dara_version.is_empty()
             || manifest.dara_version.len() > MAX_DARA_VERSION_BYTES
+            || manifest.dara_version.chars().any(char::is_control)
             || manifest.main.migration_head == 0
             || manifest.media.migration_head == 0
             || !is_canonical_txid(&manifest.main.txid)
@@ -904,6 +920,32 @@ impl CheckpointManifestV1 {
             return Err(BackupDomainError::KeyOutsidePrefix);
         }
         Ok(manifest)
+    }
+
+    pub(crate) fn object_key(
+        &self,
+        keyspace: &R2Keyspace,
+    ) -> Result<R2ObjectKey, BackupDomainError> {
+        keyspace.checkpoint(
+            &self.replica_epoch_id,
+            &self.checkpoint_id,
+            &self.created_at,
+        )
+    }
+
+    pub(crate) fn matches_published_evidence(
+        &self,
+        checkpoint_id: &CheckpointId,
+        backup_set_id: &BackupSetId,
+        replica_epoch_id: &ReplicaEpochId,
+        content_revision: u64,
+        litestream_txid: &str,
+    ) -> bool {
+        self.checkpoint_id == *checkpoint_id
+            && self.backup_set_id == *backup_set_id
+            && self.replica_epoch_id == *replica_epoch_id
+            && self.content_revision == content_revision
+            && self.main.txid == litestream_txid
     }
 }
 

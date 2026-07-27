@@ -466,6 +466,25 @@ pub(super) fn release_transient_retries(
     Ok(changed as u64)
 }
 
+pub(super) fn release_all_retries(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+    now: i64,
+) -> Result<u64> {
+    validate_timestamp(now, "manual backup timestamp")?;
+    let changed = connection.execute(
+        "UPDATE offsite_media_object
+         SET next_attempt_at = ?1, updated_at = max(updated_at, ?1)
+         WHERE backup_set_id = ?2 AND state = ?3",
+        params![
+            now,
+            backup_set_id.as_str(),
+            OffsiteMediaState::RetryWait.as_db_str(),
+        ],
+    )?;
+    Ok(changed as u64)
+}
+
 pub(super) fn requeue_credential_failures(
     connection: &mut Connection,
     backup_set_id: &BackupSetId,

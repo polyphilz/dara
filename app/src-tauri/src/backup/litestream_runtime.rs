@@ -27,6 +27,7 @@ use super::{
     object_store::{ObjectStore, R2ObjectStore},
     remote_authority::{map_credential_error, validate_backup_authority},
 };
+use crate::database::LocalCheckpointSync;
 use crate::database::{now_millis, DatabaseClient, OffsiteBackupConfig};
 
 const SUPERVISOR_POLL_INTERVAL: Duration = Duration::from_secs(1);
@@ -35,6 +36,8 @@ const REMOTE_STATUS_INTERVAL: Duration = Duration::from_secs(30);
 const RESTART_BASE_DELAY: Duration = Duration::from_secs(1);
 const RESTART_MAX_DELAY: Duration = Duration::from_secs(5 * 60);
 const CONTROL_REMOTE_TIMEOUT_SECONDS: u64 = 30;
+const CHECKPOINT_LOCAL_SYNC_TIMEOUT: Duration = Duration::from_secs(5);
+const CHECKPOINT_REMOTE_SYNC_TIMEOUT: Duration = Duration::from_secs(35);
 const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(35);
 const STALE_KILL_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -70,17 +73,99 @@ impl Default for RelationalBackupStatus {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SupervisorSignal {
     ReloadConfiguration,
     ConnectivityRestored,
     Shutdown,
 }
 
+#[derive(Clone)]
+pub(crate) struct LitestreamCheckpointHandle {
+    shutdown: Arc<AtomicBool>,
+    status: Arc<Mutex<RelationalBackupStatus>>,
+    control: Arc<Mutex<Option<Arc<dyn CheckpointControl>>>>,
+}
+
+impl LitestreamCheckpointHandle {
+    pub(crate) fn status(&self) -> RelationalBackupStatus {
+        lock_status(&self.status).clone()
+    }
+
+    pub(crate) fn sync_remote(&self) -> Result<SyncResult, BackupErrorCode> {
+        self.request_sync(false, CHECKPOINT_REMOTE_SYNC_TIMEOUT)
+    }
+
+    fn request_sync(
+        &self,
+        local_only: bool,
+        timeout: Duration,
+    ) -> Result<SyncResult, BackupErrorCode> {
+        if self.shutdown.load(Ordering::Acquire) {
+            return Err(BackupErrorCode::WorkerUnavailable);
+        }
+        let control = self
+            .control
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+            .ok_or(BackupErrorCode::LitestreamUnavailable)?;
+        let expected_control = Arc::clone(&control);
+        let (reply, receiver) = mpsc::sync_channel(1);
+        thread::Builder::new()
+            .name(if local_only {
+                "dara-litestream-checkpoint-local".into()
+            } else {
+                "dara-litestream-checkpoint-remote".into()
+            })
+            .spawn(move || {
+                let result = if local_only {
+                    control.sync_local()
+                } else {
+                    control.sync_remote()
+                }
+                .map_err(|failure| failure.code);
+                let _ = reply.send(result);
+            })
+            .map_err(|_| BackupErrorCode::WorkerUnavailable)?;
+        let result = receiver
+            .recv_timeout(timeout)
+            .map_err(|error| match error {
+                mpsc::RecvTimeoutError::Timeout if local_only => BackupErrorCode::FenceTimeout,
+                mpsc::RecvTimeoutError::Timeout => BackupErrorCode::NetworkTimeout,
+                mpsc::RecvTimeoutError::Disconnected => BackupErrorCode::WorkerUnavailable,
+            })??;
+        let control_is_current = self
+            .control
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+            .is_some_and(|current| Arc::ptr_eq(current, &expected_control));
+        if control_is_current {
+            let mut status = lock_status(&self.status);
+            status.latest_local_txid = Some(result.txid);
+            if !local_only {
+                status.phase = RelationalBackupPhase::Running;
+                status.latest_remote_txid = result.replica_txid;
+                status.last_remote_confirmed_at = now_millis().ok();
+                status.last_error_code = None;
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl LocalCheckpointSync for LitestreamCheckpointHandle {
+    fn sync_local(&self) -> Result<LitestreamTxid, BackupErrorCode> {
+        self.request_sync(true, CHECKPOINT_LOCAL_SYNC_TIMEOUT)
+            .map(|sync| sync.txid)
+    }
+}
+
 pub(crate) struct LitestreamRuntimeService {
     sender: mpsc::Sender<SupervisorSignal>,
     shutdown: Arc<AtomicBool>,
     status: Arc<Mutex<RelationalBackupStatus>>,
+    checkpoint_control: Arc<Mutex<Option<Arc<dyn CheckpointControl>>>>,
     worker: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -111,8 +196,10 @@ impl LitestreamRuntimeService {
         let (sender, receiver) = mpsc::channel();
         let shutdown = Arc::new(AtomicBool::new(false));
         let status = Arc::new(Mutex::new(RelationalBackupStatus::default()));
+        let checkpoint_control = Arc::new(Mutex::new(None));
         let worker_shutdown = Arc::clone(&shutdown);
         let worker_status = Arc::clone(&status);
+        let worker_checkpoint_control = Arc::clone(&checkpoint_control);
         let spawned = thread::Builder::new()
             .name("dara-litestream-supervisor".into())
             .spawn(move || {
@@ -122,6 +209,7 @@ impl LitestreamRuntimeService {
                     receiver,
                     worker_shutdown,
                     worker_status,
+                    worker_checkpoint_control,
                     schedule,
                 );
             });
@@ -140,6 +228,7 @@ impl LitestreamRuntimeService {
             sender,
             shutdown,
             status,
+            checkpoint_control,
             worker: Mutex::new(worker),
         };
         service.reload_configuration();
@@ -148,6 +237,14 @@ impl LitestreamRuntimeService {
 
     pub(crate) fn status(&self) -> RelationalBackupStatus {
         lock_status(&self.status).clone()
+    }
+
+    pub(crate) fn checkpoint_handle(&self) -> LitestreamCheckpointHandle {
+        LitestreamCheckpointHandle {
+            shutdown: Arc::clone(&self.shutdown),
+            status: Arc::clone(&self.status),
+            control: Arc::clone(&self.checkpoint_control),
+        }
     }
 
     pub(crate) fn reload_configuration(&self) {
@@ -254,8 +351,13 @@ trait RuntimeFactory: Send + Sync {
 
 trait ManagedLitestream: Send {
     fn has_exited(&mut self) -> Result<bool, RuntimeFailure>;
-    fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure>;
+    fn checkpoint_control(&self) -> Arc<dyn CheckpointControl>;
     fn shutdown(&mut self);
+}
+
+trait CheckpointControl: Send + Sync {
+    fn sync_local(&self) -> Result<SyncResult, RuntimeFailure>;
+    fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure>;
 }
 
 fn supervisor_worker(
@@ -264,6 +366,7 @@ fn supervisor_worker(
     receiver: mpsc::Receiver<SupervisorSignal>,
     shutdown: Arc<AtomicBool>,
     status: Arc<Mutex<RelationalBackupStatus>>,
+    checkpoint_control: Arc<Mutex<Option<Arc<dyn CheckpointControl>>>>,
     schedule: WorkerSchedule,
 ) {
     let mut current_config: Option<OffsiteBackupConfig> = None;
@@ -290,7 +393,9 @@ fn supervisor_worker(
             Err(mpsc::RecvTimeoutError::Timeout) => None,
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
-        if shutdown.load(Ordering::Acquire) || matches!(signal, Some(SupervisorSignal::Shutdown)) {
+        if shutdown.load(Ordering::Acquire)
+            || matches!(signal.as_ref(), Some(SupervisorSignal::Shutdown))
+        {
             break;
         }
         match signal {
@@ -315,7 +420,7 @@ fn supervisor_worker(
                     let previous_revision = current_config.as_ref().map(|config| config.revision);
                     let next_revision = enabled.as_ref().map(|config| config.revision);
                     if force_reload || previous_revision != next_revision {
-                        shutdown_daemon(&mut daemon);
+                        shutdown_daemon(&mut daemon, &checkpoint_control);
                         current_config = enabled;
                         blocked_revision = None;
                         restart_count = 0;
@@ -354,7 +459,7 @@ fn supervisor_worker(
             match running.has_exited() {
                 Ok(false) => {}
                 Ok(true) | Err(_) => {
-                    shutdown_daemon(&mut daemon);
+                    shutdown_daemon(&mut daemon, &checkpoint_control);
                     let failure = RuntimeFailure::new(BackupErrorCode::LitestreamFailed, true);
                     schedule_restart(
                         &status,
@@ -375,6 +480,10 @@ fn supervisor_worker(
             lock_status(&status).phase = RelationalBackupPhase::Starting;
             match factory.start(config) {
                 Ok(started) => {
+                    *checkpoint_control
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                        Some(started.checkpoint_control());
                     daemon = Some(started);
                     next_remote_status = Instant::now();
                 }
@@ -398,7 +507,12 @@ fn supervisor_worker(
 
         if daemon.is_some() && (force_remote_status || Instant::now() >= next_remote_status) {
             force_remote_status = false;
-            let sync = daemon.as_ref().expect("daemon checked above").sync_remote();
+            let sync = checkpoint_control
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone()
+                .ok_or_else(|| RuntimeFailure::new(BackupErrorCode::LitestreamUnavailable, true))
+                .and_then(|control| control.sync_remote());
             match sync {
                 Ok(sync) => {
                     restart_count = 0;
@@ -414,7 +528,7 @@ fn supervisor_worker(
                     update_failure_status(&status, failure, restart_count);
                 }
                 Err(failure) => {
-                    shutdown_daemon(&mut daemon);
+                    shutdown_daemon(&mut daemon, &checkpoint_control);
                     blocked_revision = Some(config.revision);
                     update_failure_status(&status, failure, restart_count);
                 }
@@ -423,7 +537,7 @@ fn supervisor_worker(
         }
     }
 
-    shutdown_daemon(&mut daemon);
+    shutdown_daemon(&mut daemon, &checkpoint_control);
 }
 
 fn schedule_restart(
@@ -456,7 +570,14 @@ fn update_failure_status(
     current.last_error_code = Some(failure.code);
 }
 
-fn shutdown_daemon(daemon: &mut Option<Box<dyn ManagedLitestream>>) {
+fn shutdown_daemon(
+    daemon: &mut Option<Box<dyn ManagedLitestream>>,
+    checkpoint_control: &Mutex<Option<Arc<dyn CheckpointControl>>>,
+) {
+    checkpoint_control
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
     if let Some(mut daemon) = daemon.take() {
         daemon.shutdown();
     }
@@ -617,11 +738,15 @@ fn map_litestream_start_error(error: LitestreamError) -> RuntimeFailure {
 
 struct SystemManagedLitestream {
     child: Option<Child>,
-    database_path: PathBuf,
     runtime: LitestreamRuntimePaths,
+    checkpoint: Arc<SystemCheckpointControl>,
+    log_threads: Vec<JoinHandle<()>>,
+}
+
+struct SystemCheckpointControl {
+    database_path: PathBuf,
     control: CommandLitestreamControl<SystemCommandExecutor>,
     authority: RemoteAuthority,
-    log_threads: Vec<JoinHandle<()>>,
 }
 
 struct RemoteAuthority {
@@ -718,10 +843,12 @@ impl SystemManagedLitestream {
         );
         Ok(Self {
             child: Some(child),
-            database_path,
             runtime,
-            control,
-            authority,
+            checkpoint: Arc::new(SystemCheckpointControl {
+                database_path,
+                control,
+                authority,
+            }),
             log_threads,
         })
     }
@@ -750,11 +877,8 @@ impl ManagedLitestream for SystemManagedLitestream {
         }
     }
 
-    fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
-        self.authority.validate()?;
-        self.control
-            .sync_remote(&self.database_path)
-            .map_err(map_litestream_start_error)
+    fn checkpoint_control(&self) -> Arc<dyn CheckpointControl> {
+        self.checkpoint.clone()
     }
 
     fn shutdown(&mut self) {
@@ -765,6 +889,21 @@ impl ManagedLitestream for SystemManagedLitestream {
         } else {
             join_log_threads(self.log_threads.drain(..));
         }
+    }
+}
+
+impl CheckpointControl for SystemCheckpointControl {
+    fn sync_local(&self) -> Result<SyncResult, RuntimeFailure> {
+        self.control
+            .sync_local(&self.database_path)
+            .map_err(map_litestream_start_error)
+    }
+
+    fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
+        self.authority.validate()?;
+        self.control
+            .sync_remote(&self.database_path)
+            .map_err(map_litestream_start_error)
     }
 }
 
@@ -1487,7 +1626,7 @@ mod tests {
                 StartPlan::Failure(failure) => Err(failure),
                 StartPlan::Daemon { exited, sync } => Ok(Box::new(FakeManagedLitestream {
                     exited,
-                    sync,
+                    checkpoint: Arc::new(FakeCheckpointControl { sync }),
                     shutdowns: Arc::clone(&self.shutdowns),
                     stopped: false,
                 })),
@@ -1497,9 +1636,13 @@ mod tests {
 
     struct FakeManagedLitestream {
         exited: Arc<AtomicBool>,
-        sync: Result<SyncResult, RuntimeFailure>,
+        checkpoint: Arc<FakeCheckpointControl>,
         shutdowns: Arc<AtomicUsize>,
         stopped: bool,
+    }
+
+    struct FakeCheckpointControl {
+        sync: Result<SyncResult, RuntimeFailure>,
     }
 
     impl ManagedLitestream for FakeManagedLitestream {
@@ -1507,8 +1650,8 @@ mod tests {
             Ok(self.exited.load(Ordering::Acquire))
         }
 
-        fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
-            self.sync.clone()
+        fn checkpoint_control(&self) -> Arc<dyn CheckpointControl> {
+            self.checkpoint.clone()
         }
 
         fn shutdown(&mut self) {
@@ -1516,6 +1659,16 @@ mod tests {
                 self.stopped = true;
                 self.shutdowns.fetch_add(1, Ordering::AcqRel);
             }
+        }
+    }
+
+    impl CheckpointControl for FakeCheckpointControl {
+        fn sync_local(&self) -> Result<SyncResult, RuntimeFailure> {
+            self.sync.clone()
+        }
+
+        fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
+            self.sync.clone()
         }
     }
 
@@ -1632,6 +1785,31 @@ mod tests {
         assert!(status.last_remote_confirmed_at.is_some());
         service.shutdown();
         assert_eq!(factory.shutdowns(), 1);
+    }
+
+    #[test]
+    fn checkpoint_handle_can_sync_without_round_tripping_through_the_supervisor_loop() {
+        let (_directory, database, _config) = test_database(true);
+        let (plan, _exited) = successful_plan(&database.paths().main);
+        let factory = FakeRuntimeFactory::new([plan]);
+        let service = start_test_service(&database, factory);
+        wait_until(Duration::from_secs(2), || {
+            service.status().phase == RelationalBackupPhase::Running
+        });
+
+        let handle = service.checkpoint_handle();
+        assert_eq!(
+            LocalCheckpointSync::sync_local(&handle).expect("local checkpoint sync"),
+            LitestreamTxid::from_local(7)
+        );
+        assert_eq!(
+            handle
+                .sync_remote()
+                .expect("remote checkpoint sync")
+                .replica_txid,
+            Some(LitestreamTxid::from_local(7))
+        );
+        service.shutdown();
     }
 
     #[test]
