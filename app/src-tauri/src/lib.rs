@@ -95,10 +95,15 @@ pub fn run() {
                 &resource_dir,
             )?;
             let ocr = media::OcrCoordinator::start(database.client())?;
+            let offsite_media = backup::media_reconciliation::MediaBackupCoordinator::start(
+                database.client(),
+                database.paths().media.clone(),
+            );
             let startup_settings = database.client().load_settings()?;
             app.manage(database);
             app.manage(search);
             app.manage(ocr);
+            app.manage(offsite_media);
 
             windows::setup(app, startup_settings)?;
             recovery::confirm_restored_launch(&database_paths)?;
@@ -114,8 +119,12 @@ pub fn run() {
             {
                 log::error!("failed to refresh review clock after wake: {error}");
             }
+            app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
+                .connectivity_restored();
         }
         if matches!(&event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
+            app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
+                .shutdown();
             app.state::<search::SearchService>().shutdown();
         }
     });

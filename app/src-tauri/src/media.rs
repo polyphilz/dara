@@ -85,10 +85,11 @@ pub async fn ingest_clipboard_image(
     app: AppHandle,
     database: State<'_, Database>,
     ocr: State<'_, OcrCoordinator>,
+    offsite_media: State<'_, crate::backup::media_reconciliation::MediaBackupCoordinator>,
     lease_id: String,
 ) -> Result<ImageRecord, CommandError> {
     let raw = read_clipboard_image(&app).await?;
-    ingest_image(raw, lease_id, &database, &ocr).await
+    ingest_image(raw, lease_id, &database, &ocr, &offsite_media).await
 }
 
 #[tauri::command]
@@ -96,6 +97,7 @@ pub async fn ingest_image_bytes(
     request: Request<'_>,
     database: State<'_, Database>,
     ocr: State<'_, OcrCoordinator>,
+    offsite_media: State<'_, crate::backup::media_reconciliation::MediaBackupCoordinator>,
 ) -> Result<ImageRecord, CommandError> {
     let payload = match request.body() {
         InvokeBody::Raw(bytes) => bytes.clone(),
@@ -123,7 +125,7 @@ pub async fn ingest_image_bytes(
             "the selected image is larger than 64 MiB".into(),
         )));
     }
-    ingest_image(raw, lease_id, &database, &ocr).await
+    ingest_image(raw, lease_id, &database, &ocr, &offsite_media).await
 }
 
 async fn ingest_image(
@@ -131,6 +133,7 @@ async fn ingest_image(
     lease_id: String,
     database: &Database,
     ocr: &OcrCoordinator,
+    offsite_media: &crate::backup::media_reconciliation::MediaBackupCoordinator,
 ) -> Result<ImageRecord, CommandError> {
     let client = database.client();
     let image = tauri::async_runtime::spawn_blocking(move || canonicalize_image(&raw))
@@ -149,6 +152,7 @@ async fn ingest_image(
     if ocr_status.needs_worker_wake() {
         ocr.wake();
     }
+    offsite_media.wake();
     Ok(record)
 }
 

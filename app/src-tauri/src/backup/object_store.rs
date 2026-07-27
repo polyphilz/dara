@@ -22,7 +22,7 @@ use super::{
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SIGNED_URL_LIFETIME: Duration = Duration::from_secs(60);
-const MAX_OBJECT_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_OBJECT_BYTES: usize = 32 * 1024 * 1024;
 const MAX_LIST_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_LIST_OBJECTS: usize = 1_000;
 const MAX_ETAG_BYTES: usize = 256;

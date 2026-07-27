@@ -6,7 +6,8 @@ use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 use crate::backup::domain::{
-    BackupSetId, R2AccountId, R2BucketName, R2Jurisdiction, R2Prefix, R2Target, ReplicaEpochId,
+    BackupErrorCode, BackupSetId, ContentSha256, R2AccountId, R2BucketName, R2Jurisdiction,
+    R2Prefix, R2Target, ReplicaEpochId,
 };
 
 use super::{
@@ -17,8 +18,9 @@ use super::{
     },
     embedding_index, initialize,
     media::OcrQueueState,
-    migrations, snapshot, DaraCommand, DatabaseError, DatabasePaths, ImageOcrStatus,
-    InitializationOptions, DEFAULT_HOME_ACCELERATOR,
+    migrations, snapshot, CanonicalImage, DaraCommand, DatabaseError, DatabasePaths,
+    ImageOcrStatus, InitializationOptions, OffsiteMediaAttemptOutcome,
+    RecordOffsiteMediaAttemptInput, DEFAULT_HOME_ACCELERATOR,
 };
 
 const BASIC_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -247,6 +249,395 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
         .expect("content clock"),
         0
     );
+}
+
+#[test]
+fn offsite_media_work_survives_offline_restart_and_converges_without_duplicates() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    let first_bytes = b"first-canonical-image".to_vec();
+    let second_bytes = b"second-canonical-image".to_vec();
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: first_bytes.clone(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("first image before backup configuration");
+
+    let target = R2Target {
+        account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef").expect("account ID"),
+        jurisdiction: R2Jurisdiction::Default,
+        bucket: R2BucketName::parse("dara-test").expect("bucket"),
+        prefix: R2Prefix::parse("dara/media-reconciliation").expect("prefix"),
+    };
+    let backup_set_id = BackupSetId::new();
+    let saved = client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            target: target.clone(),
+        })
+        .expect("enabled backup configuration");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: second_bytes.clone(),
+                natural_width: 12,
+                natural_height: 12,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("second image after backup configuration");
+
+    let attempt_time = super::now_millis().expect("attempt time").saturating_add(1);
+    let offline = client
+        .load_next_offsite_media(backup_set_id.clone(), attempt_time)
+        .expect("first desired object")
+        .expect("queued object");
+    let retry_at = attempt_time.saturating_add(60_000);
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: offline.sha256,
+            expected_attempt_count: offline.attempt_count,
+            attempted_at: attempt_time,
+            outcome: OffsiteMediaAttemptOutcome::RetryWait {
+                error_code: BackupErrorCode::NetworkOffline,
+                next_attempt_at: retry_at,
+            },
+        })
+        .expect("persist offline retry");
+
+    let other = client
+        .load_next_offsite_media(backup_set_id.clone(), attempt_time)
+        .expect("second desired object")
+        .expect("pending object remains eligible");
+    assert_ne!(other.sha256, offline.sha256);
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: other.sha256,
+            expected_attempt_count: other.attempt_count,
+            attempted_at: attempt_time.saturating_add(1),
+            outcome: OffsiteMediaAttemptOutcome::Verified,
+        })
+        .expect("verify second object");
+    assert!(client
+        .load_next_offsite_media(backup_set_id.clone(), retry_at.saturating_sub(1))
+        .expect("work before retry")
+        .is_none());
+    drop(database);
+
+    let reopened = initialize_test(&paths);
+    let client = reopened.client();
+    let retried = client
+        .load_next_offsite_media(backup_set_id.clone(), retry_at)
+        .expect("work after restart")
+        .expect("retry survived restart");
+    assert_eq!(retried.sha256, offline.sha256);
+    assert_eq!(retried.attempt_count, 1);
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: retried.sha256,
+            expected_attempt_count: retried.attempt_count,
+            attempted_at: retry_at,
+            outcome: OffsiteMediaAttemptOutcome::Verified,
+        })
+        .expect("verify retried object");
+    let summary = client
+        .load_offsite_media_summary(backup_set_id.clone())
+        .expect("media summary");
+    assert_eq!(summary.verified_count, 2);
+    assert_eq!(summary.pending_count, 0);
+    assert_eq!(summary.retry_wait_count, 0);
+    assert_eq!(summary.blocked_count, 0);
+
+    let new_backup_set_id = BackupSetId::new();
+    let changed = client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: saved.revision,
+            backup_set_id: new_backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: false,
+            target: R2Target {
+                prefix: R2Prefix::parse("dara/new-target").expect("new prefix"),
+                ..target
+            },
+        })
+        .expect("new backup target");
+    assert_eq!(changed.backup_set_id, new_backup_set_id);
+    let new_summary = client
+        .load_offsite_media_summary(changed.backup_set_id)
+        .expect("new target summary");
+    assert_eq!(new_summary.pending_count, 2);
+    assert_eq!(
+        new_summary.pending_bytes,
+        (first_bytes.len() + second_bytes.len()) as u64
+    );
+}
+
+#[test]
+fn periodic_offsite_media_reconciliation_repairs_missing_desired_rows() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    let bytes = b"periodic-reconciliation-image".to_vec();
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: bytes.clone(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("image");
+    let backup_set_id = BackupSetId::new();
+    client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            target: R2Target {
+                account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef")
+                    .expect("account ID"),
+                jurisdiction: R2Jurisdiction::Default,
+                bucket: R2BucketName::parse("dara-test").expect("bucket"),
+                prefix: R2Prefix::parse("dara/periodic-reconciliation").expect("prefix"),
+            },
+        })
+        .expect("backup configuration");
+    drop(database);
+
+    let mut main = open_existing(&paths.main, DatabaseKind::Main);
+    let media = open_existing(&paths.media, DatabaseKind::Media);
+    let hash = ContentSha256::from_bytes(Sha256::digest(&bytes).into());
+    main.execute(
+        "DELETE FROM offsite_media_object
+         WHERE backup_set_id = ?1 AND sha256 = ?2",
+        params![backup_set_id.as_str(), hash.as_bytes().as_slice()],
+    )
+    .expect("simulate missed ingestion hook");
+    let report = super::offsite_media::reconcile(
+        &mut main,
+        &media,
+        super::now_millis().expect("reconciliation time"),
+    )
+    .expect("periodic reconciliation");
+    assert_eq!(report.backup_set_id, Some(backup_set_id.clone()));
+    assert_eq!(report.inserted, 1);
+    assert_eq!(report.missing_local_blobs, 0);
+    assert_eq!(
+        main.query_row(
+            "SELECT count(*)
+             FROM offsite_media_object
+             WHERE backup_set_id = ?1 AND sha256 = ?2",
+            params![backup_set_id.as_str(), hash.as_bytes().as_slice()],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("repaired desired row"),
+        1
+    );
+}
+
+#[test]
+fn available_local_media_requeues_only_local_missing_blocks() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    let bytes = b"returned-local-media".to_vec();
+    let backup_set_id = BackupSetId::new();
+    client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            target: R2Target {
+                account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef")
+                    .expect("account ID"),
+                jurisdiction: R2Jurisdiction::Default,
+                bucket: R2BucketName::parse("dara-test").expect("bucket"),
+                prefix: R2Prefix::parse("dara/requeue-local-media").expect("prefix"),
+            },
+        })
+        .expect("backup configuration");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: bytes.clone(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("image");
+    let first_attempt_at = super::now_millis().expect("first attempt time");
+    let candidate = client
+        .load_next_offsite_media(backup_set_id.clone(), first_attempt_at)
+        .expect("pending media")
+        .expect("candidate");
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: candidate.sha256,
+            expected_attempt_count: candidate.attempt_count,
+            attempted_at: first_attempt_at,
+            outcome: OffsiteMediaAttemptOutcome::Blocked {
+                error_code: BackupErrorCode::LocalMediaMissing,
+            },
+        })
+        .expect("record local-missing block");
+
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: bytes.clone(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("reingested image");
+    let requeued_by_ingest = client
+        .load_next_offsite_media(backup_set_id.clone(), first_attempt_at)
+        .expect("reingested media")
+        .expect("requeued candidate");
+    assert_eq!(requeued_by_ingest.sha256, candidate.sha256);
+    assert_eq!(requeued_by_ingest.attempt_count, 1);
+
+    let second_attempt_at = first_attempt_at.saturating_add(1);
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: requeued_by_ingest.sha256,
+            expected_attempt_count: requeued_by_ingest.attempt_count,
+            attempted_at: second_attempt_at,
+            outcome: OffsiteMediaAttemptOutcome::Blocked {
+                error_code: BackupErrorCode::LocalMediaMissing,
+            },
+        })
+        .expect("record repeated local-missing block");
+    let report = client
+        .reconcile_offsite_media(second_attempt_at.saturating_add(1))
+        .expect("periodic reconciliation");
+    assert_eq!(report.inserted, 0);
+    assert_eq!(report.missing_local_blobs, 0);
+
+    let requeued_by_reconciliation = client
+        .load_next_offsite_media(backup_set_id.clone(), second_attempt_at.saturating_add(1))
+        .expect("reconciled media")
+        .expect("periodically requeued candidate");
+    assert_eq!(requeued_by_reconciliation.sha256, candidate.sha256);
+    assert_eq!(requeued_by_reconciliation.attempt_count, 2);
+    let summary = client
+        .load_offsite_media_summary(backup_set_id.clone())
+        .expect("media summary");
+    assert_eq!(summary.pending_count, 1);
+    assert_eq!(summary.blocked_count, 0);
+    assert_eq!(summary.last_error_code, None);
+
+    let third_attempt_at = second_attempt_at.saturating_add(2);
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: requeued_by_reconciliation.sha256,
+            expected_attempt_count: requeued_by_reconciliation.attempt_count,
+            attempted_at: third_attempt_at,
+            outcome: OffsiteMediaAttemptOutcome::Blocked {
+                error_code: BackupErrorCode::ImmutableObjectConflict,
+            },
+        })
+        .expect("record immutable conflict");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes,
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("reingest after immutable conflict");
+    client
+        .reconcile_offsite_media(third_attempt_at.saturating_add(1))
+        .expect("reconcile immutable conflict");
+    assert!(client
+        .load_next_offsite_media(backup_set_id.clone(), third_attempt_at.saturating_add(1))
+        .expect("work after immutable conflict")
+        .is_none());
+    let summary = client
+        .load_offsite_media_summary(backup_set_id)
+        .expect("immutable-conflict summary");
+    assert_eq!(summary.pending_count, 0);
+    assert_eq!(summary.blocked_count, 1);
+    assert_eq!(
+        summary.last_error_code,
+        Some(BackupErrorCode::ImmutableObjectConflict)
+    );
+}
+
+#[test]
+fn local_media_reaping_keeps_offsite_backup_work_append_only() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    let backup_set_id = BackupSetId::new();
+    client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            target: R2Target {
+                account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef")
+                    .expect("account ID"),
+                jurisdiction: R2Jurisdiction::Default,
+                bucket: R2BucketName::parse("dara-test").expect("bucket"),
+                prefix: R2Prefix::parse("dara/append-only-media").expect("prefix"),
+            },
+        })
+        .expect("backup configuration");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"eventually-reaped-local-image".to_vec(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("image");
+    let base = super::now_millis().expect("base time");
+    let orphaned_at = base
+        .saturating_add(super::media::MEDIA_LEASE_DURATION_MILLIS)
+        .saturating_add(1);
+    client
+        .maintain_media(orphaned_at, super::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("mark orphaned");
+    let reaped_at = orphaned_at
+        .saturating_add(super::MEDIA_ORPHAN_GRACE_MILLIS)
+        .saturating_add(1);
+    let report = client
+        .maintain_media(reaped_at, super::MEDIA_ORPHAN_GRACE_MILLIS)
+        .expect("reap local media");
+    assert_eq!(report.cleanup.retired_image_count, 1);
+    assert_eq!(report.cleanup.deleted_blob_count, 1);
+
+    let summary = client
+        .load_offsite_media_summary(backup_set_id)
+        .expect("off-site summary");
+    assert_eq!(summary.pending_count, 1);
+    assert_eq!(summary.verified_count, 0);
 }
 
 #[test]

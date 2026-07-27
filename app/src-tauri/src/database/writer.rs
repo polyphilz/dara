@@ -5,14 +5,17 @@ use super::embedding_index::{
     SearchMaintenanceOperation, SearchMaintenanceReport,
 };
 use super::snapshot::CreatedSnapshot;
+use crate::backup::domain::BackupSetId;
+
 use super::{
     AdoptLegacyZoomInput, CanonicalImage, CardContentDraft, CardContentListItem,
     DatabaseDiagnosticsSnapshot, DatabaseError, DeleteCardContentInput, HomeStats, ImageRecord,
     InstallSchedulerReplayInput, LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob,
-    OcrQueueRecovery, OffsiteBackupConfig, PrepareDesiredRetentionReplayInput, RecordGradeInput,
-    Result, ReviewContext, ReviewMutationResult, ReviewQueueSelection,
-    SaveOffsiteBackupConfigInput, SchedulerReplayInstallReport, SchedulerReplaySnapshot,
-    SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
+    OcrQueueRecovery, OffsiteBackupConfig, OffsiteMediaCandidate, OffsiteMediaReconciliationReport,
+    OffsiteMediaSummary, PrepareDesiredRetentionReplayInput, RecordGradeInput,
+    RecordOffsiteMediaAttemptInput, Result, ReviewContext, ReviewMutationResult,
+    ReviewQueueSelection, SaveOffsiteBackupConfigInput, SchedulerReplayInstallReport,
+    SchedulerReplaySnapshot, SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
     SetCardContentSuspendedInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
     UndoLastGradeInput, UpdateCardContentInput,
 };
@@ -129,6 +132,33 @@ pub(super) enum WriterMessage {
     SaveOffsiteBackupConfig {
         input: SaveOffsiteBackupConfigInput,
         reply: SyncSender<Result<OffsiteBackupConfig>>,
+    },
+    ReconcileOffsiteMedia {
+        now: i64,
+        reply: SyncSender<Result<OffsiteMediaReconciliationReport>>,
+    },
+    LoadNextOffsiteMedia {
+        backup_set_id: BackupSetId,
+        now: i64,
+        reply: SyncSender<Result<Option<OffsiteMediaCandidate>>>,
+    },
+    RecordOffsiteMediaAttempt {
+        input: RecordOffsiteMediaAttemptInput,
+        reply: SyncSender<Result<()>>,
+    },
+    LoadOffsiteMediaSummary {
+        backup_set_id: BackupSetId,
+        reply: SyncSender<Result<OffsiteMediaSummary>>,
+    },
+    ReleaseOffsiteMediaRetries {
+        backup_set_id: BackupSetId,
+        now: i64,
+        reply: SyncSender<Result<u64>>,
+    },
+    RequeueOffsiteMediaCredentialFailures {
+        backup_set_id: BackupSetId,
+        now: i64,
+        reply: SyncSender<Result<u64>>,
     },
     IngestImage {
         image: CanonicalImage,
@@ -520,6 +550,102 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::SaveOffsiteBackupConfig { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn reconcile_offsite_media(
+        &self,
+        now: i64,
+    ) -> Result<OffsiteMediaReconciliationReport> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::ReconcileOffsiteMedia { now, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_next_offsite_media(
+        &self,
+        backup_set_id: BackupSetId,
+        now: i64,
+    ) -> Result<Option<OffsiteMediaCandidate>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadNextOffsiteMedia {
+                backup_set_id,
+                now,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn record_offsite_media_attempt(
+        &self,
+        input: RecordOffsiteMediaAttemptInput,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::RecordOffsiteMediaAttempt { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_offsite_media_summary(
+        &self,
+        backup_set_id: BackupSetId,
+    ) -> Result<OffsiteMediaSummary> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadOffsiteMediaSummary {
+                backup_set_id,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn release_offsite_media_retries(
+        &self,
+        backup_set_id: BackupSetId,
+        now: i64,
+    ) -> Result<u64> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::ReleaseOffsiteMediaRetries {
+                backup_set_id,
+                now,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn requeue_offsite_media_credential_failures(
+        &self,
+        backup_set_id: BackupSetId,
+        now: i64,
+    ) -> Result<u64> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::RequeueOffsiteMediaCredentialFailures {
+                backup_set_id,
+                now,
+                reply,
+            })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()
