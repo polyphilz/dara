@@ -133,6 +133,9 @@ pub enum RecoveryError {
     #[error("snapshot manifest must be inside a Dara backups directory: {0}")]
     ManifestOutsideBackups(PathBuf),
 
+    #[error("Dara data directory does not exist or is not a directory: {0}")]
+    InvalidDataDirectory(PathBuf),
+
     #[error("restore target has an incomplete or non-regular database pair")]
     InvalidRestoreTarget,
 
@@ -182,6 +185,7 @@ pub fn run_from_args(
     };
     let output = match command {
         RecoveryCommand::List { data_directory } => {
+            require_existing_data_directory(&data_directory)?;
             let _lock = AppDataLock::acquire(&data_directory)?;
             let reports = list_snapshots(&DatabasePaths::new(data_directory))?;
             serde_json::to_string_pretty(&reports)?
@@ -201,6 +205,17 @@ pub fn run_from_args(
         } => serde_json::to_string_pretty(&restore_snapshot(&manifest, &data_directory)?)?,
     };
     Ok(Some(output))
+}
+
+fn require_existing_data_directory(path: &Path) -> Result<(), RecoveryError> {
+    match fs::metadata(path) {
+        Ok(metadata) if metadata.is_dir() => Ok(()),
+        Ok(_) => Err(RecoveryError::InvalidDataDirectory(path.to_owned())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Err(RecoveryError::InvalidDataDirectory(path.to_owned()))
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 
 fn parse_entrypoint(
@@ -878,6 +893,23 @@ mod tests {
 
         assert_eq!(reports.len(), 1);
         assert_eq!(reports[0].manifest, manifest_path);
+    }
+
+    #[test]
+    fn list_rejects_a_missing_data_directory_without_creating_it() {
+        let parent = tempfile::tempdir().expect("parent directory");
+        let missing = parent.path().join("mistyped-data-directory");
+
+        assert!(matches!(
+            run_from_args([
+                OsString::from("dara"),
+                OsString::from("recovery"),
+                OsString::from("list"),
+                missing.clone().into_os_string(),
+            ]),
+            Err(RecoveryError::InvalidDataDirectory(path)) if path == missing
+        ));
+        assert!(!missing.exists());
     }
 
     #[test]
