@@ -148,19 +148,34 @@ impl MediaBackupCoordinator {
     }
 
     pub(crate) fn shutdown(&self) {
-        if self.cancellation.shutdown.swap(true, Ordering::SeqCst) {
+        if !self.request_shutdown() {
             return;
         }
+        if let Some(worker) = self.take_worker() {
+            reap_worker_in_background(worker);
+        }
+    }
+
+    fn request_shutdown(&self) -> bool {
+        if self.cancellation.shutdown.swap(true, Ordering::SeqCst) {
+            return false;
+        }
         let _ = self.sender.send(WorkerSignal::Shutdown);
-        if let Some(thread) = self
-            .thread
+        true
+    }
+
+    fn take_worker(&self) -> Option<JoinHandle<()>> {
+        self.thread
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .take()
-        {
-            if thread.join().is_err() {
-                log::error!("off-site media worker panicked during shutdown");
-            }
+    }
+
+    #[cfg(test)]
+    fn shutdown_and_wait(&self) {
+        self.request_shutdown();
+        if let Some(worker) = self.take_worker() {
+            join_worker(worker);
         }
     }
 
@@ -174,6 +189,21 @@ impl MediaBackupCoordinator {
                 set_unavailable(&self.status, BackupErrorCode::WorkerUnavailable);
             }
         }
+    }
+}
+
+fn reap_worker_in_background(worker: JoinHandle<()>) {
+    if let Err(error) = thread::Builder::new()
+        .name("dara-offsite-media-reaper".into())
+        .spawn(move || join_worker(worker))
+    {
+        log::error!("could not start off-site media worker reaper: {error}");
+    }
+}
+
+fn join_worker(worker: JoinHandle<()>) {
+    if worker.join().is_err() {
+        log::error!("off-site media worker panicked during shutdown");
     }
 }
 
@@ -1168,7 +1198,7 @@ mod tests {
         wait_until(Duration::from_secs(2), || {
             coordinator.status().verified_count == 2
         });
-        coordinator.shutdown();
+        coordinator.shutdown_and_wait();
 
         let summary = client
             .load_offsite_media_summary(backup_set_id)
@@ -1250,18 +1280,56 @@ mod tests {
                 .pending_count,
             1
         );
-        coordinator.shutdown();
+        coordinator.shutdown_and_wait();
+    }
+
+    #[test]
+    fn shutdown_returns_without_waiting_for_the_worker() {
+        let (sender, _receiver) = mpsc::channel();
+        let cancellation = Arc::new(WorkCancellation::default());
+        let status = Arc::new(Mutex::new(MediaBackupStatus::default()));
+        let (release_sender, release_receiver) = mpsc::channel();
+        let (worker_finished_sender, worker_finished_receiver) = mpsc::channel();
+        let worker = thread::spawn(move || {
+            release_receiver.recv().expect("release worker");
+            worker_finished_sender.send(()).expect("report worker exit");
+        });
+        let coordinator = Arc::new(MediaBackupCoordinator {
+            sender,
+            cancellation,
+            status,
+            thread: Mutex::new(Some(worker)),
+        });
+        let shutdown_coordinator = Arc::clone(&coordinator);
+        let (shutdown_returned_sender, shutdown_returned_receiver) = mpsc::channel();
+        let shutdown_caller = thread::spawn(move || {
+            shutdown_coordinator.shutdown();
+            shutdown_returned_sender
+                .send(())
+                .expect("report shutdown return");
+        });
+
+        let returned_while_worker_was_blocked = shutdown_returned_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .is_ok();
+        release_sender.send(()).expect("release worker");
+        shutdown_caller.join().expect("shutdown caller");
+        worker_finished_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker exit");
+
+        assert!(
+            returned_while_worker_was_blocked,
+            "shutdown waited for the worker to exit"
+        );
     }
 
     #[test]
     #[ignore = "requires app/.env.local and the disposable dara-local R2 bucket"]
     fn live_r2_media_upload_is_verified_and_confined_to_a_disposable_prefix() {
-        let jurisdiction = match required_environment("DARA_LITESTREAM_R2_JURISDICTION").as_str() {
-            "DEFAULT" => R2Jurisdiction::Default,
-            "EU" => R2Jurisdiction::Eu,
-            "FEDRAMP" => R2Jurisdiction::Fedramp,
-            _ => panic!("invalid R2 jurisdiction"),
-        };
+        let jurisdiction =
+            R2Jurisdiction::from_db(&required_environment("DARA_LITESTREAM_R2_JURISDICTION"))
+                .expect("R2 jurisdiction");
         let root_prefix = R2Prefix::parse(required_environment("DARA_LITESTREAM_R2_PREFIX"))
             .expect("root prefix");
         let target = R2Target {
