@@ -13,7 +13,13 @@ use tauri::{Emitter, Manager, RunEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default();
+    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(
+        |app, _arguments, _cwd| {
+            if let Err(error) = windows::macos::show_main(app.clone()) {
+                log::error!("failed to show Dara for the secondary launch: {error}");
+            }
+        },
+    ));
     #[cfg(not(feature = "e2e"))]
     let builder = builder.plugin(logging::plugin());
     #[cfg(feature = "e2e")]
@@ -25,13 +31,6 @@ pub fn run() {
         .register_uri_scheme_protocol("dara-media", |context, request| {
             media::protocol_response(context.app_handle(), request)
         })
-        .plugin(tauri_plugin_single_instance::init(
-            |app, _arguments, _cwd| {
-                if let Err(error) = windows::macos::show_main(app.clone()) {
-                    log::error!("failed to show Dara for the secondary launch: {error}");
-                }
-            },
-        ))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
