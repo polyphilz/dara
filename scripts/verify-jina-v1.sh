@@ -9,6 +9,15 @@ LLAMA_EMBEDDING=${LLAMA_EMBEDDING:-llama-embedding}
 LLAMA_SERVER=${LLAMA_SERVER:-llama-server}
 LLAMA_DEVICE=${LLAMA_DEVICE:-none}
 LLAMA_GPU_LAYERS=${LLAMA_GPU_LAYERS:-0}
+LLAMA_REQUIRE_METAL=${LLAMA_REQUIRE_METAL:-0}
+
+case "$LLAMA_REQUIRE_METAL" in
+  0 | 1) ;;
+  *)
+    echo "LLAMA_REQUIRE_METAL must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
 
 for command in curl jq shasum "$LLAMA_EMBEDDING" "$LLAMA_SERVER"; do
   command -v "$command" >/dev/null 2>&1 || {
@@ -22,6 +31,22 @@ test -f "$MODEL_FILE" || {
   echo "download and verify it using the commands in README.md" >&2
   exit 1
 }
+
+if test "$LLAMA_REQUIRE_METAL" = 1; then
+  case "$LLAMA_DEVICE" in
+    MTL[0-9]*) ;;
+    *)
+      echo "Metal verification requires an explicit MTL device, found: $LLAMA_DEVICE" >&2
+      exit 1
+      ;;
+  esac
+
+  "$LLAMA_SERVER" --list-devices 2>&1 \
+    | grep -F "  $LLAMA_DEVICE:" >/dev/null || {
+      echo "Metal device is unavailable: $LLAMA_DEVICE" >&2
+      exit 1
+    }
+fi
 
 EXPECTED_FILE=$(jq -r '.config.modelFile' "$MANIFEST")
 EXPECTED_SIZE=$(jq -r '.config.modelFileSize' "$MANIFEST")
@@ -76,10 +101,46 @@ verify_output() {
   echo "$name fixture passed through $label"
 }
 
+verify_metal_offload() {
+  log=$1
+  label=$2
+
+  test "$LLAMA_REQUIRE_METAL" = 1 || return 0
+
+  grep -F "using device $LLAMA_DEVICE " "$log" >/dev/null || {
+    cat "$log" >&2
+    echo "$label did not select Metal device $LLAMA_DEVICE" >&2
+    exit 1
+  }
+
+  grep -F 'ggml_metal_init: found device:' "$log" >/dev/null || {
+    cat "$log" >&2
+    echo "$label did not initialize Metal" >&2
+    exit 1
+  }
+
+  offload_counts=$(
+    sed -n 's/.*offloaded \([0-9][0-9]*\)\/\([0-9][0-9]*\) layers to GPU.*/\1 \2/p' "$log" \
+      | tail -n 1
+  )
+  offloaded_layers=${offload_counts%% *}
+  total_layers=${offload_counts##* }
+  if test -z "$offload_counts" \
+    || test "$offloaded_layers" -le 0 \
+    || test "$offloaded_layers" -ne "$total_layers"; then
+    cat "$log" >&2
+    echo "$label did not offload every model layer to Metal" >&2
+    exit 1
+  fi
+
+  echo "$label verified Metal offload on $LLAMA_DEVICE"
+}
+
 run_fixture() {
   name=$1
   prompt=$(jq -r --arg name "$name" '.cases[] | select(.name == $name) | .input' "$FIXTURES")
   output="$TMP_DIR/$name.json"
+  log="$TMP_DIR/$name.log"
 
   set -- \
     --model "$MODEL_FILE" \
@@ -93,8 +154,15 @@ run_fixture() {
     --n-gpu-layers "$LLAMA_GPU_LAYERS" \
     --seed 0 \
     --prompt "$prompt"
-  "$LLAMA_EMBEDDING" "$@" >"$output"
+  if test "$LLAMA_REQUIRE_METAL" = 1; then
+    set -- "$@" --verbose
+  fi
+  if ! "$LLAMA_EMBEDDING" "$@" >"$output" 2>"$log"; then
+    cat "$log" >&2
+    exit 1
+  fi
 
+  verify_metal_offload "$log" "llama-embedding $name"
   verify_output "$name" "$output" llama-embedding
 }
 
@@ -117,6 +185,9 @@ set -- "$@" \
   --parallel 1 \
   --host 127.0.0.1 \
   --port "$PORT"
+if test "$LLAMA_REQUIRE_METAL" = 1; then
+  set -- "$@" --verbose
+fi
 "$LLAMA_SERVER" "$@" >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
@@ -143,6 +214,7 @@ jq -nc --arg input "$SERVER_PROMPT" '{input: $input}' \
       --data-binary @- \
       "$SERVER_URL/v1/embeddings" \
       >"$TMP_DIR/server-query.json"
+verify_metal_offload "$SERVER_LOG" llama-server
 verify_output query "$TMP_DIR/server-query.json" llama-server
 
 kill "$SERVER_PID" >/dev/null 2>&1 || true
