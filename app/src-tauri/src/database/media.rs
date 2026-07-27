@@ -9,7 +9,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use super::{DatabaseError, Result};
+use super::{offsite_media, DatabaseError, Result};
 
 pub const IMAGE_MIME_TYPE: &str = "image/webp";
 pub const SEARCH_OCR_SEPARATOR: &str = "\n\u{1f}\n";
@@ -295,6 +295,7 @@ pub(super) fn ingest_image(
         "DELETE FROM media_blob_reap_candidate WHERE sha256 = ?1",
         [&sha256],
     )?;
+    offsite_media::enqueue_ingested(&transaction, &sha256, image.bytes.len(), now)?;
     transaction.commit()?;
     Ok(record)
 }

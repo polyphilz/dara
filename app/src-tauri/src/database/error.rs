@@ -76,6 +76,12 @@ pub enum DatabaseError {
     #[error("stored off-site backup configuration is invalid: {0}")]
     InvalidOffsiteBackupConfig(String),
 
+    #[error("off-site media attempt is stale")]
+    StaleOffsiteMediaAttempt,
+
+    #[error("stored off-site media state is invalid: {0}")]
+    InvalidOffsiteMediaState(String),
+
     #[error("card content is stale: {0}")]
     StaleCardContent(String),
 

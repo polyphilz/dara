@@ -7,6 +7,7 @@ mod error;
 mod media;
 pub(crate) mod migrations;
 mod offsite_backup;
+mod offsite_media;
 mod paths;
 mod queue;
 #[cfg(test)]
@@ -20,6 +21,7 @@ mod writer;
 
 use std::{
     fs,
+    path::Path,
     sync::{
         mpsc::{self, Receiver},
         Mutex,
@@ -45,6 +47,10 @@ pub use media::{
     OcrQueueRecovery, MEDIA_ORPHAN_GRACE_MILLIS,
 };
 pub(crate) use offsite_backup::{OffsiteBackupConfig, SaveOffsiteBackupConfigInput};
+pub(crate) use offsite_media::{
+    OffsiteMediaAttemptOutcome, OffsiteMediaCandidate, OffsiteMediaReconciliationReport,
+    OffsiteMediaSummary, RecordOffsiteMediaAttemptInput,
+};
 pub use paths::DatabasePaths;
 pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
 pub(crate) use settings::validate_complete_bindings;
@@ -58,6 +64,10 @@ pub use writer::DatabaseClient;
 use writer::WriterMessage;
 
 use connection::{DatabaseKind, FileState};
+
+pub(crate) fn open_media_read_only(path: &Path) -> Result<rusqlite::Connection> {
+    connection::open_read_only(path, DatabaseKind::Media)
+}
 
 #[cfg(test)]
 const TEST_MEDIA_LEASE_ID: &str = "01980c8e-6c00-7000-8000-000000000901";
@@ -507,7 +517,48 @@ fn writer_loop(
                 let _ = reply.send(offsite_backup::load(&main));
             }
             WriterMessage::SaveOffsiteBackupConfig { input, reply } => {
-                let _ = reply.send(offsite_backup::save(&mut main, input));
+                let _ = reply.send(offsite_backup::save(&mut main, &media, input));
+            }
+            WriterMessage::ReconcileOffsiteMedia { now, reply } => {
+                let _ = reply.send(offsite_media::reconcile(&mut main, &media, now));
+            }
+            WriterMessage::LoadNextOffsiteMedia {
+                backup_set_id,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(offsite_media::load_next(&main, &backup_set_id, now));
+            }
+            WriterMessage::RecordOffsiteMediaAttempt { input, reply } => {
+                let _ = reply.send(offsite_media::record_attempt(&mut main, input));
+            }
+            WriterMessage::LoadOffsiteMediaSummary {
+                backup_set_id,
+                reply,
+            } => {
+                let _ = reply.send(offsite_media::summary(&main, &backup_set_id));
+            }
+            WriterMessage::ReleaseOffsiteMediaRetries {
+                backup_set_id,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(offsite_media::release_transient_retries(
+                    &mut main,
+                    &backup_set_id,
+                    now,
+                ));
+            }
+            WriterMessage::RequeueOffsiteMediaCredentialFailures {
+                backup_set_id,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(offsite_media::requeue_credential_failures(
+                    &mut main,
+                    &backup_set_id,
+                    now,
+                ));
             }
             WriterMessage::IngestImage {
                 image,

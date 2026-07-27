@@ -5,7 +5,7 @@ use crate::backup::domain::{
     ReplicaEpochId,
 };
 
-use super::{now_millis, DatabaseError, Result};
+use super::{now_millis, offsite_media, DatabaseError, Result};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OffsiteBackupConfig {
@@ -68,6 +68,7 @@ pub(super) fn load(connection: &Connection) -> Result<Option<OffsiteBackupConfig
 
 pub(super) fn save(
     connection: &mut Connection,
+    media: &Connection,
     input: SaveOffsiteBackupConfigInput,
 ) -> Result<OffsiteBackupConfig> {
     if input.expected_revision < 0 {
@@ -149,6 +150,7 @@ pub(super) fn save(
     let saved = load(&transaction)?.ok_or_else(|| {
         DatabaseError::InvalidOffsiteBackupConfig("saved configuration is unavailable".into())
     })?;
+    offsite_media::seed_for_backup_set(&transaction, media, &saved.backup_set_id, now)?;
     transaction.commit()?;
     Ok(saved)
 }

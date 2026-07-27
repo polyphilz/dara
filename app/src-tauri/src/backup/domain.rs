@@ -96,6 +96,18 @@ impl OffsiteMediaState {
     }
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum MediaBackupPhase {
+    Off,
+    WaitingForCredentials,
+    Idle,
+    Uploading,
+    RetryWait,
+    Blocked,
+    Unavailable,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CheckpointPhase {
     Prepared,
@@ -142,7 +154,10 @@ pub(crate) enum BackupErrorCode {
     PrefixIdentityMismatch,
     OwnerMismatch,
     ImmutableObjectConflict,
+    LocalMediaMissing,
+    LocalMediaTooLarge,
     LocalMediaHashMismatch,
+    WorkerUnavailable,
     LitestreamUnavailable,
     LitestreamFailed,
     FenceTimeout,
@@ -169,7 +184,10 @@ impl BackupErrorCode {
             Self::PrefixIdentityMismatch => "PREFIX_IDENTITY_MISMATCH",
             Self::OwnerMismatch => "OWNER_MISMATCH",
             Self::ImmutableObjectConflict => "IMMUTABLE_OBJECT_CONFLICT",
+            Self::LocalMediaMissing => "LOCAL_MEDIA_MISSING",
+            Self::LocalMediaTooLarge => "LOCAL_MEDIA_TOO_LARGE",
             Self::LocalMediaHashMismatch => "LOCAL_MEDIA_HASH_MISMATCH",
+            Self::WorkerUnavailable => "WORKER_UNAVAILABLE",
             Self::LitestreamUnavailable => "LITESTREAM_UNAVAILABLE",
             Self::LitestreamFailed => "LITESTREAM_FAILED",
             Self::FenceTimeout => "FENCE_TIMEOUT",
@@ -180,6 +198,51 @@ impl BackupErrorCode {
             Self::RemoteMediaCorrupt => "REMOTE_MEDIA_CORRUPT",
             Self::RestoreValidationFailed => "RESTORE_VALIDATION_FAILED",
         }
+    }
+
+    pub(crate) fn from_db(value: &str) -> Result<Self, BackupDomainError> {
+        match value {
+            "NETWORK_OFFLINE" => Ok(Self::NetworkOffline),
+            "NETWORK_TIMEOUT" => Ok(Self::NetworkTimeout),
+            "RATE_LIMITED" => Ok(Self::RateLimited),
+            "SERVICE_UNAVAILABLE" => Ok(Self::ServiceUnavailable),
+            "KEYCHAIN_CREDENTIAL_MISSING" => Ok(Self::KeychainCredentialMissing),
+            "KEYCHAIN_UNAVAILABLE" => Ok(Self::KeychainUnavailable),
+            "INVALID_TARGET" => Ok(Self::InvalidTarget),
+            "AUTHENTICATION_REJECTED" => Ok(Self::AuthenticationRejected),
+            "AUTHORIZATION_REJECTED" => Ok(Self::AuthorizationRejected),
+            "PREFIX_IDENTITY_MISMATCH" => Ok(Self::PrefixIdentityMismatch),
+            "OWNER_MISMATCH" => Ok(Self::OwnerMismatch),
+            "IMMUTABLE_OBJECT_CONFLICT" => Ok(Self::ImmutableObjectConflict),
+            "LOCAL_MEDIA_MISSING" => Ok(Self::LocalMediaMissing),
+            "LOCAL_MEDIA_TOO_LARGE" => Ok(Self::LocalMediaTooLarge),
+            "LOCAL_MEDIA_HASH_MISMATCH" => Ok(Self::LocalMediaHashMismatch),
+            "WORKER_UNAVAILABLE" => Ok(Self::WorkerUnavailable),
+            "LITESTREAM_UNAVAILABLE" => Ok(Self::LitestreamUnavailable),
+            "LITESTREAM_FAILED" => Ok(Self::LitestreamFailed),
+            "FENCE_TIMEOUT" => Ok(Self::FenceTimeout),
+            "REPLICA_BEHIND" => Ok(Self::ReplicaBehind),
+            "EXACT_TXID_UNAVAILABLE" => Ok(Self::ExactTxidUnavailable),
+            "MALFORMED_MANIFEST" => Ok(Self::MalformedManifest),
+            "REMOTE_MEDIA_MISSING" => Ok(Self::RemoteMediaMissing),
+            "REMOTE_MEDIA_CORRUPT" => Ok(Self::RemoteMediaCorrupt),
+            "RESTORE_VALIDATION_FAILED" => Ok(Self::RestoreValidationFailed),
+            _ => Err(BackupDomainError::InvalidStoredValue("backup error code")),
+        }
+    }
+
+    pub(crate) const fn blocks_all_media(self) -> bool {
+        matches!(
+            self,
+            Self::KeychainCredentialMissing
+                | Self::KeychainUnavailable
+                | Self::InvalidTarget
+                | Self::AuthenticationRejected
+                | Self::AuthorizationRejected
+                | Self::PrefixIdentityMismatch
+                | Self::OwnerMismatch
+                | Self::WorkerUnavailable
+        )
     }
 }
 
