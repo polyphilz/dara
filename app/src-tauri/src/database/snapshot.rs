@@ -22,6 +22,7 @@ use super::{
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const MANAGED_SNAPSHOT_PREFIX: &str = "snapshot";
+const MANAGED_SNAPSHOT_STEM_PREFIX: &str = "snapshot-";
 const RESTORE_SAFETY_SNAPSHOT_PREFIX: &str = "restore-safety";
 const RESTORE_SAFETY_SNAPSHOT_STEM_PREFIX: &str = "restore-safety-";
 
@@ -94,6 +95,77 @@ pub(crate) fn create_restore_safety_snapshot_pair(
         application_version,
         SnapshotRetention::RestoreSafety,
     )
+}
+
+pub(crate) fn protect_legacy_restore_safety_snapshot(
+    backups: &Path,
+    manifest_path: &Path,
+) -> Result<PathBuf> {
+    if manifest_path.parent() != Some(backups) {
+        return Err(DatabaseError::InvalidSnapshot(format!(
+            "restore safety snapshot must be inside {}",
+            backups.display()
+        )));
+    }
+    if is_restore_safety_snapshot(manifest_path) {
+        return Ok(manifest_path.to_owned());
+    }
+
+    let legacy_identifier = manifest_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .and_then(|stem| stem.strip_prefix(MANAGED_SNAPSHOT_STEM_PREFIX))
+        .filter(|identifier| !identifier.is_empty())
+        .filter(|_| manifest_path.extension().and_then(|value| value.to_str()) == Some("json"))
+        .ok_or_else(|| {
+            DatabaseError::InvalidSnapshot(format!(
+                "legacy restore safety manifest has an unexpected name: {}",
+                manifest_path.display()
+            ))
+        })?;
+    let protected_path = backups.join(format!(
+        "{RESTORE_SAFETY_SNAPSHOT_STEM_PREFIX}legacy-{legacy_identifier}.json"
+    ));
+
+    match (manifest_path.exists(), protected_path.exists()) {
+        (true, false) => {
+            load_and_validate_snapshot(manifest_path)?;
+            fs::rename(manifest_path, &protected_path)?;
+            sync_directory(backups)?;
+        }
+        (false, true) => {
+            load_and_validate_snapshot(&protected_path)?;
+        }
+        (true, true) => {
+            return Err(DatabaseError::InvalidSnapshot(format!(
+                "legacy and protected restore safety manifests both exist: {} and {}",
+                manifest_path.display(),
+                protected_path.display()
+            )));
+        }
+        (false, false) => {
+            return Err(DatabaseError::InvalidSnapshot(format!(
+                "restore safety manifest does not exist: {}",
+                manifest_path.display()
+            )));
+        }
+    }
+
+    Ok(protected_path)
+}
+
+pub(crate) fn remove_created_snapshot_pair(snapshot: &CreatedSnapshot) -> Result<()> {
+    let directory = snapshot.manifest_path.parent().ok_or_else(|| {
+        DatabaseError::InvalidSnapshot("manifest has no containing directory".into())
+    })?;
+    for file_name in [
+        &snapshot.manifest.main.file_name,
+        &snapshot.manifest.media.file_name,
+    ] {
+        remove_if_exists(&resolve_snapshot_file(directory, file_name)?)?;
+    }
+    remove_if_exists(&snapshot.manifest_path)?;
+    sync_directory(directory)
 }
 
 fn create_snapshot_pair_with_retention(
