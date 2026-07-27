@@ -28,6 +28,7 @@ const PROBE_SOCKET_TIMEOUT: Duration = Duration::from_secs(15);
 const PROBE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(35);
 const MAX_CLEANUP_PAGES: usize = 100;
 const MAX_RESTORE_OUTPUT_BYTES: usize = 64 * 1024;
+const PROBE_RUNTIME_DIRECTORY_NAME_BYTES: usize = 8;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProbeStage {
@@ -259,7 +260,7 @@ impl LitestreamRelationalProbe<'_> {
         }
         let parent = self.data_root.join("bp");
         fs::create_dir_all(&parent).map_err(|_| RelationalProbeErrorCode::Prepare)?;
-        let root = parent.join(&run_id.as_str()[..8]);
+        let root = parent.join(probe_runtime_directory_name(run_id));
         fs::create_dir(&root).map_err(|_| RelationalProbeErrorCode::Prepare)?;
         #[cfg(unix)]
         {
@@ -337,6 +338,13 @@ impl LitestreamRelationalProbe<'_> {
         }
         probe_result
     }
+}
+
+fn probe_runtime_directory_name(run_id: &ProbeRunId) -> &str {
+    // UUIDv7's leading characters are timestamp bits, while its final group is
+    // random. Keep the directory as short as before for the macOS socket limit.
+    let value = run_id.as_str();
+    &value[value.len() - PROBE_RUNTIME_DIRECTORY_NAME_BYTES..]
 }
 
 fn create_probe_database(path: &Path) -> Result<(), RelationalProbeErrorCode> {
@@ -571,14 +579,24 @@ mod tests {
     }
 
     #[test]
+    fn probe_runtime_directories_do_not_reuse_the_uuid_v7_timestamp_prefix() {
+        let first =
+            ProbeRunId::parse("01980c8e-6c00-7000-8000-000000000001").expect("first probe run ID");
+        let second =
+            ProbeRunId::parse("01980c8e-6c00-7000-8000-000000000002").expect("second probe run ID");
+        assert_eq!(&first.as_str()[..8], &second.as_str()[..8]);
+        assert_ne!(
+            probe_runtime_directory_name(&first),
+            probe_runtime_directory_name(&second)
+        );
+    }
+
+    #[test]
     #[ignore = "requires app/.env.local and the disposable dara-local R2 bucket"]
     fn live_r2_and_litestream_connection_probe_round_trips_and_cleans_up() {
-        let jurisdiction = match required_environment("DARA_LITESTREAM_R2_JURISDICTION").as_str() {
-            "DEFAULT" => R2Jurisdiction::Default,
-            "EU" => R2Jurisdiction::Eu,
-            "FEDRAMP" => R2Jurisdiction::Fedramp,
-            _ => panic!("invalid R2 jurisdiction"),
-        };
+        let jurisdiction =
+            R2Jurisdiction::from_db(&required_environment("DARA_LITESTREAM_R2_JURISDICTION"))
+                .expect("R2 jurisdiction");
         let target = R2Target {
             account_id: R2AccountId::parse(required_environment("DARA_LITESTREAM_R2_ACCOUNT_ID"))
                 .expect("R2 account ID"),
