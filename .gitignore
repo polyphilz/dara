@@ -20,6 +20,9 @@ models/
 *.gguf
 *.onnx
 
+# generated production sidecar staging
+app/src-tauri/resources/release/
+
 # local databases / backups
 app/.data/
 *.sqlite3

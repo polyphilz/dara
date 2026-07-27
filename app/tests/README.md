@@ -47,6 +47,8 @@ menus, and AppKit activation/focus behavior.
 | `pnpm test:native` | Serial feature-gated native suite with a new database below `.data/e2e/`. |
 | `pnpm test:bundle-safety` | Ordinary production build plus structured module-graph/output isolation assertions. |
 | `pnpm check` | Ordinary local frontend gate; excludes Linux-canonical visual comparisons. |
+| `pnpm release:build:app` | Build, stage, verify, bundle, ad-hoc sign, and inspect the pinned arm64 release app. |
+| `pnpm release:verify-app` | Recheck an already-built `.app` without rebuilding llama.cpp. |
 
 Canonical screenshots use
 `mcr.microsoft.com/playwright:v1.61.0-noble@sha256:57b65fdc9ceabe0ef613124c7bbe2babcf9362c4d85e382fe3b03604e84b428a`.
