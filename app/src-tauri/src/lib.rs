@@ -99,11 +99,18 @@ pub fn run() {
                 database.client(),
                 database.paths().media.clone(),
             );
+            let litestream = backup::litestream_runtime::LitestreamRuntimeService::start(
+                database.client(),
+                database.paths().root.clone(),
+                database.paths().main.clone(),
+                resource_dir.clone(),
+            );
             let startup_settings = database.client().load_settings()?;
             app.manage(database);
             app.manage(search);
             app.manage(ocr);
             app.manage(offsite_media);
+            app.manage(litestream);
 
             windows::setup(app, startup_settings)?;
             recovery::confirm_restored_launch(&database_paths)?;
@@ -121,9 +128,13 @@ pub fn run() {
             }
             app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
                 .connectivity_restored();
+            app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
+                .connectivity_restored();
         }
         if matches!(&event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
             app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
+                .shutdown();
+            app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
                 .shutdown();
             app.state::<search::SearchService>().shutdown();
         }
