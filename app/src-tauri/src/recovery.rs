@@ -83,6 +83,7 @@ struct RestoreIntent {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RestoreFailpoint {
+    SafetySnapshotCreated,
     IntentWritten,
     InstallingRecorded,
     RollbackMain,
@@ -367,54 +368,64 @@ fn prepare_restore(
     failpoint: Option<RestoreFailpoint>,
 ) -> Result<RestoreReport, RecoveryError> {
     let initial_files = inspect_restore_target(paths)?;
-    let safety_snapshot = if initial_files.is_empty() {
-        None
-    } else {
-        Some(
-            snapshot::create_restore_safety_snapshot_pair(paths, env!("CARGO_PKG_VERSION"))?
-                .manifest_path,
-        )
-    };
-    let rollback_files = inspect_restore_target(paths)?;
-
     let identifier = Uuid::now_v7();
     let stage_directory = format!(".dara-restore-stage-{identifier}");
     let rollback_directory = format!(".dara-restore-rollback-{identifier}");
     let stage = paths.root().join(&stage_directory);
     let rollback = paths.root().join(&rollback_directory);
-    fs::create_dir(&stage)?;
-    fs::create_dir(&rollback)?;
-    sync_directory(paths.root())?;
+    let mut safety_snapshot = None;
+    let preparation = (|| -> Result<RestoreIntent, RecoveryError> {
+        fs::create_dir(&stage)?;
+        fs::create_dir(&rollback)?;
+        sync_directory(paths.root())?;
 
-    let stage_main = stage.join(RestoreFile::Main.file_name());
-    let stage_media = stage.join(RestoreFile::Media.file_name());
-    if let Err(error) = (|| -> Result<(), RecoveryError> {
+        let stage_main = stage.join(RestoreFile::Main.file_name());
+        let stage_media = stage.join(RestoreFile::Media.file_name());
         copy_and_sync(&source.main_path, &stage_main)?;
         copy_and_sync(&source.media_path, &stage_media)?;
         snapshot::validate_snapshot_pair_files(&source.manifest, &stage_main, &stage_media)?;
         sync_directory(&stage)?;
         sync_directory(paths.root())?;
-        Ok(())
-    })() {
-        let _ = fs::remove_dir_all(&stage);
-        let _ = fs::remove_dir(&rollback);
-        return Err(error);
-    }
 
-    let mut intent = RestoreIntent {
-        format_version: RESTORE_INTENT_FORMAT_VERSION,
-        phase: RestorePhase::Staged,
-        source_manifest: source.manifest_path.clone(),
-        expected: source.manifest.clone(),
-        stage_directory,
-        rollback_directory,
-        rollback_files,
-        safety_snapshot: safety_snapshot.clone(),
+        safety_snapshot = if initial_files.is_empty() {
+            None
+        } else {
+            Some(snapshot::create_restore_safety_snapshot_pair(
+                paths,
+                env!("CARGO_PKG_VERSION"),
+            )?)
+        };
+        let rollback_files = inspect_restore_target(paths)?;
+        interrupt_if(RestoreFailpoint::SafetySnapshotCreated, failpoint)?;
+
+        let intent = RestoreIntent {
+            format_version: RESTORE_INTENT_FORMAT_VERSION,
+            phase: RestorePhase::Staged,
+            source_manifest: source.manifest_path.clone(),
+            expected: source.manifest.clone(),
+            stage_directory,
+            rollback_directory,
+            rollback_files,
+            safety_snapshot: safety_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.manifest_path.clone()),
+        };
+        write_restore_intent(paths, &intent)?;
+        Ok(intent)
+    })();
+    let mut intent = match preparation {
+        Ok(intent) => intent,
+        Err(error) => {
+            if !restore_intent_path(paths).exists() {
+                cleanup_uncommitted_restore(paths, &stage, &rollback, safety_snapshot.as_ref())?;
+            }
+            return Err(error);
+        }
     };
-    write_restore_intent(paths, &intent)?;
     interrupt_if(RestoreFailpoint::IntentWritten, failpoint)?;
     resume_restore(paths, &mut intent, failpoint)?;
 
+    let safety_snapshot = safety_snapshot.map(|snapshot| snapshot.manifest_path);
     Ok(RestoreReport {
         restored_from: source.manifest_path,
         data_directory: paths.root().to_owned(),
@@ -429,12 +440,29 @@ pub(crate) fn recover_interrupted_restore(paths: &DatabasePaths) -> Result<(), R
     let Some(mut intent) = load_restore_intent(paths)? else {
         return Ok(());
     };
+    protect_legacy_restore_safety_snapshot(paths, &mut intent)?;
     match intent.phase {
         RestorePhase::Staged | RestorePhase::Installing => resume_restore(paths, &mut intent, None),
         RestorePhase::InstalledValidated => Ok(()),
         RestorePhase::RollingBack => complete_rollback(paths, &mut intent),
         RestorePhase::Completed => cleanup_completed_restore(paths, &intent),
     }
+}
+
+fn protect_legacy_restore_safety_snapshot(
+    paths: &DatabasePaths,
+    intent: &mut RestoreIntent,
+) -> Result<(), RecoveryError> {
+    let Some(manifest_path) = intent.safety_snapshot.as_ref() else {
+        return Ok(());
+    };
+    let protected =
+        snapshot::protect_legacy_restore_safety_snapshot(&paths.backups, manifest_path)?;
+    if protected != *manifest_path {
+        intent.safety_snapshot = Some(protected);
+        write_restore_intent(paths, intent)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn confirm_restored_launch(paths: &DatabasePaths) -> Result<(), RecoveryError> {
@@ -616,6 +644,21 @@ fn cleanup_completed_restore(
     Ok(())
 }
 
+fn cleanup_uncommitted_restore(
+    paths: &DatabasePaths,
+    stage: &Path,
+    rollback: &Path,
+    safety_snapshot: Option<&snapshot::CreatedSnapshot>,
+) -> Result<(), RecoveryError> {
+    remove_directory_if_exists(stage)?;
+    remove_directory_if_exists(rollback)?;
+    remove_file_if_exists(&restore_intent_temp_path(paths))?;
+    if let Some(safety_snapshot) = safety_snapshot {
+        snapshot::remove_created_snapshot_pair(safety_snapshot)?;
+    }
+    sync_directory(paths.root())
+}
+
 fn inspect_restore_target(paths: &DatabasePaths) -> Result<Vec<RestoreFile>, RecoveryError> {
     let mut files = Vec::new();
     for restore_file in RestoreFile::ALL {
@@ -778,6 +821,14 @@ fn move_once(source: &Path, destination: &Path, operation: &str) -> Result<(), R
 
 fn remove_file_if_exists(path: &Path) -> Result<(), RecoveryError> {
     match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn remove_directory_if_exists(path: &Path) -> Result<(), RecoveryError> {
+    match fs::remove_dir_all(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error.into()),
@@ -1060,6 +1111,65 @@ mod tests {
     }
 
     #[test]
+    fn aborted_pre_journal_restore_removes_its_safety_snapshot() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+        drop(
+            database::initialize(
+                target_paths.clone(),
+                "target",
+                InitializationOptions {
+                    launch_snapshot: false,
+                },
+            )
+            .expect("target database"),
+        );
+        let main_before = fs::read(&target_paths.main).expect("target main before");
+        let media_before = fs::read(&target_paths.media).expect("target media before");
+
+        assert!(matches!(
+            prepare_restore(
+                &target_paths,
+                source,
+                Some(RestoreFailpoint::SafetySnapshotCreated)
+            ),
+            Err(RecoveryError::InjectedInterruption)
+        ));
+
+        assert_eq!(
+            fs::read(&target_paths.main).expect("target main after"),
+            main_before
+        );
+        assert_eq!(
+            fs::read(&target_paths.media).expect("target media after"),
+            media_before
+        );
+        assert!(!restore_intent_path(&target_paths).exists());
+        assert!(!restore_intent_temp_path(&target_paths).exists());
+        assert!(
+            fs::read_dir(&target_paths.backups)
+                .expect("backups directory")
+                .next()
+                .is_none(),
+            "aborted preparation left snapshot files behind"
+        );
+        assert!(
+            fs::read_dir(target_paths.root())
+                .expect("data directory")
+                .filter_map(Result::ok)
+                .all(|entry| {
+                    let name = entry.file_name();
+                    let name = name.to_string_lossy();
+                    !name.starts_with(".dara-restore-stage-")
+                        && !name.starts_with(".dara-restore-rollback-")
+                }),
+            "aborted preparation left staging directories behind"
+        );
+    }
+
+    #[test]
     fn safety_snapshot_survives_normal_snapshot_pruning() {
         let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
         let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
@@ -1088,6 +1198,47 @@ mod tests {
         snapshot::prune_snapshots(&target_paths.backups).expect("snapshot retention");
 
         snapshot::load_and_validate_snapshot(&safety_snapshot).expect("retained safety snapshot");
+    }
+
+    #[test]
+    fn active_legacy_safety_snapshot_is_promoted_before_pruning() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+        drop(
+            database::initialize(
+                target_paths.clone(),
+                "target",
+                InitializationOptions {
+                    launch_snapshot: false,
+                },
+            )
+            .expect("target database"),
+        );
+
+        let report = prepare_restore(&target_paths, source, None).expect("restore");
+        let protected = report.safety_snapshot.expect("safety snapshot");
+        let legacy = target_paths.backups.join("snapshot-legacy-safety.json");
+        fs::rename(&protected, &legacy).expect("legacy manifest name");
+        let mut intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("pending restore");
+        intent.safety_snapshot = Some(legacy.clone());
+        write_restore_intent(&target_paths, &intent).expect("legacy restore intent");
+
+        recover_interrupted_restore(&target_paths).expect("legacy safety promotion");
+        let intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("pending restore");
+        let promoted = intent.safety_snapshot.expect("promoted safety snapshot");
+        assert_ne!(promoted, legacy);
+        assert!(promoted.exists());
+        assert!(!legacy.exists());
+
+        snapshot::create_snapshot_pair(&target_paths, "launch").expect("launch snapshot");
+        snapshot::prune_snapshots(&target_paths.backups).expect("snapshot retention");
+        snapshot::load_and_validate_snapshot(&promoted).expect("retained legacy safety snapshot");
     }
 
     #[test]
