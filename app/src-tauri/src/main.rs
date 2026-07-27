@@ -2,5 +2,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    dara_lib::run();
+    match dara_lib::run_recovery_from_args(std::env::args_os()) {
+        Ok(Some(output)) => println!("{output}"),
+        Ok(None) => dara_lib::run(),
+        Err(error) => {
+            eprintln!("dara recovery failed: {error}");
+            std::process::exit(1);
+        }
+    }
 }

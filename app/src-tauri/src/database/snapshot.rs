@@ -45,6 +45,12 @@ pub struct CreatedSnapshot {
     pub manifest: SnapshotManifest,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct ValidatedSnapshot {
+    pub manifest_path: PathBuf,
+    pub manifest: SnapshotManifest,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FinalizedSnapshotSummary {
@@ -143,6 +149,10 @@ pub(super) fn create_snapshot_pair_from_connections(
 }
 
 pub fn load_and_validate_manifest(path: &Path) -> Result<SnapshotManifest> {
+    Ok(load_and_validate_snapshot(path)?.manifest)
+}
+
+pub(crate) fn load_and_validate_snapshot(path: &Path) -> Result<ValidatedSnapshot> {
     let file = File::open(path)?;
     let manifest: SnapshotManifest = serde_json::from_reader(BufReader::new(file))?;
     if manifest.format_version != 1 {
@@ -156,6 +166,7 @@ pub fn load_and_validate_manifest(path: &Path) -> Result<SnapshotManifest> {
             "manifest was not finalized after relationship validation".into(),
         ));
     }
+    timestamp(manifest.created_at)?;
 
     let directory = path.parent().ok_or_else(|| {
         DatabaseError::InvalidSnapshot("manifest has no containing directory".into())
@@ -178,7 +189,10 @@ pub fn load_and_validate_manifest(path: &Path) -> Result<SnapshotManifest> {
             "migration heads are {heads:?}, manifest records {recorded:?}"
         )));
     }
-    Ok(manifest)
+    Ok(ValidatedSnapshot {
+        manifest_path: path.to_owned(),
+        manifest,
+    })
 }
 
 pub fn restore_snapshot_pair(manifest_path: &Path, target: &DatabasePaths) -> Result<()> {
@@ -378,6 +392,13 @@ fn remove_if_exists(path: &Path) -> Result<()> {
 }
 
 fn validate_recorded_hash(path: &Path, expected: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.file_type().is_file() {
+        return Err(DatabaseError::InvalidSnapshot(format!(
+            "{} is not a regular snapshot file",
+            path.display()
+        )));
+    }
     let actual = hash_file(path)?;
     if actual != expected {
         return Err(DatabaseError::InvalidSnapshot(format!(
