@@ -14,6 +14,7 @@ target/
 # secrets
 .env
 .env.*
+!.env.example
 
 # local model weights (llama.cpp GGUF, ONNX)
 models/

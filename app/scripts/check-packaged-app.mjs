@@ -13,6 +13,7 @@ const appPath = resolve(
 const resources = resolve(appPath, 'Contents/Resources')
 const appBinary = resolve(appPath, 'Contents/MacOS/dara')
 const sidecar = resolve(resources, 'bin/llama-server')
+const litestream = resolve(resources, 'bin/litestream')
 const releaseManifestPath = resolve(resources, 'release/llama-server.json')
 const releaseManifest = JSON.parse(readFileSync(releaseManifestPath, 'utf8'))
 const pin = JSON.parse(
@@ -21,13 +22,27 @@ const pin = JSON.parse(
     'utf8',
   ),
 )
+const litestreamManifest = JSON.parse(
+  readFileSync(resolve(resources, 'release/litestream.json'), 'utf8'),
+)
+const litestreamPin = JSON.parse(
+  readFileSync(
+    'src-tauri/resources/sidecars/litestream-v1.json',
+    'utf8',
+  ),
+)
 
 assert(lstatSync(appPath).isDirectory(), 'Dara.app is not a directory')
 assert(lstatSync(appBinary).isFile(), 'Dara executable is missing')
 assert(lstatSync(sidecar).isFile(), 'bundled llama-server is missing')
+assert(lstatSync(litestream).isFile(), 'bundled Litestream is missing')
 assert(
   (lstatSync(sidecar).mode & 0o111) !== 0,
   'bundled llama-server is not executable',
+)
+assert(
+  (lstatSync(litestream).mode & 0o111) !== 0,
+  'bundled Litestream is not executable',
 )
 
 assertEqual(
@@ -46,6 +61,26 @@ assertEqual(
   'bundled llama-server size',
 )
 assertEqual(
+  litestreamManifest,
+  litestreamPin,
+  'bundled Litestream release manifest',
+)
+assertEqual(
+  sha256File(litestream),
+  litestreamPin.binary.sha256,
+  'bundled Litestream SHA-256',
+)
+assertEqual(
+  sha256File('src-tauri/resources/release/bin/litestream'),
+  litestreamPin.binary.sha256,
+  'staged Litestream SHA-256',
+)
+assertEqual(
+  lstatSync(litestream).size,
+  litestreamPin.binary.size,
+  'bundled Litestream size',
+)
+assertEqual(
   sha256File(resolve(resources, 'embedding-indexes/jina-v1.json')),
   releaseManifest.verification.embeddingManifest.sha256,
   'bundled embedding manifest SHA-256',
@@ -60,8 +95,20 @@ assertEqual(
   releaseManifest.licenseNotices[0].sha256,
   'bundled license SHA-256',
 )
+assertEqual(
+  sha256File(
+    resolve(resources, litestreamPin.licenseNotices[0].bundlePath),
+  ),
+  litestreamPin.licenseNotices[0].sha256,
+  'bundled Litestream license SHA-256',
+)
+assertEqual(
+  readFileSync(resolve(resources, litestreamPin.resourceDestinations.notice), 'utf8'),
+  readFileSync('src-tauri/resources/sidecars/litestream-NOTICE', 'utf8'),
+  'bundled Litestream notice',
+)
 
-for (const binary of [appBinary, sidecar]) {
+for (const binary of [appBinary, sidecar, litestream]) {
   const description = run('file', ['-b', binary])
   assert(
     description.includes('Mach-O 64-bit executable arm64'),
@@ -69,23 +116,32 @@ for (const binary of [appBinary, sidecar]) {
   )
 }
 
-const dependencies = run('otool', ['-L', sidecar])
-  .split('\n')
-  .slice(1)
-  .map((line) => line.trim())
-  .filter(Boolean)
-const nonSystemDependency = dependencies.find(
-  (dependency) =>
-    !dependency.startsWith('/System/Library/') &&
-    !dependency.startsWith('/usr/lib/'),
-)
-assert(
-  !nonSystemDependency,
-  `bundled llama-server has a non-system dependency: ${nonSystemDependency}`,
+for (const binary of [sidecar, litestream]) {
+  const dependencies = run('otool', ['-L', binary])
+    .split('\n')
+    .slice(1)
+    .map((line) => line.trim())
+    .filter(Boolean)
+  const nonSystemDependency = dependencies.find(
+    (dependency) =>
+      !dependency.startsWith('/System/Library/') &&
+      !dependency.startsWith('/usr/lib/'),
+  )
+  assert(
+    !nonSystemDependency,
+    `bundled ${basename(binary)} has a non-system dependency: ${nonSystemDependency}`,
+  )
+}
+
+assertEqual(
+  run(litestream, litestreamPin.binary.versionArguments),
+  litestreamPin.binary.versionOutput,
+  'bundled Litestream version output',
 )
 
 run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath])
 run('codesign', ['--verify', '--strict', '--verbose=2', sidecar])
+run('codesign', ['--verify', '--strict', '--verbose=2', litestream])
 const signature = run('codesign', ['-dv', '--verbose=4', appPath])
 assert(signature.includes('Identifier=com.rohan.dara'), 'unexpected app identifier')
 assert(signature.includes('Signature=adhoc'), 'app is not ad-hoc signed')
@@ -98,6 +154,15 @@ assertEqual(
   ]),
   pin.target.minimumSystemVersion,
   'packaged minimum macOS version',
+)
+assertEqual(
+  run('/usr/libexec/PlistBuddy', [
+    '-c',
+    'Print :LSMinimumSystemVersion',
+    resolve(appPath, 'Contents/Info.plist'),
+  ]),
+  litestreamPin.target.minimumSystemVersion,
+  'packaged Litestream minimum macOS version',
 )
 
 const quarantine = spawnSync(
@@ -112,12 +177,16 @@ assert(
 
 const allowedResourceFiles = [
   'bin/llama-server',
+  'bin/litestream',
   'embedding-indexes/jina-v1-golden.json',
   'embedding-indexes/jina-v1.json',
   'icon.icns',
   'licenses/llama.cpp-LICENSE',
+  'licenses/litestream-LICENSE',
+  'licenses/litestream-NOTICE',
   'release/llama-server.json',
-]
+  'release/litestream.json',
+].sort()
 const packagedResourceFiles = listFiles(resources)
   .map((path) => path.slice(resources.length + 1).replaceAll('\\', '/'))
   .sort()
@@ -138,7 +207,7 @@ for (const path of packagedResourceFiles) {
 }
 
 console.info(
-  `Packaged app passed: ${appPath}, ad-hoc signed arm64 macOS ${pin.target.minimumSystemVersion}+, pinned llama-server ${releaseManifest.binary.sha256}.`,
+  `Packaged app passed: ${appPath}, ad-hoc signed arm64 macOS ${pin.target.minimumSystemVersion}+, pinned llama-server ${releaseManifest.binary.sha256}, pinned Litestream ${litestreamPin.binary.sha256}.`,
 )
 
 function sha256File(path) {

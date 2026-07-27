@@ -1,4 +1,6 @@
 mod app_lock;
+#[allow(dead_code)]
+mod backup;
 mod database;
 mod diagnostics;
 mod external;
