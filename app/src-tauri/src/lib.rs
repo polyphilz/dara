@@ -77,9 +77,11 @@ pub fn run() {
         ])
         .setup(|app| {
             let data_root = app.state::<app_lock::AppDataLock>().data_root().to_owned();
+            let database_paths = database::DatabasePaths::new(data_root);
+            recovery::recover_interrupted_restore(&database_paths)?;
             database::register_sqlite_vec()?;
             let database = database::initialize(
-                database::DatabasePaths::new(data_root),
+                database_paths.clone(),
                 env!("CARGO_PKG_VERSION"),
                 database::InitializationOptions::default(),
             )?;
@@ -97,6 +99,7 @@ pub fn run() {
             app.manage(ocr);
 
             windows::setup(app, startup_settings)?;
+            recovery::confirm_restored_launch(&database_paths)?;
             Ok(())
         })
         .on_window_event(windows::handle_window_event)

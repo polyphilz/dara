@@ -49,6 +49,8 @@ pub struct CreatedSnapshot {
 pub(crate) struct ValidatedSnapshot {
     pub manifest_path: PathBuf,
     pub manifest: SnapshotManifest,
+    pub main_path: PathBuf,
+    pub media_path: PathBuf,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -173,12 +175,25 @@ pub(crate) fn load_and_validate_snapshot(path: &Path) -> Result<ValidatedSnapsho
     })?;
     let main_path = resolve_snapshot_file(directory, &manifest.main.file_name)?;
     let media_path = resolve_snapshot_file(directory, &manifest.media.file_name)?;
-    validate_recorded_hash(&main_path, &manifest.main.sha256)?;
-    validate_recorded_hash(&media_path, &manifest.media.sha256)?;
+    validate_snapshot_pair_files(&manifest, &main_path, &media_path)?;
+    Ok(ValidatedSnapshot {
+        manifest_path: path.to_owned(),
+        manifest,
+        main_path,
+        media_path,
+    })
+}
 
-    let mut main = connection::open_read_only(&main_path, DatabaseKind::Main)?;
-    let mut media = connection::open_read_only(&media_path, DatabaseKind::Media)?;
-    validation::validate_snapshot_pair(&mut main, &mut media, &main_path, &media_path)?;
+pub(crate) fn validate_snapshot_pair_files(
+    manifest: &SnapshotManifest,
+    main_path: &Path,
+    media_path: &Path,
+) -> Result<()> {
+    validate_recorded_hash(main_path, &manifest.main.sha256)?;
+    validate_recorded_hash(media_path, &manifest.media.sha256)?;
+    let mut main = connection::open_read_only(main_path, DatabaseKind::Main)?;
+    let mut media = connection::open_read_only(media_path, DatabaseKind::Media)?;
+    validation::validate_snapshot_pair(&mut main, &mut media, main_path, media_path)?;
     let heads = migrations::current_heads(&mut main, &mut media)?;
     let recorded = MigrationHeads {
         main: manifest.main.migration_head,
@@ -189,10 +204,7 @@ pub(crate) fn load_and_validate_snapshot(path: &Path) -> Result<ValidatedSnapsho
             "migration heads are {heads:?}, manifest records {recorded:?}"
         )));
     }
-    Ok(ValidatedSnapshot {
-        manifest_path: path.to_owned(),
-        manifest,
-    })
+    Ok(())
 }
 
 pub fn restore_snapshot_pair(manifest_path: &Path, target: &DatabasePaths) -> Result<()> {
@@ -391,7 +403,7 @@ fn remove_if_exists(path: &Path) -> Result<()> {
     }
 }
 
-fn validate_recorded_hash(path: &Path, expected: &str) -> Result<()> {
+pub(crate) fn validate_recorded_hash(path: &Path, expected: &str) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.file_type().is_file() {
         return Err(DatabaseError::InvalidSnapshot(format!(
