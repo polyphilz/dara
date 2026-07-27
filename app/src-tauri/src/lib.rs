@@ -1,15 +1,17 @@
+mod app_lock;
 mod database;
 mod diagnostics;
 mod external;
 #[cfg(not(feature = "e2e"))]
 mod logging;
 mod media;
+mod recovery;
 mod search;
 mod windows;
 
-use std::path::PathBuf;
-
 use tauri::{Emitter, Manager, RunEvent};
+
+pub use recovery::run_from_args as run_recovery_from_args;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -20,6 +22,7 @@ pub fn run() {
             }
         },
     ));
+    let builder = builder.plugin(app_lock::plugin());
     #[cfg(not(feature = "e2e"))]
     let builder = builder.plugin(logging::plugin());
     #[cfg(feature = "e2e")]
@@ -73,11 +76,8 @@ pub fn run() {
             windows::macos::show_quick_add,
         ])
         .setup(|app| {
+            let data_root = app.state::<app_lock::AppDataLock>().data_root().to_owned();
             database::register_sqlite_vec()?;
-            let data_root = std::env::var_os("DARA_DATA_DIR")
-                .map(PathBuf::from)
-                .map(Ok)
-                .unwrap_or_else(|| app.path().data_dir().map(|path| path.join("dara")))?;
             let database = database::initialize(
                 database::DatabasePaths::new(data_root),
                 env!("CARGO_PKG_VERSION"),

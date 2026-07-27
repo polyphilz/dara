@@ -5,7 +5,7 @@ mod domain;
 pub(crate) mod embedding_index;
 mod error;
 mod media;
-mod migrations;
+pub(crate) mod migrations;
 mod paths;
 mod queue;
 mod settings;
