@@ -27,9 +27,15 @@ for (const required of ['tauri-plugin-wdio v', 'tauri-plugin-wdio-webdriver v'])
 
 const requiredResources = {
   'resources/release/bin/llama-server': 'bin/llama-server',
+  'resources/release/bin/litestream': 'bin/litestream',
   'resources/release/llama-server.json': 'release/llama-server.json',
+  'resources/release/litestream.json': 'release/litestream.json',
   'resources/release/licenses/llama.cpp-LICENSE':
     'licenses/llama.cpp-LICENSE',
+  'resources/release/licenses/litestream-LICENSE':
+    'licenses/litestream-LICENSE',
+  'resources/release/licenses/litestream-NOTICE':
+    'licenses/litestream-NOTICE',
   'resources/embedding-indexes/jina-v1.json':
     'embedding-indexes/jina-v1.json',
   'resources/embedding-indexes/jina-v1-golden.json':

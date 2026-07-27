@@ -16,11 +16,12 @@ process from another Tauri repository.
   upload, or publish Dara.
 - The GGUF model is not bundled. The installed app downloads and verifies it
   beneath Dara's production data directory when semantic search needs it.
-- The pinned `llama-server` binary, embedding manifests, golden fixtures, and
-  llama.cpp license are bundled and verified by the release build.
+- The pinned `llama-server` and Litestream binaries, embedding manifests,
+  golden fixtures, licenses, and Litestream notice are bundled and verified by
+  the release build.
 
 Do not substitute `pnpm tauri build` for the release command. The ordinary
-Tauri configuration does not stage and verify the production sidecar.
+Tauri configuration does not stage and verify the production sidecars.
 
 ## Production and development data
 
@@ -147,11 +148,13 @@ The command:
 1. fetches the pinned llama.cpp revision into a temporary directory;
 2. builds arm64 `llama-server` with embedded Metal shaders;
 3. checks the pinned model and golden fixtures through CPU and Metal;
-4. rejects non-system dynamic sidecar dependencies;
-5. stages the sidecar, manifest, fixtures, and license;
-6. builds Dara with `src-tauri/tauri.release.conf.json`;
-7. ad-hoc signs the app and nested sidecar; and
-8. verifies architecture, minimum macOS version, hashes, executable bits,
+4. downloads the exact Litestream v0.5.15 arm64 release asset and verifies its
+   official archive digest plus the pinned extracted-binary digest;
+5. rejects non-system dynamic sidecar dependencies;
+6. stages both sidecars, manifests, fixtures, licenses, and notice;
+7. builds Dara with `src-tauri/tauri.release.conf.json`;
+8. ad-hoc signs the app and nested sidecars; and
+9. verifies architecture, minimum macOS version, hashes, executable bits,
    bundled resources, and production/test isolation.
 
 The verified artifact is:
@@ -184,7 +187,8 @@ rollback copy of the application bundle; it does not contain user data.
 
 ## 6. Install over the current production app
 
-1. Quit Dara with `Cmd+Q`. Confirm no Dara or `llama-server` process remains.
+1. Quit Dara with `Cmd+Q`. Confirm no Dara, `llama-server`, or Litestream
+   process remains.
 2. Reveal
    `app/src-tauri/target/release/bundle/macos/Dara.app` in Finder.
 3. Drag it into `/Applications`.
@@ -192,8 +196,9 @@ rollback copy of the application bundle; it does not contain user data.
 5. Launch `/Applications/Dara.app` from Finder, Spotlight, or Raycast.
 
 Do not launch the installed app with `DARA_DATA_DIR`,
-`DARA_LLAMA_SERVER_PATH`, or `DARA_EMBEDDING_MODEL_PATH` overrides. Those are
-development and acceptance mechanisms, not production configuration.
+`DARA_LLAMA_SERVER_PATH`, `DARA_EMBEDDING_MODEL_PATH`, or
+`DARA_LITESTREAM_PATH` overrides. Those are development and acceptance
+mechanisms, not production configuration.
 
 On an upgrade, Dara reuses the existing production data directory. If database
 migrations are pending, startup creates and validates a paired pre-migration
@@ -212,7 +217,7 @@ Use the app from `/Applications`, not the copy under `target/`.
   this is the first production run.
 - Change one harmless persisted setting, quit with `Cmd+Q`, reopen, and confirm
   both data and the setting remain.
-- After quitting, confirm no `llama-server` process remains.
+- After quitting, confirm no `llama-server` or Litestream process remains.
 
 If the smoke check fails, do not tag the commit. Reinstall the previously
 archived app while leaving the production data directory untouched. If the
@@ -265,7 +270,7 @@ provide the normal signed-and-notarized installation experience.
 
 Before treating Dara as a public binary release, deliberately add:
 
-- Developer ID signing for Dara and the nested `llama-server`;
+- Developer ID signing for Dara and every nested executable;
 - hardened-runtime entitlement validation;
 - notarization and stapling;
 - a DMG or another documented installation artifact;
