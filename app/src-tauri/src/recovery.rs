@@ -440,7 +440,7 @@ pub(crate) fn recover_interrupted_restore(paths: &DatabasePaths) -> Result<(), R
     let Some(mut intent) = load_restore_intent(paths)? else {
         return Ok(());
     };
-    protect_legacy_restore_safety_snapshot(paths, &mut intent)?;
+    try_protect_legacy_restore_safety_snapshot(paths, &mut intent);
     match intent.phase {
         RestorePhase::Staged | RestorePhase::Installing => resume_restore(paths, &mut intent, None),
         RestorePhase::InstalledValidated => Ok(()),
@@ -449,20 +449,29 @@ pub(crate) fn recover_interrupted_restore(paths: &DatabasePaths) -> Result<(), R
     }
 }
 
-fn protect_legacy_restore_safety_snapshot(
-    paths: &DatabasePaths,
-    intent: &mut RestoreIntent,
-) -> Result<(), RecoveryError> {
+fn try_protect_legacy_restore_safety_snapshot(paths: &DatabasePaths, intent: &mut RestoreIntent) {
     let Some(manifest_path) = intent.safety_snapshot.as_ref() else {
-        return Ok(());
+        return;
     };
-    let protected =
-        snapshot::protect_legacy_restore_safety_snapshot(&paths.backups, manifest_path)?;
-    if protected != *manifest_path {
-        intent.safety_snapshot = Some(protected);
-        write_restore_intent(paths, intent)?;
+    match snapshot::protect_legacy_restore_safety_snapshot(&paths.backups, manifest_path) {
+        Ok(protected) if protected != *manifest_path => {
+            intent.safety_snapshot = Some(protected);
+            if let Err(error) = write_restore_intent(paths, intent) {
+                log::warn!(
+                    "could not update the restore journal after protecting its legacy safety \
+                     snapshot; continuing phase recovery: {error}"
+                );
+            }
+        }
+        Ok(_) => {}
+        Err(error) => {
+            log::warn!(
+                "could not protect the optional legacy restore safety snapshot; continuing phase \
+                 recovery: {error}"
+            );
+            intent.safety_snapshot = None;
+        }
     }
-    Ok(())
 }
 
 pub(crate) fn confirm_restored_launch(paths: &DatabasePaths) -> Result<(), RecoveryError> {
@@ -865,6 +874,12 @@ mod tests {
 
     const TEST_MEDIA_LEASE_ID: &str = "01980c8e-6c00-7000-8000-000000000901";
 
+    #[derive(Clone, Copy)]
+    enum LegacySafetyFixture {
+        Missing,
+        Corrupt,
+    }
+
     fn snapshot_fixture() -> (tempfile::TempDir, DatabasePaths, PathBuf) {
         let directory = tempfile::tempdir().expect("temporary directory");
         let paths = DatabasePaths::new(directory.path());
@@ -880,6 +895,32 @@ mod tests {
         );
         let created = snapshot::create_snapshot_pair(&paths, "test").expect("snapshot");
         (directory, paths, created.manifest_path)
+    }
+
+    fn replace_safety_snapshot_with_legacy_fixture(
+        paths: &DatabasePaths,
+        intent: &mut RestoreIntent,
+        fixture: LegacySafetyFixture,
+    ) {
+        let protected = intent
+            .safety_snapshot
+            .as_ref()
+            .expect("protected safety snapshot");
+        let legacy = paths.backups.join(match fixture {
+            LegacySafetyFixture::Missing => "snapshot-missing-safety.json",
+            LegacySafetyFixture::Corrupt => "snapshot-corrupt-safety.json",
+        });
+        fs::rename(protected, &legacy).expect("legacy safety manifest");
+        match fixture {
+            LegacySafetyFixture::Missing => {
+                fs::remove_file(&legacy).expect("missing legacy safety manifest")
+            }
+            LegacySafetyFixture::Corrupt => {
+                fs::write(&legacy, b"not a snapshot manifest").expect("corrupt safety manifest")
+            }
+        }
+        intent.safety_snapshot = Some(legacy);
+        write_restore_intent(paths, intent).expect("legacy restore intent");
     }
 
     #[test]
@@ -1239,6 +1280,171 @@ mod tests {
         snapshot::create_snapshot_pair(&target_paths, "launch").expect("launch snapshot");
         snapshot::prune_snapshots(&target_paths.backups).expect("snapshot retention");
         snapshot::load_and_validate_snapshot(&promoted).expect("retained legacy safety snapshot");
+    }
+
+    #[test]
+    fn missing_legacy_safety_snapshot_does_not_block_staged_restore() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+        drop(
+            database::initialize(
+                target_paths.clone(),
+                "target",
+                InitializationOptions {
+                    launch_snapshot: false,
+                },
+            )
+            .expect("target database"),
+        );
+
+        assert!(matches!(
+            prepare_restore(
+                &target_paths,
+                source.clone(),
+                Some(RestoreFailpoint::IntentWritten)
+            ),
+            Err(RecoveryError::InjectedInterruption)
+        ));
+        let mut intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("pending restore");
+        assert_eq!(intent.phase, RestorePhase::Staged);
+        replace_safety_snapshot_with_legacy_fixture(
+            &target_paths,
+            &mut intent,
+            LegacySafetyFixture::Missing,
+        );
+
+        recover_interrupted_restore(&target_paths).expect("resumed restore");
+
+        snapshot::validate_snapshot_pair_files(
+            &source.manifest,
+            &target_paths.main,
+            &target_paths.media,
+        )
+        .expect("restored pair");
+        let intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("pending confirmation");
+        assert_eq!(intent.phase, RestorePhase::InstalledValidated);
+        assert!(intent.safety_snapshot.is_none());
+    }
+
+    #[test]
+    fn missing_legacy_safety_snapshot_does_not_block_launch_confirmation() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+        drop(
+            database::initialize(
+                target_paths.clone(),
+                "target",
+                InitializationOptions {
+                    launch_snapshot: false,
+                },
+            )
+            .expect("target database"),
+        );
+
+        prepare_restore(&target_paths, source, None).expect("restore");
+        let mut intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("pending confirmation");
+        assert_eq!(intent.phase, RestorePhase::InstalledValidated);
+        replace_safety_snapshot_with_legacy_fixture(
+            &target_paths,
+            &mut intent,
+            LegacySafetyFixture::Missing,
+        );
+
+        recover_interrupted_restore(&target_paths).expect("restored launch recovery");
+        confirm_restored_launch(&target_paths).expect("restore confirmation");
+
+        assert!(!restore_intent_path(&target_paths).exists());
+    }
+
+    #[test]
+    fn missing_legacy_safety_snapshot_does_not_block_completed_cleanup() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+        drop(
+            database::initialize(
+                target_paths.clone(),
+                "target",
+                InitializationOptions {
+                    launch_snapshot: false,
+                },
+            )
+            .expect("target database"),
+        );
+
+        prepare_restore(&target_paths, source, None).expect("restore");
+        let mut intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("pending confirmation");
+        intent.phase = RestorePhase::Completed;
+        let stage = restore_subdirectory(&target_paths, &intent.stage_directory).expect("stage");
+        replace_safety_snapshot_with_legacy_fixture(
+            &target_paths,
+            &mut intent,
+            LegacySafetyFixture::Missing,
+        );
+
+        recover_interrupted_restore(&target_paths).expect("completed restore cleanup");
+
+        assert!(!restore_intent_path(&target_paths).exists());
+        assert!(!stage.exists());
+    }
+
+    #[test]
+    fn corrupt_legacy_safety_snapshot_does_not_block_rollback() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+        drop(
+            database::initialize(
+                target_paths.clone(),
+                "target",
+                InitializationOptions {
+                    launch_snapshot: false,
+                },
+            )
+            .expect("target database"),
+        );
+        let main_before = fs::read(&target_paths.main).expect("target main before");
+        let media_before = fs::read(&target_paths.media).expect("target media before");
+
+        assert!(matches!(
+            prepare_restore(&target_paths, source, Some(RestoreFailpoint::MainInstalled)),
+            Err(RecoveryError::InjectedInterruption)
+        ));
+        let mut intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("interrupted restore");
+        intent.phase = RestorePhase::RollingBack;
+        replace_safety_snapshot_with_legacy_fixture(
+            &target_paths,
+            &mut intent,
+            LegacySafetyFixture::Corrupt,
+        );
+
+        recover_interrupted_restore(&target_paths).expect("completed rollback");
+
+        assert_eq!(
+            fs::read(&target_paths.main).expect("target main after"),
+            main_before
+        );
+        assert_eq!(
+            fs::read(&target_paths.media).expect("target media after"),
+            media_before
+        );
+        assert!(!restore_intent_path(&target_paths).exists());
     }
 
     #[test]
