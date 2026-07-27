@@ -70,6 +70,12 @@ pub enum DatabaseError {
     #[error("stored settings are invalid: {0}")]
     InvalidStoredSettings(String),
 
+    #[error("off-site backup configuration is stale")]
+    StaleOffsiteBackupConfig,
+
+    #[error("stored off-site backup configuration is invalid: {0}")]
+    InvalidOffsiteBackupConfig(String),
+
     #[error("card content is stale: {0}")]
     StaleCardContent(String),
 

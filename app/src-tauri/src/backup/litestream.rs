@@ -4,13 +4,15 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
     str::FromStr,
 };
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use super::credentials::R2Credentials;
 
 const EMBEDDED_MANIFEST: &str = include_str!("../../resources/sidecars/litestream-v1.json");
 const DEVELOPMENT_BINARY_OVERRIDE_ENV: &str = "DARA_LITESTREAM_PATH";
@@ -21,6 +23,16 @@ const MAX_CONTROL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_RESTORE_PLAN_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RESTORE_FILES: usize = 100_000;
 const MAX_MACOS_UNIX_SOCKET_PATH_BYTES: usize = 103;
+
+pub(crate) fn configure_credentials_environment(
+    command: &mut Command,
+    credentials: &R2Credentials,
+) {
+    command
+        .env_clear()
+        .env(ACCESS_KEY_ID_ENV, credentials.access_key_id());
+    command.env(SECRET_ACCESS_KEY_ENV, credentials.secret_access_key());
+}
 
 #[derive(Debug, Error)]
 pub(crate) enum LitestreamError {
@@ -132,6 +144,16 @@ impl VerifiedLitestreamBinary {
         };
         verify_binary(&path, &manifest.binary)?;
         Ok(Self { path })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn resolve_staged_for_test(path: &Path) -> Result<Self, LitestreamError> {
+        let manifest = embedded_manifest()?;
+        validate_protocol_manifest(&manifest)?;
+        verify_binary(path, &manifest.binary)?;
+        Ok(Self {
+            path: path.to_owned(),
+        })
     }
 }
 
@@ -597,10 +619,32 @@ pub(crate) struct SystemCommandExecutor;
 
 impl CommandExecutor for SystemCommandExecutor {
     fn execute(&self, spec: &CommandSpec) -> Result<CommandResult, std::io::Error> {
-        let output = Command::new(&spec.program).args(&spec.arguments).output()?;
+        let mut child = Command::new(&spec.program)
+            .args(&spec.arguments)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let mut stdout = child.stdout.take().ok_or_else(|| {
+            std::io::Error::other("Litestream control stdout pipe is unavailable")
+        })?;
+        let mut bytes = Vec::new();
+        stdout
+            .by_ref()
+            .take(MAX_CONTROL_OUTPUT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() > MAX_CONTROL_OUTPUT_BYTES {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other(
+                "Litestream control output exceeded its safety bound",
+            ));
+        }
+        let status = child.wait()?;
         Ok(CommandResult {
-            exit_code: output.status.code(),
-            stdout: output.stdout,
+            exit_code: status.code(),
+            stdout: bytes,
         })
     }
 }

@@ -9,9 +9,10 @@ use super::{
     AdoptLegacyZoomInput, CanonicalImage, CardContentDraft, CardContentListItem,
     DatabaseDiagnosticsSnapshot, DatabaseError, DeleteCardContentInput, HomeStats, ImageRecord,
     InstallSchedulerReplayInput, LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob,
-    OcrQueueRecovery, PrepareDesiredRetentionReplayInput, RecordGradeInput, Result, ReviewContext,
-    ReviewMutationResult, ReviewQueueSelection, SchedulerReplayInstallReport,
-    SchedulerReplaySnapshot, SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
+    OcrQueueRecovery, OffsiteBackupConfig, PrepareDesiredRetentionReplayInput, RecordGradeInput,
+    Result, ReviewContext, ReviewMutationResult, ReviewQueueSelection,
+    SaveOffsiteBackupConfigInput, SchedulerReplayInstallReport, SchedulerReplaySnapshot,
+    SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
     SetCardContentSuspendedInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
     UndoLastGradeInput, UpdateCardContentInput,
 };
@@ -119,6 +120,15 @@ pub(super) enum WriterMessage {
     SetKeyboardBindings {
         input: SetKeyboardBindingsInput,
         reply: SyncSender<Result<StoredSettings>>,
+    },
+    #[allow(dead_code)] // Wired into the backup service in the next implementation slice.
+    LoadOffsiteBackupConfig {
+        reply: SyncSender<Result<Option<OffsiteBackupConfig>>>,
+    },
+    #[allow(dead_code)] // Wired into Settings when the backup service is exposed.
+    SaveOffsiteBackupConfig {
+        input: SaveOffsiteBackupConfigInput,
+        reply: SyncSender<Result<OffsiteBackupConfig>>,
     },
     IngestImage {
         image: CanonicalImage,
@@ -485,6 +495,31 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::SetKeyboardBindings { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    #[allow(dead_code)] // This is the persistence seam for the upcoming backup service.
+    pub(crate) fn load_offsite_backup_config(&self) -> Result<Option<OffsiteBackupConfig>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadOffsiteBackupConfig { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    #[allow(dead_code)] // This is the persistence seam for the upcoming Settings commands.
+    pub(crate) fn save_offsite_backup_config(
+        &self,
+        input: SaveOffsiteBackupConfigInput,
+    ) -> Result<OffsiteBackupConfig> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SaveOffsiteBackupConfig { input, reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()
