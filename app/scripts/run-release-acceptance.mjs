@@ -35,6 +35,10 @@ const ReviewEventType = Object.freeze({
   Revoke: 'REVOKE',
 })
 
+const ReviewCardStatus = Object.freeze({
+  Suspended: 'SUSPENDED',
+})
+
 const KeyboardCommand = Object.freeze({
   QuickAdd: 'QUICK_ADD',
   Review: 'REVIEW',
@@ -579,7 +583,7 @@ function readLiveDatabaseState(dataDirectory) {
        (SELECT count(*) FROM card_content WHERE deleted_at IS NULL) AS activeCardContents,
        (SELECT count(*) FROM card_content WHERE deleted_at IS NOT NULL) AS deletedCardContents,
        (SELECT count(*) FROM review_card) AS reviewCards,
-       (SELECT count(*) FROM review_card WHERE status = 'SUSPENDED') AS suspendedReviewCards,
+       (SELECT count(*) FROM review_card WHERE status = '${ReviewCardStatus.Suspended}') AS suspendedReviewCards,
        (SELECT count(*) FROM review_event) AS reviewEvents,
        (SELECT count(*) FROM review_event WHERE event_type = '${ReviewEventType.Revoke}') AS revokedReviewEvents,
        (SELECT count(*) FROM search_document) AS searchDocuments,

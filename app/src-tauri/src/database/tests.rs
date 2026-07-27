@@ -229,6 +229,115 @@ fn snapshot_retention_ignores_unrenderable_timestamp_manifests() {
     assert!(manifest_path.exists());
 }
 
+#[test]
+fn migration_safety_snapshot_replaces_the_same_heads_with_current_data() {
+    let (_directory, paths) = test_paths();
+    drop(initialize_test(&paths));
+
+    let first =
+        snapshot::create_migration_safety_snapshot_pair(&paths, "test").expect("first safety pair");
+    let main = open_existing(&paths.main, DatabaseKind::Main);
+    insert_basic_content(&main);
+    drop(main);
+    let second =
+        snapshot::create_migration_safety_snapshot_pair(&paths, "test").expect("new safety pair");
+
+    assert_ne!(second.manifest_path, first.manifest_path);
+    assert!(!first.manifest_path.exists());
+    assert!(!paths.backups.join(first.manifest.main.file_name).exists());
+    assert!(!paths.backups.join(first.manifest.media.file_name).exists());
+    assert_eq!(
+        fs::read_dir(&paths.backups)
+            .expect("backups")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| name.starts_with("migration-safety-"))
+                    && entry.path().extension().and_then(|value| value.to_str()) == Some("json")
+            })
+            .count(),
+        1
+    );
+
+    let restored = DatabasePaths::new(paths.root().join("restored"));
+    snapshot::restore_snapshot_pair(&second.manifest_path, &restored)
+        .expect("restore replacement safety pair");
+    let restored_main = open_existing(&restored.main, DatabaseKind::Main);
+    assert_eq!(
+        restored_main
+            .query_row(
+                "SELECT count(*) FROM card_content WHERE id = ?1",
+                [BASIC_CONTENT_ID],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("restored current data"),
+        1
+    );
+}
+
+#[test]
+fn snapshot_retention_keeps_one_migration_safety_pair_per_heads() {
+    let (_directory, paths) = test_paths();
+    fs::create_dir_all(&paths.backups).expect("backups directory");
+
+    let write_pair = |stem: &str, created_at: i64, main_head: i32, media_head: i32| {
+        let main_name = format!("{stem}-main.sqlite3");
+        let media_name = format!("{stem}-media.sqlite3");
+        fs::write(paths.backups.join(&main_name), b"main").expect("retention main");
+        fs::write(paths.backups.join(&media_name), b"media").expect("retention media");
+        write_snapshot_manifest(
+            &paths.backups.join(format!("{stem}.json")),
+            &snapshot::SnapshotManifest {
+                format_version: 1,
+                created_at,
+                application_version: "test".into(),
+                main: snapshot::SnapshotFile {
+                    file_name: main_name,
+                    sha256: "not-read-by-retention".into(),
+                    migration_head: Some(main_head),
+                },
+                media: snapshot::SnapshotFile {
+                    file_name: media_name,
+                    sha256: "not-read-by-retention".into(),
+                    migration_head: Some(media_head),
+                },
+                relationship_validated: true,
+            },
+        );
+    };
+
+    write_pair("migration-safety-old", 100, 6, 1);
+    write_pair("migration-safety-new", 200, 6, 1);
+    write_pair("migration-safety-other-heads", 150, 5, 1);
+    write_pair("restore-safety-first", 50, 6, 1);
+    write_pair("restore-safety-second", 75, 6, 1);
+
+    snapshot::prune_snapshots(&paths.backups).expect("bounded safety retention");
+
+    assert!(!paths.backups.join("migration-safety-old.json").exists());
+    assert!(!paths
+        .backups
+        .join("migration-safety-old-main.sqlite3")
+        .exists());
+    assert!(!paths
+        .backups
+        .join("migration-safety-old-media.sqlite3")
+        .exists());
+    for stem in [
+        "migration-safety-new",
+        "migration-safety-other-heads",
+        "restore-safety-first",
+        "restore-safety-second",
+    ] {
+        assert!(
+            paths.backups.join(format!("{stem}.json")).exists(),
+            "{stem} should remain"
+        );
+    }
+}
+
 fn snapshot_file(file_name: &str) -> snapshot::SnapshotFile {
     snapshot::SnapshotFile {
         file_name: file_name.into(),

@@ -94,11 +94,13 @@ pub(crate) fn create_migration_safety_snapshot_pair(
     paths: &DatabasePaths,
     application_version: &str,
 ) -> Result<CreatedSnapshot> {
-    create_snapshot_pair_with_retention(
+    let snapshot = create_snapshot_pair_with_retention(
         paths,
         application_version,
         SnapshotRetention::MigrationSafety,
-    )
+    )?;
+    remove_redundant_migration_safety_snapshots(&snapshot)?;
+    Ok(snapshot)
 }
 
 pub(crate) fn create_restore_safety_snapshot_pair(
@@ -415,9 +417,17 @@ pub fn prune_snapshots(backups: &Path) -> Result<()> {
     let mut daily = HashSet::new();
     let mut weekly = HashSet::new();
     let mut monthly = HashSet::new();
+    let mut migration_safety_heads = HashSet::new();
     for (path, manifest) in &snapshots {
-        if is_protected_snapshot(path) {
+        if is_restore_safety_snapshot(path) {
             keep.insert(path.clone());
+            continue;
+        }
+        if is_migration_safety_snapshot(path) && manifest.relationship_validated {
+            let heads = (manifest.main.migration_head, manifest.media.migration_head);
+            if migration_safety_heads.insert(heads) {
+                keep.insert(path.clone());
+            }
             continue;
         }
         let datetime = timestamp(manifest.created_at)?;
@@ -465,8 +475,39 @@ fn is_migration_safety_snapshot(path: &Path) -> bool {
         .is_some_and(|stem| stem.starts_with(MIGRATION_SAFETY_SNAPSHOT_STEM_PREFIX))
 }
 
-fn is_protected_snapshot(path: &Path) -> bool {
-    is_migration_safety_snapshot(path) || is_restore_safety_snapshot(path)
+fn remove_redundant_migration_safety_snapshots(snapshot: &CreatedSnapshot) -> Result<()> {
+    let backups = snapshot.manifest_path.parent().ok_or_else(|| {
+        DatabaseError::InvalidSnapshot("migration safety manifest has no directory".into())
+    })?;
+    let heads = MigrationHeads {
+        main: snapshot.manifest.main.migration_head,
+        media: snapshot.manifest.media.migration_head,
+    };
+    for entry in fs::read_dir(backups)? {
+        let path = entry?.path();
+        if path == snapshot.manifest_path
+            || !is_migration_safety_snapshot(&path)
+            || path.extension().and_then(|value| value.to_str()) != Some("json")
+        {
+            continue;
+        }
+        let validated = match load_and_validate_snapshot(&path) {
+            Ok(snapshot) => snapshot,
+            Err(_) => continue,
+        };
+        let candidate_heads = MigrationHeads {
+            main: validated.manifest.main.migration_head,
+            media: validated.manifest.media.migration_head,
+        };
+        if candidate_heads != heads {
+            continue;
+        }
+        remove_created_snapshot_pair(&CreatedSnapshot {
+            manifest_path: validated.manifest_path,
+            manifest: validated.manifest,
+        })?;
+    }
+    Ok(())
 }
 
 pub(crate) fn latest_finalized_snapshot(
