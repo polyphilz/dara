@@ -117,6 +117,9 @@ The staged files are explicit Tauri resources. Build the ad-hoc `.app` from `app
 pnpm release:build:app
 ```
 
+See [`docs/RELEASE.md`](docs/RELEASE.md) for the complete versioning, build,
+installation, smoke-check, and tagging procedure.
+
 This personal-v1 command targets arm64 macOS 14 or newer. It intentionally rebuilds and rechecks
 the sidecar before packaging. The GGUF remains outside the `.app` and is downloaded and verified
 under Dara's data directory on first semantic use.
