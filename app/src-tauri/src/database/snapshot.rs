@@ -21,6 +21,24 @@ use super::{
 };
 
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const MANAGED_SNAPSHOT_PREFIX: &str = "snapshot";
+const RESTORE_SAFETY_SNAPSHOT_PREFIX: &str = "restore-safety";
+const RESTORE_SAFETY_SNAPSHOT_STEM_PREFIX: &str = "restore-safety-";
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotRetention {
+    Managed,
+    RestoreSafety,
+}
+
+impl SnapshotRetention {
+    const fn file_prefix(self) -> &'static str {
+        match self {
+            Self::Managed => MANAGED_SNAPSHOT_PREFIX,
+            Self::RestoreSafety => RESTORE_SAFETY_SNAPSHOT_PREFIX,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SnapshotFile {
@@ -64,15 +82,35 @@ pub fn create_snapshot_pair(
     paths: &DatabasePaths,
     application_version: &str,
 ) -> Result<CreatedSnapshot> {
+    create_snapshot_pair_with_retention(paths, application_version, SnapshotRetention::Managed)
+}
+
+pub(crate) fn create_restore_safety_snapshot_pair(
+    paths: &DatabasePaths,
+    application_version: &str,
+) -> Result<CreatedSnapshot> {
+    create_snapshot_pair_with_retention(
+        paths,
+        application_version,
+        SnapshotRetention::RestoreSafety,
+    )
+}
+
+fn create_snapshot_pair_with_retention(
+    paths: &DatabasePaths,
+    application_version: &str,
+    retention: SnapshotRetention,
+) -> Result<CreatedSnapshot> {
     let mut main_source =
         connection::open_writer(&paths.main, DatabaseKind::Main, FileState::Existing)?;
     let mut media_source =
         connection::open_writer(&paths.media, DatabaseKind::Media, FileState::Existing)?;
-    create_snapshot_pair_from_connections(
+    create_snapshot_pair_from_connections_with_retention(
         paths,
         application_version,
         &mut main_source,
         &mut media_source,
+        retention,
     )
 }
 
@@ -82,11 +120,31 @@ pub(super) fn create_snapshot_pair_from_connections(
     main_source: &mut Connection,
     media_source: &mut Connection,
 ) -> Result<CreatedSnapshot> {
+    create_snapshot_pair_from_connections_with_retention(
+        paths,
+        application_version,
+        main_source,
+        media_source,
+        SnapshotRetention::Managed,
+    )
+}
+
+fn create_snapshot_pair_from_connections_with_retention(
+    paths: &DatabasePaths,
+    application_version: &str,
+    main_source: &mut Connection,
+    media_source: &mut Connection,
+    retention: SnapshotRetention,
+) -> Result<CreatedSnapshot> {
     fs::create_dir_all(&paths.backups)?;
 
     let created_at = now_millis()?;
     let sequence = SNAPSHOT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let stem = format!("snapshot-{created_at}-{}-{sequence}", std::process::id());
+    let stem = format!(
+        "{}-{created_at}-{}-{sequence}",
+        retention.file_prefix(),
+        std::process::id()
+    );
     let main_name = format!("{stem}-main.sqlite3");
     let media_name = format!("{stem}-media.sqlite3");
     let manifest_name = format!("{stem}.json");
@@ -271,6 +329,10 @@ pub fn prune_snapshots(backups: &Path) -> Result<()> {
     let mut weekly = HashSet::new();
     let mut monthly = HashSet::new();
     for (path, manifest) in &snapshots {
+        if is_restore_safety_snapshot(path) {
+            keep.insert(path.clone());
+            continue;
+        }
         let datetime = timestamp(manifest.created_at)?;
         let date = datetime.date();
         let day_key = (date.year(), date.ordinal());
@@ -302,6 +364,12 @@ pub fn prune_snapshots(backups: &Path) -> Result<()> {
     }
     sync_directory(backups)?;
     Ok(())
+}
+
+fn is_restore_safety_snapshot(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|stem| stem.starts_with(RESTORE_SAFETY_SNAPSHOT_STEM_PREFIX))
 }
 
 pub(crate) fn latest_finalized_snapshot(
