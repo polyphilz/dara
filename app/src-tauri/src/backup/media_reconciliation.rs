@@ -436,7 +436,7 @@ fn media_worker(
                     next_full_reconciliation = Instant::now();
                 }
                 Err(error_code) => {
-                    if is_retryable(error_code) {
+                    if should_retry_target_initialization(error_code) {
                         attempted_revision = None;
                     }
                     set_target_unavailable(&status, error_code);
@@ -716,17 +716,19 @@ fn reconcile_media_object(
         return MediaAttempt::Blocked(BackupErrorCode::LocalMediaTooLarge);
     }
     let bytes = match source.load(candidate.sha256) {
-        Ok(Some(bytes)) => bytes,
-        Ok(None) => return MediaAttempt::Blocked(BackupErrorCode::LocalMediaMissing),
+        Ok(Some(bytes)) => Some(bytes),
+        Ok(None) => None,
         Err(BackupErrorCode::WorkerUnavailable) => {
             return MediaAttempt::Retry(BackupErrorCode::WorkerUnavailable);
         }
         Err(error_code) => return MediaAttempt::Blocked(error_code),
     };
-    if bytes.len() as u64 != candidate.byte_length
-        || ContentSha256::from_bytes(Sha256::digest(&bytes).into()) != candidate.sha256
-    {
-        return MediaAttempt::Blocked(BackupErrorCode::LocalMediaHashMismatch);
+    if let Some(bytes) = bytes.as_ref() {
+        if bytes.len() as u64 != candidate.byte_length
+            || ContentSha256::from_bytes(Sha256::digest(bytes).into()) != candidate.sha256
+        {
+            return MediaAttempt::Blocked(BackupErrorCode::LocalMediaHashMismatch);
+        }
     }
     if cancellation.cancelled() {
         return MediaAttempt::Cancelled;
@@ -742,6 +744,9 @@ fn reconcile_media_object(
             return outcome;
         }
     } else {
+        let Some(bytes) = bytes else {
+            return MediaAttempt::Blocked(BackupErrorCode::LocalMediaMissing);
+        };
         if cancellation.cancelled() {
             return MediaAttempt::Cancelled;
         }
@@ -859,9 +864,13 @@ fn is_retryable(error: BackupErrorCode) -> bool {
     )
 }
 
+fn should_retry_target_initialization(error: BackupErrorCode) -> bool {
+    error == BackupErrorCode::KeychainUnavailable || is_retryable(error)
+}
+
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicUsize;
+    use std::{collections::VecDeque, sync::atomic::AtomicUsize};
 
     use super::*;
     use crate::backup::{
@@ -887,6 +896,29 @@ mod tests {
     struct FakeObjectStoreFactory {
         store: Arc<FakeObjectStore>,
         opens: Arc<AtomicUsize>,
+        failures: Mutex<VecDeque<BackupErrorCode>>,
+    }
+
+    impl FakeObjectStoreFactory {
+        fn available(store: Arc<FakeObjectStore>, opens: Arc<AtomicUsize>) -> Self {
+            Self {
+                store,
+                opens,
+                failures: Mutex::new(VecDeque::new()),
+            }
+        }
+
+        fn failing_once(
+            store: Arc<FakeObjectStore>,
+            opens: Arc<AtomicUsize>,
+            error: BackupErrorCode,
+        ) -> Self {
+            Self {
+                store,
+                opens,
+                failures: Mutex::new(VecDeque::from([error])),
+            }
+        }
     }
 
     impl ObjectStoreFactory for FakeObjectStoreFactory {
@@ -895,6 +927,14 @@ mod tests {
             _config: &OffsiteBackupConfig,
         ) -> Result<Arc<dyn ObjectStore>, BackupErrorCode> {
             self.opens.fetch_add(1, Ordering::SeqCst);
+            if let Some(error) = self
+                .failures
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .pop_front()
+            {
+                return Err(error);
+            }
             Ok(self.store.clone())
         }
     }
@@ -1047,6 +1087,45 @@ mod tests {
     }
 
     #[test]
+    fn uploaded_media_can_be_verified_after_the_local_blob_is_reaped() {
+        let bytes = b"canonical-webp".to_vec();
+        let candidate = candidate(&bytes);
+        let store = FakeObjectStore::default();
+        store.fail_next(ObjectOperation::Get, ObjectStoreErrorCode::Network);
+
+        let initial = reconcile_media_object(
+            &store,
+            &target().keyspace(),
+            &candidate,
+            &FakeMediaBlobSource { bytes: Some(bytes) },
+            &WorkCancellation::default(),
+        );
+        assert_eq!(
+            initial,
+            MediaAttempt::Retry(BackupErrorCode::NetworkOffline)
+        );
+
+        let retry = reconcile_media_object(
+            &store,
+            &target().keyspace(),
+            &candidate,
+            &FakeMediaBlobSource { bytes: None },
+            &WorkCancellation::default(),
+        );
+        assert_eq!(retry, MediaAttempt::Verified);
+        assert_eq!(
+            store.operations(),
+            [
+                ObjectOperation::Head,
+                ObjectOperation::Put,
+                ObjectOperation::Get,
+                ObjectOperation::Head,
+                ObjectOperation::Get,
+            ]
+        );
+    }
+
+    #[test]
     fn media_upload_requires_the_expected_remote_backup_identity() {
         let target = target();
         let backup_set_id = BackupSetId::new();
@@ -1165,10 +1244,10 @@ mod tests {
         let coordinator = MediaBackupCoordinator::start_with_parts(
             client.clone(),
             Arc::new(SqliteMediaBlobSource::new(paths.media.clone())),
-            Arc::new(FakeObjectStoreFactory {
-                store: store.clone(),
-                opens: factory_opens.clone(),
-            }),
+            Arc::new(FakeObjectStoreFactory::available(
+                store.clone(),
+                factory_opens.clone(),
+            )),
             WorkerSchedule {
                 poll_interval: Duration::from_millis(5),
                 full_reconciliation_interval: Duration::from_millis(25),
@@ -1217,6 +1296,72 @@ mod tests {
     }
 
     #[test]
+    fn background_worker_retries_after_keychain_becomes_available() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let paths = DatabasePaths::new(directory.path().join("data"));
+        let database = initialize(
+            paths.clone(),
+            "test",
+            InitializationOptions {
+                launch_snapshot: false,
+            },
+        )
+        .expect("database");
+        let client = database.client();
+        let backup_set_id = BackupSetId::new();
+        client
+            .save_offsite_backup_config(SaveOffsiteBackupConfigInput {
+                expected_revision: 0,
+                backup_set_id: backup_set_id.clone(),
+                replica_epoch_id: ReplicaEpochId::new(),
+                enabled: true,
+                target: target(),
+            })
+            .expect("backup config");
+        client
+            .ingest_image(
+                CanonicalImage {
+                    bytes: b"captured-during-keychain-outage".to_vec(),
+                    natural_width: 10,
+                    natural_height: 10,
+                },
+                "01980c8e-6c00-7000-8000-000000000906".into(),
+            )
+            .expect("queued image");
+
+        let store = Arc::new(FakeObjectStore::default());
+        let factory_opens = Arc::new(AtomicUsize::new(0));
+        let coordinator = MediaBackupCoordinator::start_with_parts(
+            client.clone(),
+            Arc::new(SqliteMediaBlobSource::new(paths.media)),
+            Arc::new(FakeObjectStoreFactory::failing_once(
+                store,
+                factory_opens.clone(),
+                BackupErrorCode::KeychainUnavailable,
+            )),
+            WorkerSchedule {
+                poll_interval: Duration::from_millis(5),
+                full_reconciliation_interval: Duration::from_millis(25),
+                max_objects_per_pass: 8,
+                retry_policy: RetryPolicy {
+                    base: Duration::from_millis(5),
+                    maximum: Duration::from_millis(20),
+                },
+            },
+        );
+        wait_until(Duration::from_secs(2), || {
+            coordinator.status().verified_count == 1
+        });
+        coordinator.shutdown_and_wait();
+
+        assert_eq!(factory_opens.load(Ordering::SeqCst), 2);
+        let summary = client
+            .load_offsite_media_summary(backup_set_id)
+            .expect("final summary");
+        assert_eq!(summary.verified_count, 1);
+    }
+
+    #[test]
     fn disabled_backup_accumulates_work_without_opening_keychain_or_r2() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let paths = DatabasePaths::new(directory.path().join("data"));
@@ -1255,10 +1400,10 @@ mod tests {
         let coordinator = MediaBackupCoordinator::start_with_parts(
             client.clone(),
             Arc::new(SqliteMediaBlobSource::new(paths.media)),
-            Arc::new(FakeObjectStoreFactory {
-                store: store.clone(),
-                opens: factory_opens.clone(),
-            }),
+            Arc::new(FakeObjectStoreFactory::available(
+                store.clone(),
+                factory_opens.clone(),
+            )),
             WorkerSchedule {
                 poll_interval: Duration::from_millis(5),
                 full_reconciliation_interval: Duration::from_millis(10),
