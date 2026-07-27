@@ -795,9 +795,7 @@ fn validate_remote_metadata(
         || metadata
             .dara_sha256
             .is_some_and(|sha256| sha256 != candidate.sha256)
-        || metadata
-            .object_format_version
-            .is_some_and(|version| version != OBJECT_FORMAT_VERSION)
+        || metadata.object_format_version != Some(OBJECT_FORMAT_VERSION)
     {
         return Err(MediaAttempt::Blocked(
             BackupErrorCode::ImmutableObjectConflict,
@@ -1047,6 +1045,32 @@ mod tests {
         assert_eq!(
             &store.operations()[operations_before..],
             &[ObjectOperation::Head]
+        );
+    }
+
+    #[test]
+    fn missing_remote_format_version_is_an_immutable_conflict() {
+        let bytes = b"canonical-webp".to_vec();
+        let candidate = candidate(&bytes);
+        let store = FakeObjectStore::default();
+        let key = target().keyspace().media(candidate.sha256);
+        store
+            .put(PutObjectRequest {
+                key: key.clone(),
+                bytes: bytes.clone(),
+                content_type: ObjectContentType::Webp,
+                dara_sha256: Some(candidate.sha256),
+                condition: PutCondition::IfAbsent,
+            })
+            .expect("seed remote object");
+        let mut metadata = store.head(&key).expect("head").expect("remote metadata");
+        metadata.object_format_version = None;
+
+        let result = verify_downloaded(GetObjectResult { metadata, bytes }, &candidate);
+
+        assert_eq!(
+            result,
+            MediaAttempt::Blocked(BackupErrorCode::ImmutableObjectConflict)
         );
     }
 

@@ -450,6 +450,143 @@ fn periodic_offsite_media_reconciliation_repairs_missing_desired_rows() {
 }
 
 #[test]
+fn available_local_media_requeues_only_local_missing_blocks() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    let bytes = b"returned-local-media".to_vec();
+    let backup_set_id = BackupSetId::new();
+    client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            target: R2Target {
+                account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef")
+                    .expect("account ID"),
+                jurisdiction: R2Jurisdiction::Default,
+                bucket: R2BucketName::parse("dara-test").expect("bucket"),
+                prefix: R2Prefix::parse("dara/requeue-local-media").expect("prefix"),
+            },
+        })
+        .expect("backup configuration");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: bytes.clone(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("image");
+    let first_attempt_at = super::now_millis().expect("first attempt time");
+    let candidate = client
+        .load_next_offsite_media(backup_set_id.clone(), first_attempt_at)
+        .expect("pending media")
+        .expect("candidate");
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: candidate.sha256,
+            expected_attempt_count: candidate.attempt_count,
+            attempted_at: first_attempt_at,
+            outcome: OffsiteMediaAttemptOutcome::Blocked {
+                error_code: BackupErrorCode::LocalMediaMissing,
+            },
+        })
+        .expect("record local-missing block");
+
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: bytes.clone(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("reingested image");
+    let requeued_by_ingest = client
+        .load_next_offsite_media(backup_set_id.clone(), first_attempt_at)
+        .expect("reingested media")
+        .expect("requeued candidate");
+    assert_eq!(requeued_by_ingest.sha256, candidate.sha256);
+    assert_eq!(requeued_by_ingest.attempt_count, 1);
+
+    let second_attempt_at = first_attempt_at.saturating_add(1);
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: requeued_by_ingest.sha256,
+            expected_attempt_count: requeued_by_ingest.attempt_count,
+            attempted_at: second_attempt_at,
+            outcome: OffsiteMediaAttemptOutcome::Blocked {
+                error_code: BackupErrorCode::LocalMediaMissing,
+            },
+        })
+        .expect("record repeated local-missing block");
+    let report = client
+        .reconcile_offsite_media(second_attempt_at.saturating_add(1))
+        .expect("periodic reconciliation");
+    assert_eq!(report.inserted, 0);
+    assert_eq!(report.missing_local_blobs, 0);
+
+    let requeued_by_reconciliation = client
+        .load_next_offsite_media(backup_set_id.clone(), second_attempt_at.saturating_add(1))
+        .expect("reconciled media")
+        .expect("periodically requeued candidate");
+    assert_eq!(requeued_by_reconciliation.sha256, candidate.sha256);
+    assert_eq!(requeued_by_reconciliation.attempt_count, 2);
+    let summary = client
+        .load_offsite_media_summary(backup_set_id.clone())
+        .expect("media summary");
+    assert_eq!(summary.pending_count, 1);
+    assert_eq!(summary.blocked_count, 0);
+    assert_eq!(summary.last_error_code, None);
+
+    let third_attempt_at = second_attempt_at.saturating_add(2);
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: requeued_by_reconciliation.sha256,
+            expected_attempt_count: requeued_by_reconciliation.attempt_count,
+            attempted_at: third_attempt_at,
+            outcome: OffsiteMediaAttemptOutcome::Blocked {
+                error_code: BackupErrorCode::ImmutableObjectConflict,
+            },
+        })
+        .expect("record immutable conflict");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes,
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("reingest after immutable conflict");
+    client
+        .reconcile_offsite_media(third_attempt_at.saturating_add(1))
+        .expect("reconcile immutable conflict");
+    assert!(client
+        .load_next_offsite_media(backup_set_id.clone(), third_attempt_at.saturating_add(1))
+        .expect("work after immutable conflict")
+        .is_none());
+    let summary = client
+        .load_offsite_media_summary(backup_set_id)
+        .expect("immutable-conflict summary");
+    assert_eq!(summary.pending_count, 0);
+    assert_eq!(summary.blocked_count, 1);
+    assert_eq!(
+        summary.last_error_code,
+        Some(BackupErrorCode::ImmutableObjectConflict)
+    );
+}
+
+#[test]
 fn local_media_reaping_keeps_offsite_backup_work_append_only() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);

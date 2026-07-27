@@ -51,6 +51,13 @@ pub(crate) struct OffsiteMediaSummary {
     pub(crate) last_error_code: Option<BackupErrorCode>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnqueueAvailableResult {
+    Inserted,
+    Requeued,
+    Unchanged,
+}
+
 pub(super) fn enqueue_ingested(
     transaction: &Transaction<'_>,
     sha256: &[u8],
@@ -60,6 +67,31 @@ pub(super) fn enqueue_ingested(
     validate_hash(sha256)?;
     let byte_length = positive_i64(byte_length as u64, "ingested media byte length")?;
     validate_timestamp(now, "ingested media timestamp")?;
+    let backup_set_id = transaction
+        .query_row(
+            "SELECT backup_set_id
+             FROM offsite_backup_config
+             WHERE singleton_id = 1",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(backup_set_id) = backup_set_id else {
+        return Ok(false);
+    };
+    Ok(
+        enqueue_available(transaction, &backup_set_id, sha256, byte_length, now)?
+            != EnqueueAvailableResult::Unchanged,
+    )
+}
+
+fn enqueue_available(
+    transaction: &Transaction<'_>,
+    backup_set_id: &str,
+    sha256: &[u8],
+    byte_length: i64,
+    now: i64,
+) -> Result<EnqueueAvailableResult> {
     let inserted = transaction.execute(
         "INSERT OR IGNORE INTO offsite_media_object (
             backup_set_id,
@@ -74,28 +106,54 @@ pub(super) fn enqueue_ingested(
             created_at,
             updated_at
          )
-         SELECT
-            backup_set_id,
-            ?1,
-            ?2,
-            ?3,
-            0,
-            NULL,
-            NULL,
-            NULL,
-            NULL,
-            ?4,
-            ?4
-         FROM offsite_backup_config
-         WHERE singleton_id = 1",
+        VALUES (?1, ?2, ?3, ?4, 0, NULL, NULL, NULL, NULL, ?5, ?5)",
         params![
+            backup_set_id,
             sha256,
             byte_length,
             OffsiteMediaState::Pending.as_db_str(),
             now
         ],
     )?;
-    Ok(inserted == 1)
+    if inserted == 1 {
+        return Ok(EnqueueAvailableResult::Inserted);
+    }
+    let stored_length: i64 = transaction.query_row(
+        "SELECT byte_length
+         FROM offsite_media_object
+         WHERE backup_set_id = ?1 AND sha256 = ?2",
+        params![backup_set_id, sha256],
+        |row| row.get(0),
+    )?;
+    if stored_length != byte_length {
+        return Err(invalid_media_state(
+            "desired media byte length does not match the canonical blob",
+        ));
+    }
+    let requeued = transaction.execute(
+        "UPDATE offsite_media_object
+         SET state = ?1,
+             next_attempt_at = NULL,
+             last_error_code = NULL,
+             updated_at = ?2
+         WHERE backup_set_id = ?3
+           AND sha256 = ?4
+           AND state = ?5
+           AND last_error_code = ?6",
+        params![
+            OffsiteMediaState::Pending.as_db_str(),
+            now,
+            backup_set_id,
+            sha256,
+            OffsiteMediaState::Blocked.as_db_str(),
+            BackupErrorCode::LocalMediaMissing.as_db_str(),
+        ],
+    )?;
+    Ok(if requeued == 1 {
+        EnqueueAvailableResult::Requeued
+    } else {
+        EnqueueAvailableResult::Unchanged
+    })
 }
 
 pub(super) fn seed_for_backup_set(
@@ -129,43 +187,11 @@ pub(super) fn seed_for_backup_set(
         if byte_length <= 0 {
             return Err(invalid_media_state("media blob has an invalid byte length"));
         }
-        let inserted = transaction.execute(
-            "INSERT OR IGNORE INTO offsite_media_object (
-                backup_set_id,
-                sha256,
-                byte_length,
-                state,
-                attempt_count,
-                next_attempt_at,
-                last_attempt_at,
-                last_verified_at,
-                last_error_code,
-                created_at,
-                updated_at
-             ) VALUES (?1, ?2, ?3, ?4, 0, NULL, NULL, NULL, NULL, ?5, ?5)",
-            params![
-                backup_set_id.as_str(),
-                &hash,
-                byte_length,
-                OffsiteMediaState::Pending.as_db_str(),
-                now,
-            ],
-        )?;
-        if inserted == 1 {
-            report.inserted = report.inserted.saturating_add(1);
-        } else {
-            let stored_length: i64 = transaction.query_row(
-                "SELECT byte_length
-                 FROM offsite_media_object
-                 WHERE backup_set_id = ?1 AND sha256 = ?2",
-                params![backup_set_id.as_str(), &hash],
-                |row| row.get(0),
-            )?;
-            if stored_length != byte_length {
-                return Err(invalid_media_state(
-                    "desired media byte length does not match the canonical blob",
-                ));
+        match enqueue_available(transaction, backup_set_id.as_str(), &hash, byte_length, now)? {
+            EnqueueAvailableResult::Inserted => {
+                report.inserted = report.inserted.saturating_add(1);
             }
+            EnqueueAvailableResult::Requeued | EnqueueAvailableResult::Unchanged => {}
         }
     }
     Ok(report)
