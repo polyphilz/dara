@@ -24,6 +24,7 @@ log = "0.4"
 image = { version = "=0.25.10", default-features = false, features = ["jpeg", "png", "tiff", "webp"] }
 pulldown-cmark = "0.13.0"
 reqwest = { version = "=0.13.4", default-features = false, features = ["blocking", "json", "rustls"] }
+rusty-s3 = { version = "=0.10.1", default-features = false, features = ["rustcrypto", "xml"] }
 tauri = { version = "2.11.3", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
@@ -35,9 +36,10 @@ rusqlite = { version = "=0.39.0", features = ["bundled"] }
 sha2 = "0.10.9"
 sqlite-vec = "=0.1.9"
 thiserror = "2.0"
-time = "0.3.53"
+time = { version = "0.3.53", features = ["formatting", "parsing"] }
 uuid = { version = "=1.23.5", features = ["v7"] }
 webp = { version = "=0.3.1", default-features = false }
+zeroize = "=1.8.2"
 
 [dev-dependencies]
 tempfile = "3.23"
@@ -52,3 +54,4 @@ objc2-vision = "0.3.2"
 objc2-web-kit = "0.3.2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"
+keyring = { version = "=4.1.5", default-features = false, features = ["v1"] }

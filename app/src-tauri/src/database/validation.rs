@@ -154,6 +154,10 @@ fn validate_main_schema(connection: &Connection) -> Result<()> {
         "image",
         "image_draft_lease",
         "media_blob_reap_candidate",
+        "offsite_backup_checkpoint",
+        "offsite_backup_config",
+        "offsite_backup_content_clock",
+        "offsite_media_object",
         "review_card",
         "review_event",
         "scheduler_config",
@@ -180,6 +184,18 @@ fn validate_main_schema(connection: &Connection) -> Result<()> {
         return invalid(
             DatabaseKind::Main,
             format!("app_settings contains {settings_rows} rows"),
+        );
+    }
+    let content_clock_rows: i64 = connection.query_row(
+        "SELECT count(*) FROM offsite_backup_content_clock
+         WHERE singleton_id = 1 AND revision >= 0",
+        [],
+        |row| row.get(0),
+    )?;
+    if content_clock_rows != 1 {
+        return invalid(
+            DatabaseKind::Main,
+            "offsite_backup_content_clock singleton is invalid".into(),
         );
     }
     Ok(())

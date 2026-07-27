@@ -6,6 +6,7 @@ pub(crate) mod embedding_index;
 mod error;
 mod media;
 pub(crate) mod migrations;
+mod offsite_backup;
 mod paths;
 mod queue;
 #[cfg(test)]
@@ -43,6 +44,7 @@ pub use media::{
     CanonicalImage, ImageOcrStatus, ImageRecord, MediaMaintenanceReport, MediaPayload, OcrJob,
     OcrQueueRecovery, MEDIA_ORPHAN_GRACE_MILLIS,
 };
+pub(crate) use offsite_backup::{OffsiteBackupConfig, SaveOffsiteBackupConfigInput};
 pub use paths::DatabasePaths;
 pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
 pub(crate) use settings::validate_complete_bindings;
@@ -500,6 +502,12 @@ fn writer_loop(
             }
             WriterMessage::SetKeyboardBindings { input, reply } => {
                 let _ = reply.send(settings::set_keyboard_bindings(&mut main, input));
+            }
+            WriterMessage::LoadOffsiteBackupConfig { reply } => {
+                let _ = reply.send(offsite_backup::load(&main));
+            }
+            WriterMessage::SaveOffsiteBackupConfig { input, reply } => {
+                let _ = reply.send(offsite_backup::save(&mut main, input));
             }
             WriterMessage::IngestImage {
                 image,

@@ -5,6 +5,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
+use crate::backup::domain::{
+    BackupSetId, R2AccountId, R2BucketName, R2Jurisdiction, R2Prefix, R2Target, ReplicaEpochId,
+};
+
 use super::{
     connection::{self, DatabaseKind, FileState, MAIN_APPLICATION_ID, MEDIA_APPLICATION_ID},
     domain::{
@@ -125,7 +129,124 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 7);
+    assert_eq!(history_rows, 8);
+}
+
+#[test]
+fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    assert_eq!(
+        client
+            .load_offsite_backup_config()
+            .expect("load empty config"),
+        None
+    );
+
+    let target = R2Target {
+        account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef").expect("account ID"),
+        jurisdiction: R2Jurisdiction::Default,
+        bucket: R2BucketName::parse("dara-test").expect("bucket"),
+        prefix: R2Prefix::parse("dara/primary").expect("prefix"),
+    };
+    let backup_set_id = BackupSetId::new();
+    let replica_epoch_id = ReplicaEpochId::new();
+    let saved = client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: replica_epoch_id.clone(),
+            enabled: false,
+            target: target.clone(),
+        })
+        .expect("save config");
+    assert_eq!(saved.revision, 1);
+    assert_eq!(saved.backup_set_id, backup_set_id);
+    assert_eq!(saved.replica_epoch_id, replica_epoch_id);
+    assert_eq!(saved.target, target);
+    assert!(!saved.enabled);
+    assert_eq!(
+        client
+            .load_offsite_backup_config()
+            .expect("load config")
+            .expect("stored config"),
+        saved
+    );
+
+    assert!(matches!(
+        client.save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: saved.backup_set_id.clone(),
+            replica_epoch_id: saved.replica_epoch_id.clone(),
+            enabled: true,
+            target: saved.target.clone(),
+        }),
+        Err(DatabaseError::StaleOffsiteBackupConfig)
+    ));
+
+    let enabled = client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: saved.revision,
+            backup_set_id: saved.backup_set_id.clone(),
+            replica_epoch_id: saved.replica_epoch_id.clone(),
+            enabled: true,
+            target: saved.target.clone(),
+        })
+        .expect("enable config");
+    assert_eq!(enabled.revision, 2);
+    assert!(enabled.enabled);
+
+    let changed_target = R2Target {
+        prefix: R2Prefix::parse("dara/other").expect("other prefix"),
+        ..enabled.target.clone()
+    };
+    assert!(matches!(
+        client.save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: enabled.revision,
+            backup_set_id: enabled.backup_set_id.clone(),
+            replica_epoch_id: enabled.replica_epoch_id.clone(),
+            enabled: false,
+            target: changed_target.clone(),
+        }),
+        Err(DatabaseError::InvalidOffsiteBackupConfig(_))
+    ));
+    let changed = client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: enabled.revision,
+            backup_set_id: BackupSetId::new(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: false,
+            target: changed_target,
+        })
+        .expect("change target");
+    assert_eq!(changed.revision, 3);
+    drop(database);
+
+    let main = open_existing(&paths.main, DatabaseKind::Main);
+    let mut statement = main
+        .prepare("SELECT name FROM pragma_table_info('offsite_backup_config')")
+        .expect("config columns");
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("column query")
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("columns");
+    for prohibited in ["access", "secret", "credential"] {
+        assert!(
+            columns.iter().all(|column| !column.contains(prohibited)),
+            "credential-like column persisted: {prohibited}"
+        );
+    }
+    assert_eq!(
+        main.query_row(
+            "SELECT revision FROM offsite_backup_content_clock WHERE singleton_id = 1",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .expect("content clock"),
+        0
+    );
 }
 
 #[test]
@@ -1026,7 +1147,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 8, 'future', applied_on, '0'
+         SELECT 9, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -1047,17 +1168,17 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V8__grouped_good.sql",
+            "V9__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
-        .expect("V7 migration"),
+        .expect("V9 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V9__grouped_failure.sql",
+            "V10__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
-        .expect("V8 migration"),
+        .expect("V10 migration"),
     );
     let runner = Runner::new(&all).set_grouped(true);
     assert!(runner.run(&mut main).is_err());
@@ -1066,9 +1187,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V7")
+            .expect("V8")
             .version(),
-        7
+        8
     );
 }
 
@@ -1112,7 +1233,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(7));
+    assert_eq!(launch.manifest.main.migration_head, Some(8));
     drop(database);
 
     let base = launch.manifest.created_at;
