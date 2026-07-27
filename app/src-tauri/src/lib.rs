@@ -46,9 +46,9 @@ impl ExitShutdownState {
 fn shutdown_managed_services(app: &tauri::AppHandle) {
     app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
         .shutdown();
+    app.state::<search::SearchService>().shutdown();
     app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
         .shutdown();
-    app.state::<search::SearchService>().shutdown();
 }
 
 fn finish_exit_after_shutdown(
