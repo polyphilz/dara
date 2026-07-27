@@ -29,6 +29,10 @@
     "test:native-bundle-safety": "node scripts/check-native-bundle-safety.mjs",
     "test:native": "pnpm test:native:typecheck && node scripts/run-native-tests.mjs",
     "test:native:stress": "node scripts/run-native-stress.mjs",
+    "release:stage-sidecar": "../scripts/build-llama-sidecar.sh",
+    "release:verify-resources": "node scripts/check-release-resources.mjs",
+    "release:verify-app": "node scripts/check-packaged-app.mjs",
+    "release:build:app": "pnpm release:stage-sidecar && pnpm release:verify-resources && tauri build --config src-tauri/tauri.release.conf.json --bundles app && pnpm release:verify-app",
     "test:frontend": "pnpm test && pnpm test:browser",
     "test:frontend:stress": "playwright test --project=chromium-functional --repeat-each=10 --fail-on-flaky-tests",
     "check": "pnpm lint && DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build && pnpm test:frontend && pnpm test:bundle-safety:check"

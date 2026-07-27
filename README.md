@@ -95,19 +95,31 @@ document embedding actually needs inference; a runtime failure invalidates the r
 
 ### Reproducing the sidecar
 
-Dara's production distribution is designed to bundle `llama-server` as a sidecar and download the larger GGUF separately; distribution packaging remains a later milestone. Each release records the exact `llama.cpp` revision used to build that sidecar. The initial compatibility target is upstream commit `fdb1db877c526ec90f668eca1b858da5dba85560` (build 9860). Homebrew's formula moves over time, so build the recorded revision when reproducing a release:
+Dara's arm64 production build bundles `llama-server` and downloads the larger GGUF separately.
+The canonical source revision, target, CMake flags, and license notice live in
+`app/src-tauri/resources/sidecars/llama-server-v1.json`. The v1 pin is upstream commit
+`fdb1db877c526ec90f668eca1b858da5dba85560` (build 9860). Homebrew's formula moves over
+time and is never consulted by a release build.
+
+The release staging script checks out that exact revision, builds a static arm64 executable with
+embedded Metal shaders, runs the Jina compatibility gate through CPU and Metal, verifies that the
+binary has no non-system dynamic dependencies, and writes an ignored staging directory containing
+the executable, MIT license, and a machine-readable release manifest:
 
 ```sh
-LLAMA_CPP_DIR="${TMPDIR:-/tmp}/dara-llama.cpp"
-LLAMA_CPP_REVISION='fdb1db877c526ec90f668eca1b858da5dba85560'
-
-git clone https://github.com/ggml-org/llama.cpp.git "$LLAMA_CPP_DIR"
-git -C "$LLAMA_CPP_DIR" checkout --detach "$LLAMA_CPP_REVISION"
-cmake -S "$LLAMA_CPP_DIR" -B "$LLAMA_CPP_DIR/build" \
-  -DCMAKE_BUILD_TYPE=Release -DGGML_METAL=ON -DLLAMA_CURL=OFF
-cmake --build "$LLAMA_CPP_DIR/build" --config Release -j
-"$LLAMA_CPP_DIR/build/bin/llama-embedding" --version
+./scripts/build-llama-sidecar.sh \
+  ./models/v5-nano-retrieval-Q8_0.gguf
 ```
+
+The staged files are explicit Tauri resources. Build the ad-hoc `.app` from `app/` with:
+
+```sh
+pnpm release:build:app
+```
+
+This personal-v1 command targets arm64 macOS 14 or newer. It intentionally rebuilds and rechecks
+the sidecar before packaging. The GGUF remains outside the `.app` and is downloaded and verified
+under Dara's data directory on first semantic use.
 
 ### Compatibility check
 

@@ -1,5 +1,4 @@
 use std::{
-    env,
     fs::{self, File, OpenOptions, TryLockError},
     io::{Read, Seek, SeekFrom, Write},
     net::TcpListener,
@@ -12,6 +11,9 @@ use std::{
     thread::{self, JoinHandle},
     time::{Duration, Instant, UNIX_EPOCH},
 };
+
+#[cfg(debug_assertions)]
+use std::env;
 
 use reqwest::{
     blocking::Client,
@@ -34,6 +36,7 @@ const MODEL_OVERRIDE_ENV: &str = "DARA_EMBEDDING_MODEL_PATH";
 const SIDECAR_OVERRIDE_ENV: &str = "DARA_LLAMA_SERVER_PATH";
 const LLAMA_DEVICE_ENV: &str = "DARA_LLAMA_DEVICE";
 const LLAMA_GPU_LAYERS_ENV: &str = "DARA_LLAMA_GPU_LAYERS";
+const BUNDLED_SIDECAR_PATH: &str = "bin/llama-server";
 const LIFECYCLE_LOCK_FILE: &str = "semantic-search.lock";
 const VERIFICATION_RECEIPT_FILE: &str = "semantic-search-verification.json";
 const VERIFICATION_RECEIPT_VERSION: u32 = 1;
@@ -180,11 +183,11 @@ impl SearchService {
         let lifecycle_lock = acquire_lifecycle_lock(data_root)?;
         let manifest = embedding_index::jina_v1_manifest();
         let model_path = data_root.join("models").join(&manifest.config.model_file);
-        let model_override = env::var_os(MODEL_OVERRIDE_ENV).map(PathBuf::from);
+        let model_override = development_path_override(MODEL_OVERRIDE_ENV);
         let sidecar_path = resolve_sidecar_path(resource_dir);
         let runtime_settings = LlamaRuntimeSettings {
-            device: env::var(LLAMA_DEVICE_ENV).ok(),
-            gpu_layers: env::var(LLAMA_GPU_LAYERS_ENV).unwrap_or_else(|_| {
+            device: development_string_override(LLAMA_DEVICE_ENV),
+            gpu_layers: development_string_override(LLAMA_GPU_LAYERS_ENV).unwrap_or_else(|| {
                 if cfg!(target_os = "macos") {
                     "all".into()
                 } else {
@@ -369,11 +372,10 @@ fn redacted_search_error(error: &SearchError) -> String {
 }
 
 fn prepare_and_verify(inner: &SearchServiceInner) -> Result<(), SearchError> {
-    let sidecar_path = inner.sidecar_path.as_deref().ok_or_else(|| {
-        SearchError::RuntimeUnavailable(format!(
-            "llama-server was not found; set {SIDECAR_OVERRIDE_ENV} during development or bundle it with Dara"
-        ))
-    })?;
+    let sidecar_path = inner
+        .sidecar_path
+        .as_deref()
+        .ok_or_else(missing_sidecar_error)?;
     let candidate_artifact_path = inner
         .model_override
         .as_deref()
@@ -1449,33 +1451,83 @@ fn remove_pidfile_if_owned(data_root: &Path, expected_pid: u32) {
 }
 
 fn resolve_sidecar_path(resource_dir: &Path) -> Option<PathBuf> {
-    if let Some(path) = env::var_os(SIDECAR_OVERRIDE_ENV).map(PathBuf::from) {
+    #[cfg(debug_assertions)]
+    if let Some(path) = development_path_override(SIDECAR_OVERRIDE_ENV) {
         return path.is_file().then_some(path);
     }
-    let mut candidates = vec![
-        resource_dir.join("bin/llama-server"),
-        resource_dir.join("llama-server"),
-    ];
-    if let Some(sibling) = env::current_exe()
-        .ok()
-        .and_then(|path| path.parent().map(|parent| parent.join("llama-server")))
-    {
-        candidates.push(sibling);
+
+    if let Some(bundled) = resolve_bundled_sidecar_path(resource_dir) {
+        return Some(bundled);
     }
-    candidates
-        .into_iter()
-        .find(|candidate| candidate.is_file())
-        .or_else(|| {
-            Command::new("which")
-                .arg("llama-server")
-                .output()
-                .ok()
-                .filter(|output| output.status.success())
-                .and_then(|output| {
-                    let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
-                    (!value.is_empty()).then(|| PathBuf::from(value))
-                })
-        })
+
+    #[cfg(debug_assertions)]
+    {
+        let mut candidates = vec![resource_dir.join("llama-server")];
+        if let Some(sibling) = env::current_exe()
+            .ok()
+            .and_then(|path| path.parent().map(|parent| parent.join("llama-server")))
+        {
+            candidates.push(sibling);
+        }
+        candidates
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+            .or_else(|| {
+                Command::new("which")
+                    .arg("llama-server")
+                    .output()
+                    .ok()
+                    .filter(|output| output.status.success())
+                    .and_then(|output| {
+                        let value = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+                        (!value.is_empty()).then(|| PathBuf::from(value))
+                    })
+            })
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
+}
+
+fn resolve_bundled_sidecar_path(resource_dir: &Path) -> Option<PathBuf> {
+    let path = resource_dir.join(BUNDLED_SIDECAR_PATH);
+    path.is_file().then_some(path)
+}
+
+#[cfg(debug_assertions)]
+fn development_path_override(name: &str) -> Option<PathBuf> {
+    env::var_os(name).map(PathBuf::from)
+}
+
+#[cfg(not(debug_assertions))]
+fn development_path_override(_name: &str) -> Option<PathBuf> {
+    None
+}
+
+#[cfg(debug_assertions)]
+fn development_string_override(name: &str) -> Option<String> {
+    env::var(name).ok()
+}
+
+#[cfg(not(debug_assertions))]
+fn development_string_override(_name: &str) -> Option<String> {
+    None
+}
+
+#[cfg(debug_assertions)]
+fn missing_sidecar_error() -> SearchError {
+    SearchError::RuntimeUnavailable(format!(
+        "llama-server was not found; set {SIDECAR_OVERRIDE_ENV} during development or stage the release resources"
+    ))
+}
+
+#[cfg(not(debug_assertions))]
+fn missing_sidecar_error() -> SearchError {
+    SearchError::RuntimeUnavailable(
+        "the bundled llama-server resource is missing from Dara.app".into(),
+    )
 }
 
 fn set_failure(inner: &SearchServiceInner, error: &SearchError) {
@@ -1594,6 +1646,24 @@ mod tests {
             embedding_normalization: LLAMA_EMBEDDING_NORMALIZATION.into(),
             parallel_slots: LLAMA_PARALLEL_SLOTS.into(),
         }
+    }
+
+    #[test]
+    fn bundled_sidecar_uses_the_release_resource_path() {
+        let resources = tempfile::tempdir().expect("temporary resources");
+        let binary_directory = resources.path().join("bin");
+        fs::create_dir(&binary_directory).expect("binary resource directory");
+        let sidecar = binary_directory.join("llama-server");
+        fs::write(&sidecar, b"sidecar").expect("sidecar fixture");
+
+        assert_eq!(
+            resolve_bundled_sidecar_path(resources.path()),
+            Some(sidecar)
+        );
+        assert_eq!(
+            resolve_bundled_sidecar_path(&resources.path().join("missing")),
+            None
+        );
     }
 
     #[test]
