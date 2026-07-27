@@ -1,4 +1,4 @@
-# dara
+# daratest
 
 A personal spaced-repetition app for macOS. Built to replace Anki after 6–7 years of use — keeping what works (FSRS scheduling, atomic cards) and fixing what doesn't (slow, bloated, and enough friction in card creation that cards don't get made).
 
