@@ -370,7 +370,10 @@ fn prepare_restore(
     let safety_snapshot = if initial_files.is_empty() {
         None
     } else {
-        Some(snapshot::create_snapshot_pair(paths, env!("CARGO_PKG_VERSION"))?.manifest_path)
+        Some(
+            snapshot::create_restore_safety_snapshot_pair(paths, env!("CARGO_PKG_VERSION"))?
+                .manifest_path,
+        )
     };
     let rollback_files = inspect_restore_target(paths)?;
 
@@ -381,6 +384,7 @@ fn prepare_restore(
     let rollback = paths.root().join(&rollback_directory);
     fs::create_dir(&stage)?;
     fs::create_dir(&rollback)?;
+    sync_directory(paths.root())?;
 
     let stage_main = stage.join(RestoreFile::Main.file_name());
     let stage_media = stage.join(RestoreFile::Media.file_name());
@@ -1053,6 +1057,37 @@ mod tests {
             assert!(!restore_intent_path(&target_paths).exists());
             assert!(rollback.is_dir(), "rollback retained for {failpoint:?}");
         }
+    }
+
+    #[test]
+    fn safety_snapshot_survives_normal_snapshot_pruning() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+        drop(
+            database::initialize(
+                target_paths.clone(),
+                "target",
+                InitializationOptions {
+                    launch_snapshot: false,
+                },
+            )
+            .expect("target database"),
+        );
+
+        let report = prepare_restore(&target_paths, source, None).expect("restore");
+        let safety_snapshot = report.safety_snapshot.expect("safety snapshot");
+        assert_eq!(
+            safety_snapshot.parent(),
+            Some(target_paths.backups.as_path())
+        );
+
+        confirm_restored_launch(&target_paths).expect("restore confirmation");
+        snapshot::create_snapshot_pair(&target_paths, "launch").expect("launch snapshot");
+        snapshot::prune_snapshots(&target_paths.backups).expect("snapshot retention");
+
+        snapshot::load_and_validate_snapshot(&safety_snapshot).expect("retained safety snapshot");
     }
 
     #[test]
