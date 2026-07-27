@@ -28,27 +28,59 @@ impl InstallationIdentityStore {
     }
 
     pub(crate) fn load_or_create(&self) -> Result<InstallationId, InstallationIdentityError> {
-        match OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&self.path)
-        {
-            Ok(mut file) => {
-                set_private_permissions(&file)?;
-                let installation_id = InstallationId::new();
-                let payload = InstallationIdentityFile {
-                    format_version: INSTALLATION_FORMAT_VERSION,
-                    installation_id: installation_id.clone(),
-                };
-                let bytes = serde_json::to_vec(&payload)
-                    .map_err(|_| InstallationIdentityError::InvalidFile)?;
-                file.write_all(&bytes)
-                    .and_then(|()| file.sync_all())
-                    .map_err(InstallationIdentityError::Io)?;
-                Ok(installation_id)
+        match self.load() {
+            Ok(installation_id) => Ok(installation_id),
+            Err(InstallationIdentityError::Io(error))
+                if error.kind() == std::io::ErrorKind::NotFound =>
+            {
+                self.create()
             }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => self.load(),
-            Err(error) => Err(InstallationIdentityError::Io(error)),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn create(&self) -> Result<InstallationId, InstallationIdentityError> {
+        self.create_with(|file, bytes| file.write_all(bytes).and_then(|()| file.sync_all()))
+    }
+
+    fn create_with(
+        &self,
+        write: impl FnOnce(&mut File, &[u8]) -> std::io::Result<()>,
+    ) -> Result<InstallationId, InstallationIdentityError> {
+        let installation_id = InstallationId::new();
+        let temporary = self.path.with_file_name(format!(
+            ".{INSTALLATION_ID_FILE}.{}.tmp",
+            installation_id.as_str()
+        ));
+        let outcome = (|| {
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary)
+                .map_err(InstallationIdentityError::Io)?;
+            set_private_permissions(&file)?;
+            let payload = InstallationIdentityFile {
+                format_version: INSTALLATION_FORMAT_VERSION,
+                installation_id: installation_id.clone(),
+            };
+            let bytes =
+                serde_json::to_vec(&payload).map_err(|_| InstallationIdentityError::InvalidFile)?;
+            write(&mut file, &bytes).map_err(InstallationIdentityError::Io)?;
+            drop(file);
+
+            // A hard link publishes the synced file atomically without replacing
+            // an identity concurrently created by another caller.
+            match fs::hard_link(&temporary, &self.path) {
+                Ok(()) => Ok(installation_id),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => self.load(),
+                Err(error) => Err(InstallationIdentityError::Io(error)),
+            }
+        })();
+        match fs::remove_file(&temporary) {
+            Ok(()) => outcome,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => outcome,
+            Err(error) if outcome.is_ok() => Err(InstallationIdentityError::Io(error)),
+            Err(_) => outcome,
         }
     }
 
@@ -177,5 +209,29 @@ mod tests {
             store.load(),
             Err(InstallationIdentityError::InvalidFile)
         ));
+    }
+
+    #[test]
+    fn failed_identity_write_does_not_poison_the_final_path() {
+        let directory = tempfile::tempdir().expect("data root");
+        let store = InstallationIdentityStore::new(directory.path()).expect("store");
+        let error = store
+            .create_with(|file, bytes| {
+                file.write_all(&bytes[..1])?;
+                Err(std::io::Error::other("injected write failure"))
+            })
+            .expect_err("injected failure");
+        assert!(matches!(error, InstallationIdentityError::Io(_)));
+        assert!(!store.path().exists());
+
+        let created = store
+            .load_or_create()
+            .expect("retry creates a valid identity");
+        assert_eq!(store.load().expect("load retried identity"), created);
+        let remaining_files = fs::read_dir(directory.path())
+            .expect("list data root")
+            .collect::<std::io::Result<Vec<_>>>()
+            .expect("data-root entries");
+        assert_eq!(remaining_files.len(), 1);
     }
 }

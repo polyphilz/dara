@@ -2,7 +2,7 @@ use std::{
     fs,
     io::Read,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdout, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant},
 };
@@ -26,6 +26,8 @@ use super::{
 
 const PROBE_SOCKET_TIMEOUT: Duration = Duration::from_secs(15);
 const PROBE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(35);
+const PROBE_RESTORE_TIMEOUT: Duration = Duration::from_secs(60);
+const PROBE_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(10);
 const MAX_CLEANUP_PAGES: usize = 100;
 const MAX_RESTORE_OUTPUT_BYTES: usize = 64 * 1024;
 const PROBE_RUNTIME_DIRECTORY_NAME_BYTES: usize = 8;
@@ -430,24 +432,11 @@ fn restore_probe(
     let mut child = command
         .spawn()
         .map_err(|_| RelationalProbeErrorCode::Restore)?;
-    let mut stdout = child
+    let stdout = child
         .stdout
         .take()
         .ok_or(RelationalProbeErrorCode::Restore)?;
-    let mut bytes = Vec::new();
-    stdout
-        .by_ref()
-        .take(MAX_RESTORE_OUTPUT_BYTES as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| RelationalProbeErrorCode::Restore)?;
-    if bytes.len() > MAX_RESTORE_OUTPUT_BYTES {
-        let _ = child.kill();
-        let _ = child.wait();
-        return Err(RelationalProbeErrorCode::Restore);
-    }
-    let status = child
-        .wait()
-        .map_err(|_| RelationalProbeErrorCode::Restore)?;
+    let (status, bytes) = collect_restore_output(&mut child, stdout, PROBE_RESTORE_TIMEOUT)?;
     if !status.success() {
         return Err(RelationalProbeErrorCode::Restore);
     }
@@ -457,6 +446,75 @@ fn restore_probe(
         return Err(RelationalProbeErrorCode::Restore);
     }
     Ok(())
+}
+
+fn collect_restore_output(
+    child: &mut Child,
+    mut stdout: ChildStdout,
+    timeout: Duration,
+) -> Result<(ExitStatus, Vec<u8>), RelationalProbeErrorCode> {
+    let mut reader = Some(thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .by_ref()
+            .take(MAX_RESTORE_OUTPUT_BYTES as u64 + 1)
+            .read_to_end(&mut bytes)?;
+        Ok::<_, std::io::Error>(bytes)
+    }));
+    let deadline = Instant::now() + timeout;
+    let mut status = None;
+    let mut bytes = None;
+    loop {
+        if bytes.is_none() && reader.as_ref().is_some_and(|reader| reader.is_finished()) {
+            let output = match reader
+                .take()
+                .expect("finished restore output reader")
+                .join()
+            {
+                Ok(Ok(output)) => output,
+                Ok(Err(_)) | Err(_) => {
+                    stop_restore_process(child, &mut reader);
+                    return Err(RelationalProbeErrorCode::Restore);
+                }
+            };
+            if output.len() > MAX_RESTORE_OUTPUT_BYTES {
+                stop_restore_process(child, &mut reader);
+                return Err(RelationalProbeErrorCode::Restore);
+            }
+            bytes = Some(output);
+        }
+        if status.is_none() {
+            status = match child.try_wait() {
+                Ok(status) => status,
+                Err(_) => {
+                    stop_restore_process(child, &mut reader);
+                    return Err(RelationalProbeErrorCode::Restore);
+                }
+            };
+        }
+        if status.is_some() && bytes.is_some() {
+            return Ok((
+                status.take().expect("completed restore status"),
+                bytes.take().expect("completed restore output"),
+            ));
+        }
+        if Instant::now() >= deadline {
+            stop_restore_process(child, &mut reader);
+            return Err(RelationalProbeErrorCode::Restore);
+        }
+        thread::sleep(PROBE_PROCESS_POLL_INTERVAL);
+    }
+}
+
+fn stop_restore_process(
+    child: &mut Child,
+    reader: &mut Option<thread::JoinHandle<std::io::Result<Vec<u8>>>>,
+) {
+    let _ = child.kill();
+    let _ = child.wait();
+    if let Some(reader) = reader.take() {
+        let _ = reader.join();
+    }
 }
 
 fn validate_probe_database(path: &Path) -> Result<(), RelationalProbeErrorCode> {
@@ -589,6 +647,27 @@ mod tests {
             probe_runtime_directory_name(&first),
             probe_runtime_directory_name(&second)
         );
+    }
+
+    #[test]
+    fn restore_output_timeout_kills_and_reaps_the_child() {
+        let mut child = Command::new("/bin/sleep")
+            .arg("5")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("stalled restore child");
+        let stdout = child.stdout.take().expect("restore stdout");
+        let started = Instant::now();
+        assert_eq!(
+            collect_restore_output(&mut child, stdout, Duration::from_millis(20)),
+            Err(RelationalProbeErrorCode::Restore)
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        assert!(child
+            .try_wait()
+            .expect("reaped restore child status")
+            .is_some());
     }
 
     #[test]
