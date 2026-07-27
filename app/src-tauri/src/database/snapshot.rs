@@ -23,12 +23,15 @@ use super::{
 static SNAPSHOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const MANAGED_SNAPSHOT_PREFIX: &str = "snapshot";
 const MANAGED_SNAPSHOT_STEM_PREFIX: &str = "snapshot-";
+const MIGRATION_SAFETY_SNAPSHOT_PREFIX: &str = "migration-safety";
+const MIGRATION_SAFETY_SNAPSHOT_STEM_PREFIX: &str = "migration-safety-";
 const RESTORE_SAFETY_SNAPSHOT_PREFIX: &str = "restore-safety";
 const RESTORE_SAFETY_SNAPSHOT_STEM_PREFIX: &str = "restore-safety-";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SnapshotRetention {
     Managed,
+    MigrationSafety,
     RestoreSafety,
 }
 
@@ -36,6 +39,7 @@ impl SnapshotRetention {
     const fn file_prefix(self) -> &'static str {
         match self {
             Self::Managed => MANAGED_SNAPSHOT_PREFIX,
+            Self::MigrationSafety => MIGRATION_SAFETY_SNAPSHOT_PREFIX,
             Self::RestoreSafety => RESTORE_SAFETY_SNAPSHOT_PREFIX,
         }
     }
@@ -84,6 +88,17 @@ pub fn create_snapshot_pair(
     application_version: &str,
 ) -> Result<CreatedSnapshot> {
     create_snapshot_pair_with_retention(paths, application_version, SnapshotRetention::Managed)
+}
+
+pub(crate) fn create_migration_safety_snapshot_pair(
+    paths: &DatabasePaths,
+    application_version: &str,
+) -> Result<CreatedSnapshot> {
+    create_snapshot_pair_with_retention(
+        paths,
+        application_version,
+        SnapshotRetention::MigrationSafety,
+    )
 }
 
 pub(crate) fn create_restore_safety_snapshot_pair(
@@ -401,7 +416,7 @@ pub fn prune_snapshots(backups: &Path) -> Result<()> {
     let mut weekly = HashSet::new();
     let mut monthly = HashSet::new();
     for (path, manifest) in &snapshots {
-        if is_restore_safety_snapshot(path) {
+        if is_protected_snapshot(path) {
             keep.insert(path.clone());
             continue;
         }
@@ -442,6 +457,16 @@ fn is_restore_safety_snapshot(path: &Path) -> bool {
     path.file_stem()
         .and_then(|value| value.to_str())
         .is_some_and(|stem| stem.starts_with(RESTORE_SAFETY_SNAPSHOT_STEM_PREFIX))
+}
+
+fn is_migration_safety_snapshot(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .is_some_and(|stem| stem.starts_with(MIGRATION_SAFETY_SNAPSHOT_STEM_PREFIX))
+}
+
+fn is_protected_snapshot(path: &Path) -> bool {
+    is_migration_safety_snapshot(path) || is_restore_safety_snapshot(path)
 }
 
 pub(crate) fn latest_finalized_snapshot(

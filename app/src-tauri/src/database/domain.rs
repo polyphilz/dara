@@ -118,7 +118,7 @@ pub enum OcclusionMode {
 }
 
 impl OcclusionMode {
-    const fn as_db_str(self) -> &'static str {
+    pub(super) const fn as_db_str(self) -> &'static str {
         match self {
             Self::HideOneGuessOne => "HIDE_ONE_GUESS_ONE",
             Self::HideAllGuessOne => "HIDE_ALL_GUESS_ONE",
@@ -146,7 +146,7 @@ pub enum OcclusionMaskColor {
 }
 
 impl OcclusionMaskColor {
-    const fn as_db_str(self) -> &'static str {
+    pub(super) const fn as_db_str(self) -> &'static str {
         match self {
             Self::White => "WHITE",
             Self::Black => "BLACK",

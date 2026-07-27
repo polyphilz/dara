@@ -8,6 +8,8 @@ mod media;
 pub(crate) mod migrations;
 mod paths;
 mod queue;
+#[cfg(test)]
+mod release_acceptance;
 mod settings;
 #[allow(dead_code)]
 pub mod snapshot;
@@ -301,7 +303,7 @@ pub fn initialize(
     let media_status = migrations::inspect_media(&mut media)?;
 
     if main_state == FileState::Existing && (main_status.pending || media_status.pending) {
-        snapshot::create_snapshot_pair(&paths, application_version)?;
+        snapshot::create_migration_safety_snapshot_pair(&paths, application_version)?;
     }
 
     migrations::run_media(&mut media)?;
