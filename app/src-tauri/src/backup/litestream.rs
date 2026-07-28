@@ -6,6 +6,8 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
+    thread,
+    time::{Duration, Instant},
 };
 
 use serde::Deserialize;
@@ -23,6 +25,7 @@ const MAX_CONTROL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_RESTORE_PLAN_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RESTORE_FILES: usize = 100_000;
 const MAX_MACOS_UNIX_SOCKET_PATH_BYTES: usize = 103;
+const COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 pub(crate) fn configure_credentials_environment(
     command: &mut Command,
@@ -612,6 +615,12 @@ pub(crate) struct CommandResult {
 
 pub(crate) trait CommandExecutor: Send + Sync {
     fn execute(&self, spec: &CommandSpec) -> Result<CommandResult, std::io::Error>;
+
+    fn execute_with_timeout(
+        &self,
+        spec: &CommandSpec,
+        timeout: Duration,
+    ) -> Result<CommandResult, std::io::Error>;
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -642,6 +651,79 @@ impl CommandExecutor for SystemCommandExecutor {
             ));
         }
         let status = child.wait()?;
+        Ok(CommandResult {
+            exit_code: status.code(),
+            stdout: bytes,
+        })
+    }
+
+    fn execute_with_timeout(
+        &self,
+        spec: &CommandSpec,
+        timeout: Duration,
+    ) -> Result<CommandResult, std::io::Error> {
+        let mut child = Command::new(&spec.program)
+            .args(&spec.arguments)
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()?;
+        let Some(mut stdout) = child.stdout.take() else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other(
+                "Litestream control stdout pipe is unavailable",
+            ));
+        };
+        let reader = match thread::Builder::new()
+            .name("dara-litestream-control-output".into())
+            .spawn(move || {
+                let mut bytes = Vec::new();
+                stdout
+                    .by_ref()
+                    .take(MAX_CONTROL_OUTPUT_BYTES as u64 + 1)
+                    .read_to_end(&mut bytes)?;
+                if bytes.len() > MAX_CONTROL_OUTPUT_BYTES {
+                    return Err(std::io::Error::other(
+                        "Litestream control output exceeded its safety bound",
+                    ));
+                }
+                Ok(bytes)
+            }) {
+            Ok(reader) => reader,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(error);
+            }
+        };
+        let deadline = Instant::now() + timeout;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(error) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = reader.join();
+                    return Err(error);
+                }
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Litestream control command timed out",
+                ));
+            }
+            thread::sleep(COMMAND_POLL_INTERVAL);
+        };
+        let bytes = reader
+            .join()
+            .map_err(|_| std::io::Error::other("Litestream control output reader panicked"))??;
         Ok(CommandResult {
             exit_code: status.code(),
             stdout: bytes,
@@ -679,7 +761,12 @@ impl<E> CommandLitestreamControl<E> {
 }
 
 impl<E: CommandExecutor> CommandLitestreamControl<E> {
-    fn sync(&self, database_path: &Path, wait: bool) -> Result<SyncResult, LitestreamError> {
+    fn sync(
+        &self,
+        database_path: &Path,
+        wait: bool,
+        execution_timeout: Option<Duration>,
+    ) -> Result<SyncResult, LitestreamError> {
         if !database_path.is_absolute() {
             return Err(LitestreamError::RelativeDatabasePath);
         }
@@ -697,13 +784,15 @@ impl<E: CommandExecutor> CommandLitestreamControl<E> {
             self.socket.as_os_str().to_owned(),
             database_path.as_os_str().to_owned(),
         ]);
-        let result = self
-            .executor
-            .execute(&CommandSpec {
-                program: self.binary.clone(),
-                arguments,
-            })
-            .map_err(LitestreamError::Execute)?;
+        let spec = CommandSpec {
+            program: self.binary.clone(),
+            arguments,
+        };
+        let result = match execution_timeout {
+            Some(timeout) => self.executor.execute_with_timeout(&spec, timeout),
+            None => self.executor.execute(&spec),
+        }
+        .map_err(LitestreamError::Execute)?;
         if result.exit_code != Some(0) {
             return Err(LitestreamError::CommandFailed {
                 exit_code: result.exit_code,
@@ -715,15 +804,23 @@ impl<E: CommandExecutor> CommandLitestreamControl<E> {
         }
         Ok(sync)
     }
+
+    pub(crate) fn sync_local_with_timeout(
+        &self,
+        database_path: &Path,
+        timeout: Duration,
+    ) -> Result<SyncResult, LitestreamError> {
+        self.sync(database_path, false, Some(timeout))
+    }
 }
 
 impl<E: CommandExecutor> LitestreamControl for CommandLitestreamControl<E> {
     fn sync_local(&self, database_path: &Path) -> Result<SyncResult, LitestreamError> {
-        self.sync(database_path, false)
+        self.sync(database_path, false, None)
     }
 
     fn sync_remote(&self, database_path: &Path) -> Result<SyncResult, LitestreamError> {
-        self.sync(database_path, true)
+        self.sync(database_path, true, None)
     }
 }
 
@@ -746,6 +843,14 @@ mod tests {
         fn execute(&self, spec: &CommandSpec) -> Result<CommandResult, std::io::Error> {
             self.calls.lock().expect("fake calls").push(spec.clone());
             Ok(self.result.clone())
+        }
+
+        fn execute_with_timeout(
+            &self,
+            spec: &CommandSpec,
+            _timeout: Duration,
+        ) -> Result<CommandResult, std::io::Error> {
+            self.execute(spec)
         }
     }
 
@@ -943,6 +1048,55 @@ mod tests {
             mismatched.sync_local(Path::new("/tmp/dara.sqlite3")),
             Err(LitestreamError::UnexpectedDatabasePath)
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timed_control_commands_are_killed_and_reaped() {
+        let directory = tempfile::tempdir().expect("control runtime");
+        let binary = directory.path().join("blocking-litestream");
+        let pid_path = directory.path().join("control.pid");
+        fs::write(
+            &binary,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nwhile :; do :; done\n",
+                pid_path.display()
+            ),
+        )
+        .expect("blocking control script");
+        let mut permissions = fs::metadata(&binary)
+            .expect("script metadata")
+            .permissions();
+        permissions.set_mode(0o700);
+        fs::set_permissions(&binary, permissions).expect("script permissions");
+        let control = CommandLitestreamControl::new(
+            binary,
+            directory.path().join("litestream.sock"),
+            60,
+            SystemCommandExecutor,
+        );
+        let database_path = directory.path().join("dara.sqlite3");
+
+        let error = control
+            .sync_local_with_timeout(&database_path, Duration::from_secs(1))
+            .expect_err("blocking command must time out");
+        assert!(matches!(
+            error,
+            LitestreamError::Execute(ref source)
+                if source.kind() == std::io::ErrorKind::TimedOut
+        ));
+
+        let pid = fs::read_to_string(pid_path)
+            .expect("control pid")
+            .trim()
+            .parse::<i32>()
+            .expect("numeric control pid");
+        let result = unsafe { libc::kill(pid, 0) };
+        assert_eq!(result, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::ESRCH)
+        );
     }
 
     #[test]

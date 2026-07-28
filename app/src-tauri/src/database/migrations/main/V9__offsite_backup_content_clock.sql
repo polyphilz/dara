@@ -6,6 +6,18 @@
 ALTER TABLE offsite_backup_checkpoint
 ADD COLUMN config_revision INTEGER NOT NULL DEFAULT 0 CHECK (config_revision >= 0);
 
+ALTER TABLE offsite_backup_checkpoint
+ADD COLUMN publication_sequence INTEGER
+    CHECK (publication_sequence IS NULL OR publication_sequence > 0);
+
+UPDATE offsite_backup_checkpoint
+SET publication_sequence = rowid
+WHERE phase = 'PUBLISHED';
+
+CREATE UNIQUE INDEX offsite_backup_checkpoint_publication_sequence_idx
+    ON offsite_backup_checkpoint(publication_sequence)
+    WHERE publication_sequence IS NOT NULL;
+
 CREATE TRIGGER scheduler_config_backup_clock_after_insert
 AFTER INSERT ON scheduler_config
 BEGIN

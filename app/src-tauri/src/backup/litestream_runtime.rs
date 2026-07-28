@@ -36,6 +36,8 @@ const REMOTE_STATUS_INTERVAL: Duration = Duration::from_secs(30);
 const RESTART_BASE_DELAY: Duration = Duration::from_secs(1);
 const RESTART_MAX_DELAY: Duration = Duration::from_secs(5 * 60);
 const CONTROL_REMOTE_TIMEOUT_SECONDS: u64 = 30;
+// Leave time inside the fence budget to kill, reap, and report a timed-out command.
+const CHECKPOINT_LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_secs(4);
 const CHECKPOINT_LOCAL_SYNC_TIMEOUT: Duration = Duration::from_secs(5);
 const CHECKPOINT_REMOTE_SYNC_TIMEOUT: Duration = Duration::from_secs(35);
 const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
@@ -736,6 +738,17 @@ fn map_litestream_start_error(error: LitestreamError) -> RuntimeFailure {
     }
 }
 
+fn map_checkpoint_local_sync_error(error: LitestreamError) -> RuntimeFailure {
+    if matches!(
+        &error,
+        LitestreamError::Execute(source) if source.kind() == std::io::ErrorKind::TimedOut
+    ) {
+        RuntimeFailure::new(BackupErrorCode::FenceTimeout, true)
+    } else {
+        map_litestream_start_error(error)
+    }
+}
+
 struct SystemManagedLitestream {
     child: Option<Child>,
     runtime: LitestreamRuntimePaths,
@@ -895,8 +908,8 @@ impl ManagedLitestream for SystemManagedLitestream {
 impl CheckpointControl for SystemCheckpointControl {
     fn sync_local(&self) -> Result<SyncResult, RuntimeFailure> {
         self.control
-            .sync_local(&self.database_path)
-            .map_err(map_litestream_start_error)
+            .sync_local_with_timeout(&self.database_path, CHECKPOINT_LOCAL_COMMAND_TIMEOUT)
+            .map_err(map_checkpoint_local_sync_error)
     }
 
     fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
@@ -1810,6 +1823,18 @@ mod tests {
             Some(LitestreamTxid::from_local(7))
         );
         service.shutdown();
+    }
+
+    #[test]
+    fn local_command_timeout_maps_to_a_retryable_fence_timeout() {
+        let failure = map_checkpoint_local_sync_error(LitestreamError::Execute(
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "test timeout"),
+        ));
+
+        assert_eq!(
+            failure,
+            RuntimeFailure::new(BackupErrorCode::FenceTimeout, true)
+        );
     }
 
     #[test]

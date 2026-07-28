@@ -207,15 +207,30 @@ pub(super) fn mark_published(
     if manifest_object_key.is_empty() || manifest_object_key.len() > 1_024 {
         return Err(invalid_checkpoint("checkpoint manifest key is invalid"));
     }
-    transition(
-        connection,
-        checkpoint_id,
-        CheckpointPhase::Replicated,
-        CheckpointPhase::Published,
-        None,
-        Some(manifest_object_key),
-        None,
-    )
+    let now = now_millis()?;
+    let changed = connection.execute(
+        "UPDATE offsite_backup_checkpoint
+         SET phase = ?1,
+             manifest_object_key = ?2,
+             publication_sequence = (
+                 SELECT coalesce(max(publication_sequence), 0) + 1
+                 FROM offsite_backup_checkpoint
+             ),
+             last_error_code = NULL,
+             updated_at = max(updated_at, ?3)
+         WHERE checkpoint_id = ?4 AND phase = ?5",
+        params![
+            CheckpointPhase::Published.as_db_str(),
+            manifest_object_key,
+            now,
+            checkpoint_id.as_str(),
+            CheckpointPhase::Replicated.as_db_str(),
+        ],
+    )?;
+    if changed != 1 {
+        return Err(DatabaseError::StaleOffsiteCheckpoint);
+    }
+    Ok(())
 }
 
 pub(super) fn mark_failed(
@@ -281,7 +296,7 @@ pub(super) fn schedule_state(connection: &Connection) -> Result<OffsiteCheckpoin
                 created_at
              FROM offsite_backup_checkpoint
              WHERE phase = ?1
-             ORDER BY created_at DESC, checkpoint_id DESC
+             ORDER BY coalesce(publication_sequence, 0) DESC, checkpoint_id DESC
              LIMIT 1",
             [CheckpointPhase::Published.as_db_str()],
             |row| {
@@ -620,6 +635,35 @@ mod tests {
         }
     }
 
+    fn publish_checkpoint(
+        database: &Database,
+        config: &OffsiteBackupConfig,
+        created_at: i64,
+        manifest_object_key: &str,
+    ) -> CheckpointId {
+        let client = database.client();
+        let checkpoint_id = CheckpointId::new();
+        let prepared = client
+            .prepare_offsite_checkpoint(
+                prepare_input(checkpoint_id.clone(), config, created_at),
+                Arc::new(ImmediateSync),
+            )
+            .expect("prepare checkpoint");
+        client
+            .mark_offsite_checkpoint_fenced(checkpoint_id.clone(), prepared.litestream_txid)
+            .expect("mark fenced");
+        client
+            .mark_offsite_checkpoint_replicated(checkpoint_id.clone())
+            .expect("mark replicated");
+        client
+            .mark_offsite_checkpoint_published(
+                checkpoint_id.clone(),
+                manifest_object_key.to_owned(),
+            )
+            .expect("mark published");
+        checkpoint_id
+    }
+
     #[test]
     fn prepared_row_commits_before_local_sync_and_next_writer_waits_behind_fence() {
         let (_directory, database, config) = enabled_database();
@@ -716,6 +760,33 @@ mod tests {
         assert_eq!(
             state.last_published.expect("last published").checkpoint_id,
             published_id
+        );
+    }
+
+    #[test]
+    fn publication_sequence_selects_the_latest_checkpoint_after_clock_rollback() {
+        let (_directory, database, config) = enabled_database();
+        let first = publish_checkpoint(
+            &database,
+            &config,
+            200,
+            "dara/checkpoint-test/checkpoints/v1/first.json",
+        );
+        let second = publish_checkpoint(
+            &database,
+            &config,
+            100,
+            "dara/checkpoint-test/checkpoints/v1/second.json",
+        );
+
+        let state = database
+            .client()
+            .load_offsite_checkpoint_schedule_state()
+            .expect("schedule state");
+        assert_ne!(first, second);
+        assert_eq!(
+            state.last_published.expect("last published").checkpoint_id,
+            second
         );
     }
 
