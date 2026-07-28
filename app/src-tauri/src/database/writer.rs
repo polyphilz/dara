@@ -131,11 +131,9 @@ pub(super) enum WriterMessage {
         input: SetKeyboardBindingsInput,
         reply: SyncSender<Result<StoredSettings>>,
     },
-    #[allow(dead_code)] // Wired into the backup service in the next implementation slice.
     LoadOffsiteBackupConfig {
         reply: SyncSender<Result<Option<OffsiteBackupConfig>>>,
     },
-    #[allow(dead_code)] // Wired into Settings when the backup service is exposed.
     SaveOffsiteBackupConfig {
         input: SaveOffsiteBackupConfigInput,
         reply: SyncSender<Result<OffsiteBackupConfig>>,

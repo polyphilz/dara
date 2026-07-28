@@ -767,6 +767,10 @@ impl IdentityManifestV1 {
         &self.backup_set_id
     }
 
+    pub(crate) fn original_installation_id(&self) -> &InstallationId {
+        &self.original_installation_id
+    }
+
     pub(crate) fn to_json(&self) -> Result<Vec<u8>, BackupDomainError> {
         encode_manifest(self)
     }
@@ -826,6 +830,10 @@ impl OwnerManifestV1 {
 
     pub(crate) fn replica_epoch_id(&self) -> &ReplicaEpochId {
         &self.replica_epoch_id
+    }
+
+    pub(crate) fn installation_id(&self) -> &InstallationId {
+        &self.installation_id
     }
 
     pub(crate) fn matches(

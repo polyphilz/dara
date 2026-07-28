@@ -41,6 +41,7 @@ pub(crate) struct MediaBackupStatus {
     pub(crate) pending_bytes: u64,
     pub(crate) retry_wait_count: u64,
     pub(crate) verified_count: u64,
+    pub(crate) verified_bytes: u64,
     pub(crate) blocked_count: u64,
     pub(crate) last_error_code: Option<BackupErrorCode>,
 }
@@ -53,6 +54,7 @@ impl Default for MediaBackupStatus {
             pending_bytes: 0,
             retry_wait_count: 0,
             verified_count: 0,
+            verified_bytes: 0,
             blocked_count: 0,
             last_error_code: None,
         }
@@ -626,6 +628,7 @@ fn status_from_summary(
         pending_bytes: summary.pending_bytes,
         retry_wait_count: summary.retry_wait_count,
         verified_count: summary.verified_count,
+        verified_bytes: summary.verified_bytes,
         blocked_count: summary.blocked_count.saturating_add(missing_local_blobs),
         last_error_code,
     }

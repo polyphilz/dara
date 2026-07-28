@@ -1350,6 +1350,30 @@ pub(crate) fn load_restore_drill_report(
     Ok(Some(report))
 }
 
+pub(crate) fn restore_drill_report_updated_at(
+    directory: &Path,
+) -> Result<Option<i64>, BackupErrorCode> {
+    let path = directory.join(DRILL_REPORT_FILE_NAME);
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+    };
+    if !metadata.file_type().is_file() || metadata.len() > MAX_DRILL_REPORT_BYTES {
+        return Err(BackupErrorCode::RestoreValidationFailed);
+    }
+    let modified = metadata
+        .modified()
+        .and_then(|time| {
+            time.duration_since(std::time::UNIX_EPOCH)
+                .map_err(std::io::Error::other)
+        })
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+    i64::try_from(modified.as_millis())
+        .map(Some)
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)
+}
+
 struct RestoreTask {
     path: PathBuf,
     lock: Option<File>,

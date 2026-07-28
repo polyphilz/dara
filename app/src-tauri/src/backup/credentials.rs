@@ -19,12 +19,16 @@ impl R2Credentials {
         access_key_id: impl Into<String>,
         secret_access_key: impl Into<String>,
     ) -> Result<Self, CredentialError> {
-        let access_key_id = access_key_id.into();
-        let secret_access_key = secret_access_key.into();
+        let mut access_key_id = access_key_id.into();
+        let mut secret_access_key = secret_access_key.into();
         if access_key_id.len() != 32 || !is_lower_hex(&access_key_id) {
+            access_key_id.zeroize();
+            secret_access_key.zeroize();
             return Err(CredentialError::InvalidCredential("accessKeyId"));
         }
         if secret_access_key.len() != 64 || !is_lower_hex(&secret_access_key) {
+            access_key_id.zeroize();
+            secret_access_key.zeroize();
             return Err(CredentialError::InvalidCredential("secretAccessKey"));
         }
         Ok(Self {

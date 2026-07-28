@@ -4,6 +4,12 @@ import type {
   DiagnosticsGateway,
   DiagnosticsSnapshot,
 } from '../../../src/diagnostics/index.ts'
+import {
+  CheckpointBackupPhase,
+  CredentialAvailability,
+  MediaBackupPhase,
+  RelationalBackupPhase,
+} from '../../../src/backup/index.ts'
 import { SemanticSearchPhase } from '../../../src/review/index.ts'
 import { DEFAULT_SCHEDULER_CONFIG } from '../../../src/scheduling/config.ts'
 import type {
@@ -69,6 +75,7 @@ test('confirmed retention invokes the atomic replay workflow and refreshes the s
   const onSchedulingChanged = vi.fn()
   const { findByRole, findByText, getByRole } = render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       navigationToken={1}
       onBusyChange={onBusyChange}
       onSchedulingChanged={onSchedulingChanged}
@@ -135,6 +142,7 @@ test('shows the cheap diagnostics snapshot without blocking settings', async () 
   const diagnosticsGateway = diagnosticsFixture()
   const { findByText, getByText } = render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       diagnosticsGateway={diagnosticsGateway}
       navigationToken={1}
       onBusyChange={vi.fn()}
@@ -161,6 +169,7 @@ test('keeps settings usable when diagnostics fail and retries independently', as
   )
   const { findByRole, findByText, getByRole } = render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       diagnosticsGateway={diagnosticsGateway}
       navigationToken={1}
       onBusyChange={vi.fn()}
@@ -188,6 +197,7 @@ function renderSettings(
 ) {
   return render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       navigationToken={1}
       onBusyChange={vi.fn()}
       onSchedulingChanged={vi.fn()}
@@ -343,6 +353,57 @@ function diagnosticsFixture(): MockDiagnosticsGateway {
   return {
     loadDiagnostics: vi.fn(async () => structuredClone(snapshot)),
   }
+}
+
+function backupGatewayFixture() {
+  return {
+    backupNow: vi.fn(),
+    changeTarget: vi.fn(),
+    disable: vi.fn(),
+    listenToProgress: vi.fn(async () => () => undefined),
+    loadStatus: vi.fn(async () => ({
+      configured: false,
+      enabled: false,
+      revision: null,
+      target: null,
+      credentials: CredentialAvailability.Missing,
+      relational: {
+        phase: RelationalBackupPhase.Off,
+        latestLocalTxid: null,
+        latestRemoteTxid: null,
+        lastRemoteConfirmedAt: null,
+        restartCount: 0,
+        lastErrorCode: null,
+      },
+      media: {
+        phase: MediaBackupPhase.Off,
+        pendingCount: 0,
+        pendingBytes: 0,
+        retryWaitCount: 0,
+        verifiedCount: 0,
+        verifiedBytes: 0,
+        blockedCount: 0,
+        lastErrorCode: null,
+      },
+      checkpoint: {
+        phase: CheckpointBackupPhase.Off,
+        inProgressCheckpointId: null,
+        lastCompleteCheckpointId: null,
+        lastCompleteAt: null,
+        lastErrorCode: null,
+      },
+      lastRestoreDrill: null,
+      lastRestoreDrillAt: null,
+      lastRestoreDrillError: null,
+      takeoverAvailable: false,
+      activeOperation: null,
+    })),
+    removeCredentials: vi.fn(),
+    replaceCredentials: vi.fn(),
+    runRestoreDrill: vi.fn(),
+    takeOverRestoredBackup: vi.fn(),
+    testAndEnable: vi.fn(),
+  } as never
 }
 
 function replaySnapshot(

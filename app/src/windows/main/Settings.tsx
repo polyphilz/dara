@@ -42,6 +42,11 @@ import {
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { ConfirmationDialog } from './ConfirmationDialog.tsx'
 import { DiagnosticsPanel } from './DiagnosticsPanel.tsx'
+import { OffsiteBackupSection } from './OffsiteBackupSection.tsx'
+import {
+  tauriOffsiteBackupGateway,
+  type OffsiteBackupGateway,
+} from '../../backup/index.ts'
 
 const MIN_RETENTION_PERCENT = 70
 const MAX_RETENTION_PERCENT = 99
@@ -80,6 +85,7 @@ const appearanceOptions = [
 ] as const
 
 interface SettingsProps {
+  backupGateway?: OffsiteBackupGateway
   diagnosticsGateway?: DiagnosticsGateway
   navigationToken: number
   onBusyChange: (busy: boolean) => void
@@ -96,6 +102,7 @@ interface RecalculationProgress {
 }
 
 export function Settings({
+  backupGateway = tauriOffsiteBackupGateway,
   diagnosticsGateway = tauriDiagnosticsGateway,
   navigationToken,
   onBusyChange,
@@ -549,6 +556,12 @@ export function Settings({
           label="Zoom"
         />
       </SettingSection>
+
+      <OffsiteBackupSection
+        disabled={controlsDisabled}
+        gateway={backupGateway}
+        onBusyChange={onBusyChange}
+      />
 
       <SettingSection
         className="diagnostics-section"

@@ -28,6 +28,10 @@ import {
 } from '../../../src/scheduling/maintenance.ts'
 import { Appearance, DaraCommand } from '../../../src/settings/types.ts'
 import { tauriSettingsGateway } from '../../../src/settings/gateway.ts'
+import {
+  R2Jurisdiction,
+  tauriOffsiteBackupGateway,
+} from '../../../src/backup/index.ts'
 
 interface CapturedInvocation {
   command: string
@@ -149,6 +153,82 @@ describe('Tauri gateway contracts', () => {
       command: DaraIpcCommand.LoadDiagnostics,
       payload: {},
     })
+  })
+
+  test('off-site backup commands preserve secret-bearing input envelopes', async () => {
+    const target = {
+      accountId: '0123456789abcdef0123456789abcdef',
+      jurisdiction: R2Jurisdiction.Default,
+      bucket: 'dara-local',
+      prefix: 'dara/primary',
+    }
+    const credentials = {
+      accessKeyId: '11111111111111111111111111111111',
+      secretAccessKey:
+        '2222222222222222222222222222222222222222222222222222222222222222',
+    }
+    expect(
+      await captureInvocation(() =>
+        tauriOffsiteBackupGateway.testAndEnable({ credentials, target }),
+      ),
+    ).toEqual({
+      command: DaraIpcCommand.TestAndEnableOffsiteBackup,
+      payload: { input: { credentials, target } },
+    })
+    expect(
+      await captureInvocation(() =>
+        tauriOffsiteBackupGateway.replaceCredentials({ credentials }),
+      ),
+    ).toEqual({
+      command: DaraIpcCommand.ReplaceOffsiteBackupCredentials,
+      payload: { input: { credentials } },
+    })
+    expect(
+      await captureInvocation(() =>
+        tauriOffsiteBackupGateway.changeTarget({ credentials, target }),
+      ),
+    ).toEqual({
+      command: DaraIpcCommand.ChangeOffsiteBackupTarget,
+      payload: { input: { credentials, target } },
+    })
+  })
+
+  test('off-site backup actions use dedicated commands without secret output', async () => {
+    const cases = [
+      [
+        DaraIpcCommand.LoadOffsiteBackupStatus,
+        () => tauriOffsiteBackupGateway.loadStatus(),
+        {},
+      ],
+      [
+        DaraIpcCommand.CreateOffsiteBackupNow,
+        () => tauriOffsiteBackupGateway.backupNow(),
+        {},
+      ],
+      [
+        DaraIpcCommand.RunOffsiteRestoreDrill,
+        () => tauriOffsiteBackupGateway.runRestoreDrill(),
+        {},
+      ],
+      [
+        DaraIpcCommand.DisableOffsiteBackup,
+        () => tauriOffsiteBackupGateway.disable(),
+        {},
+      ],
+      [
+        DaraIpcCommand.RemoveOffsiteBackupCredentials,
+        () => tauriOffsiteBackupGateway.removeCredentials(),
+        {},
+      ],
+      [
+        DaraIpcCommand.TakeOverRestoredOffsiteBackup,
+        () => tauriOffsiteBackupGateway.takeOverRestoredBackup(),
+        { input: { confirmed: true } },
+      ],
+    ] as const
+    for (const [command, run, payload] of cases) {
+      expect(await captureInvocation(run)).toEqual({ command, payload })
+    }
   })
 
   test('scheduler maintenance commands preserve their envelopes', async () => {

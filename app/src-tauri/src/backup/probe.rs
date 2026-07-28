@@ -75,8 +75,23 @@ pub(crate) fn verify_connection(
     relational_probe: &dyn RelationalProbe,
     keyspace: &R2Keyspace,
 ) -> Result<ConnectionProbeReport, ConnectionProbeError> {
+    verify_connection_with_progress(object_store, relational_probe, keyspace, |_| {})
+}
+
+pub(crate) fn verify_connection_with_progress(
+    object_store: &dyn ObjectStore,
+    relational_probe: &dyn RelationalProbe,
+    keyspace: &R2Keyspace,
+    mut on_stage: impl FnMut(ProbeStage),
+) -> Result<ConnectionProbeReport, ConnectionProbeError> {
     let run_id = ProbeRunId::new();
-    let verification = verify_connection_inner(object_store, relational_probe, keyspace, &run_id);
+    let verification = verify_connection_inner(
+        object_store,
+        relational_probe,
+        keyspace,
+        &run_id,
+        &mut on_stage,
+    );
     let cleanup = cleanup_probe_prefix(object_store, keyspace, &run_id);
     match verification {
         Ok(()) => Ok(ConnectionProbeReport {
@@ -99,7 +114,9 @@ fn verify_connection_inner(
     relational_probe: &dyn RelationalProbe,
     keyspace: &R2Keyspace,
     run_id: &ProbeRunId,
+    on_stage: &mut dyn FnMut(ProbeStage),
 ) -> Result<(), ProbeFailure> {
+    on_stage(ProbeStage::ObjectPut);
     let key = keyspace.probe_object(run_id);
     let payload = format!("dara-r2-probe-v1:{}", run_id.as_str()).into_bytes();
     let payload_sha256 = super::domain::ContentSha256::from_bytes(Sha256::digest(&payload).into());
@@ -119,6 +136,7 @@ fn verify_connection_inner(
         ));
     }
 
+    on_stage(ProbeStage::ObjectHead);
     let head = object_store
         .head(&key)
         .map_err(|error| ProbeFailure::object(ProbeStage::ObjectHead, error.code))?
@@ -136,6 +154,7 @@ fn verify_connection_inner(
         ));
     }
 
+    on_stage(ProbeStage::ObjectGet);
     let get = object_store
         .get(&key)
         .map_err(|error| ProbeFailure::object(ProbeStage::ObjectGet, error.code))?;
@@ -149,6 +168,7 @@ fn verify_connection_inner(
         ));
     }
 
+    on_stage(ProbeStage::ObjectList);
     let listed = object_store
         .list(&keyspace.probe_prefix(run_id), None)
         .map_err(|error| ProbeFailure::object(ProbeStage::ObjectList, error.code))?;
@@ -159,6 +179,7 @@ fn verify_connection_inner(
         ));
     }
 
+    on_stage(ProbeStage::LitestreamRoundTrip);
     relational_probe
         .verify(run_id)
         .map_err(ProbeFailure::relational)?;
@@ -590,6 +611,31 @@ mod tests {
         ] {
             assert!(operations.contains(&required), "missing {required:?}");
         }
+    }
+
+    #[test]
+    fn connection_probe_reports_progress_in_protocol_order() {
+        let store = FakeObjectStore::default();
+        let mut stages = Vec::new();
+
+        verify_connection_with_progress(
+            &store,
+            &FakeRelationalProbe { result: Ok(()) },
+            &target().keyspace(),
+            |stage| stages.push(stage),
+        )
+        .expect("connection probe");
+
+        assert_eq!(
+            stages,
+            vec![
+                ProbeStage::ObjectPut,
+                ProbeStage::ObjectHead,
+                ProbeStage::ObjectGet,
+                ProbeStage::ObjectList,
+                ProbeStage::LitestreamRoundTrip,
+            ]
+        );
     }
 
     #[test]
