@@ -25,7 +25,9 @@ use super::{
         VerifiedLitestreamBinary,
     },
     object_store::{ObjectStore, R2ObjectStore},
-    remote_authority::{map_credential_error, validate_backup_authority},
+    remote_authority::{
+        map_credential_error, validate_backup_authority, validate_backup_authority_with_deadline,
+    },
 };
 use crate::database::LocalCheckpointSync;
 use crate::database::{now_millis, DatabaseClient, OffsiteBackupConfig};
@@ -43,6 +45,7 @@ const CHECKPOINT_LOCAL_SYNC_TIMEOUT: Duration = Duration::from_secs(5);
 // before the checkpoint handle's outer deadline.
 const CHECKPOINT_REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(34);
 const CHECKPOINT_REMOTE_SYNC_TIMEOUT: Duration = Duration::from_secs(35);
+const CHECKPOINT_HANDLE_COMPLETION_MARGIN: Duration = Duration::from_secs(1);
 const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(35);
 const STALE_KILL_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -97,7 +100,22 @@ impl LitestreamCheckpointHandle {
     }
 
     pub(crate) fn sync_remote(&self) -> Result<SyncResult, BackupErrorCode> {
-        self.request_sync(false, CHECKPOINT_REMOTE_SYNC_TIMEOUT)
+        self.sync_remote_with_timeout(CHECKPOINT_REMOTE_SYNC_TIMEOUT)
+    }
+
+    pub(crate) fn sync_remote_with_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<SyncResult, BackupErrorCode> {
+        self.request_sync(false, timeout.min(CHECKPOINT_REMOTE_SYNC_TIMEOUT))
+    }
+
+    pub(crate) fn sync_local_with_timeout(
+        &self,
+        timeout: Duration,
+    ) -> Result<LitestreamTxid, BackupErrorCode> {
+        self.request_sync(true, timeout.min(CHECKPOINT_LOCAL_SYNC_TIMEOUT))
+            .map(|sync| sync.txid)
     }
 
     fn request_sync(
@@ -105,6 +123,15 @@ impl LitestreamCheckpointHandle {
         local_only: bool,
         timeout: Duration,
     ) -> Result<SyncResult, BackupErrorCode> {
+        let timeout_code = if local_only {
+            BackupErrorCode::FenceTimeout
+        } else {
+            BackupErrorCode::NetworkTimeout
+        };
+        let operation_timeout = timeout
+            .checked_sub(CHECKPOINT_HANDLE_COMPLETION_MARGIN)
+            .filter(|timeout| !timeout.is_zero())
+            .ok_or(timeout_code)?;
         if self.shutdown.load(Ordering::Acquire) {
             return Err(BackupErrorCode::WorkerUnavailable);
         }
@@ -124,9 +151,9 @@ impl LitestreamCheckpointHandle {
             })
             .spawn(move || {
                 let result = if local_only {
-                    control.sync_local()
+                    control.sync_local(operation_timeout)
                 } else {
-                    control.sync_remote()
+                    control.sync_remote(operation_timeout)
                 }
                 .map_err(|failure| failure.code);
                 let _ = reply.send(result);
@@ -161,8 +188,7 @@ impl LitestreamCheckpointHandle {
 
 impl LocalCheckpointSync for LitestreamCheckpointHandle {
     fn sync_local(&self) -> Result<LitestreamTxid, BackupErrorCode> {
-        self.request_sync(true, CHECKPOINT_LOCAL_SYNC_TIMEOUT)
-            .map(|sync| sync.txid)
+        self.sync_local_with_timeout(CHECKPOINT_LOCAL_SYNC_TIMEOUT)
     }
 }
 
@@ -361,8 +387,8 @@ trait ManagedLitestream: Send {
 }
 
 trait CheckpointControl: Send + Sync {
-    fn sync_local(&self) -> Result<SyncResult, RuntimeFailure>;
-    fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure>;
+    fn sync_local(&self, timeout: Duration) -> Result<SyncResult, RuntimeFailure>;
+    fn sync_remote(&self, timeout: Duration) -> Result<SyncResult, RuntimeFailure>;
 }
 
 fn supervisor_worker(
@@ -517,7 +543,7 @@ fn supervisor_worker(
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .clone()
                 .ok_or_else(|| RuntimeFailure::new(BackupErrorCode::LitestreamUnavailable, true))
-                .and_then(|control| control.sync_remote());
+                .and_then(|control| control.sync_remote(CHECKPOINT_REMOTE_COMMAND_TIMEOUT));
             match sync {
                 Ok(sync) => {
                     restart_count = 0;
@@ -787,6 +813,16 @@ impl RemoteAuthority {
         validate_backup_authority(self.store.as_ref(), &self.config, &self.installation_id)
             .map_err(|code| RuntimeFailure::new(code, is_transient(code)))
     }
+
+    fn validate_until(&self, deadline: Instant) -> Result<(), RuntimeFailure> {
+        validate_backup_authority_with_deadline(
+            self.store.as_ref(),
+            &self.config,
+            &self.installation_id,
+            deadline,
+        )
+        .map_err(|code| RuntimeFailure::new(code, is_transient(code)))
+    }
 }
 
 struct LaunchIdentity {
@@ -920,16 +956,32 @@ impl ManagedLitestream for SystemManagedLitestream {
 }
 
 impl CheckpointControl for SystemCheckpointControl {
-    fn sync_local(&self) -> Result<SyncResult, RuntimeFailure> {
+    fn sync_local(&self, timeout: Duration) -> Result<SyncResult, RuntimeFailure> {
+        if timeout.is_zero() {
+            return Err(RuntimeFailure::new(BackupErrorCode::FenceTimeout, true));
+        }
         self.control
-            .sync_local_with_timeout(&self.database_path, CHECKPOINT_LOCAL_COMMAND_TIMEOUT)
+            .sync_local_with_timeout(
+                &self.database_path,
+                timeout.min(CHECKPOINT_LOCAL_COMMAND_TIMEOUT),
+            )
             .map_err(map_checkpoint_local_sync_error)
     }
 
-    fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
-        self.authority.validate()?;
+    fn sync_remote(&self, timeout: Duration) -> Result<SyncResult, RuntimeFailure> {
+        let deadline = Instant::now()
+            .checked_add(timeout)
+            .ok_or_else(|| RuntimeFailure::new(BackupErrorCode::NetworkTimeout, true))?;
+        self.authority.validate_until(deadline)?;
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(|| RuntimeFailure::new(BackupErrorCode::NetworkTimeout, true))?;
         self.control
-            .sync_remote_with_timeout(&self.database_path, CHECKPOINT_REMOTE_COMMAND_TIMEOUT)
+            .sync_remote_with_timeout(
+                &self.database_path,
+                remaining.min(CHECKPOINT_REMOTE_COMMAND_TIMEOUT),
+            )
             .map_err(map_checkpoint_remote_sync_error)
     }
 }
@@ -1690,11 +1742,11 @@ mod tests {
     }
 
     impl CheckpointControl for FakeCheckpointControl {
-        fn sync_local(&self) -> Result<SyncResult, RuntimeFailure> {
+        fn sync_local(&self, _timeout: Duration) -> Result<SyncResult, RuntimeFailure> {
             self.sync.clone()
         }
 
-        fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
+        fn sync_remote(&self, _timeout: Duration) -> Result<SyncResult, RuntimeFailure> {
             self.sync.clone()
         }
     }

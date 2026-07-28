@@ -31,7 +31,9 @@ use super::{
         ObjectContentType, ObjectStore, PutCondition, PutObjectOutcome, PutObjectRequest,
         R2ObjectStore,
     },
-    remote_authority::{map_credential_error, map_store_error, validate_backup_authority},
+    remote_authority::{
+        map_credential_error, map_store_error, validate_backup_authority_with_deadline,
+    },
 };
 use crate::database::{
     now_millis, CheckpointMediaReference, DatabaseClient, DatabaseError, LocalCheckpointSync,
@@ -90,8 +92,8 @@ enum RemoteEvidenceState {
 
 trait CheckpointRuntime: Send + Sync {
     fn status(&self) -> RelationalBackupStatus;
-    fn sync_local(&self) -> Result<LitestreamTxid, BackupErrorCode>;
-    fn sync_remote(&self) -> Result<SyncResult, BackupErrorCode>;
+    fn sync_local(&self, timeout: Duration) -> Result<LitestreamTxid, BackupErrorCode>;
+    fn sync_remote(&self, timeout: Duration) -> Result<SyncResult, BackupErrorCode>;
 }
 
 impl CheckpointRuntime for LitestreamCheckpointHandle {
@@ -99,22 +101,24 @@ impl CheckpointRuntime for LitestreamCheckpointHandle {
         LitestreamCheckpointHandle::status(self)
     }
 
-    fn sync_local(&self) -> Result<LitestreamTxid, BackupErrorCode> {
-        LocalCheckpointSync::sync_local(self)
+    fn sync_local(&self, timeout: Duration) -> Result<LitestreamTxid, BackupErrorCode> {
+        LitestreamCheckpointHandle::sync_local_with_timeout(self, timeout)
     }
 
-    fn sync_remote(&self) -> Result<SyncResult, BackupErrorCode> {
-        LitestreamCheckpointHandle::sync_remote(self)
+    fn sync_remote(&self, timeout: Duration) -> Result<SyncResult, BackupErrorCode> {
+        LitestreamCheckpointHandle::sync_remote_with_timeout(self, timeout)
     }
 }
 
 struct RuntimeLocalSync {
     runtime: Arc<dyn CheckpointRuntime>,
+    deadline: Instant,
 }
 
 impl LocalCheckpointSync for RuntimeLocalSync {
     fn sync_local(&self) -> Result<LitestreamTxid, BackupErrorCode> {
-        self.runtime.sync_local()
+        self.runtime
+            .sync_local(remaining_checkpoint_time(self.deadline)?)
     }
 }
 
@@ -572,7 +576,7 @@ fn create_checkpoint(
         .filter(|config| config.enabled)
         .ok_or(BackupErrorCode::InvalidTarget)?;
     ensure_litestream_healthy(&litestream.status())?;
-    let target = factory.open(&config)?;
+    let target = factory.open(&config, deadline)?;
     set_phase(status, CheckpointBackupPhase::WaitingForMedia, None);
 
     for race_attempt in 0..CHECKPOINT_MEDIA_RACE_RETRIES {
@@ -595,6 +599,7 @@ fn create_checkpoint(
             },
             Arc::new(RuntimeLocalSync {
                 runtime: Arc::clone(&litestream),
+                deadline,
             }),
         );
         let prepared = match prepared {
@@ -619,6 +624,7 @@ fn create_checkpoint(
             &created_at,
             &prepared,
             status,
+            deadline,
         );
         match result {
             Ok(()) => {
@@ -641,6 +647,7 @@ fn create_checkpoint(
     Err(BackupErrorCode::RemoteMediaMissing)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn finish_checkpoint(
     database: &DatabaseClient,
     litestream: &dyn CheckpointRuntime,
@@ -649,7 +656,9 @@ fn finish_checkpoint(
     created_at: &UtcTimestamp,
     prepared: &PreparedOffsiteCheckpoint,
     status: &Mutex<CheckpointBackupStatus>,
+    deadline: Instant,
 ) -> Result<(), BackupErrorCode> {
+    remaining_checkpoint_time(deadline)?;
     database
         .mark_offsite_checkpoint_fenced(prepared.checkpoint_id.clone(), prepared.litestream_txid)
         .map_err(map_database_error)?;
@@ -658,25 +667,31 @@ fn finish_checkpoint(
         CheckpointBackupPhase::WaitingForReplica,
         Some(prepared.checkpoint_id.clone()),
     );
-    let remote = litestream.sync_remote()?;
+    let remote = litestream.sync_remote(remaining_checkpoint_time(deadline)?)?;
     if remote
         .replica_txid
         .is_none_or(|replica_txid| replica_txid < prepared.litestream_txid)
     {
         return Err(BackupErrorCode::ReplicaBehind);
     }
+    remaining_checkpoint_time(deadline)?;
     database
         .mark_offsite_checkpoint_replicated(prepared.checkpoint_id.clone())
         .map_err(map_database_error)?;
 
+    remaining_checkpoint_time(deadline)?;
     ensure_active_config(database, config)?;
     set_phase(
         status,
         CheckpointBackupPhase::Validating,
         Some(prepared.checkpoint_id.clone()),
     );
-    target.validate_exact_txid(prepared.litestream_txid)?;
-    target.validate_media(&prepared.referenced_media)?;
+    target.validate_exact_txid(
+        prepared.litestream_txid,
+        remaining_checkpoint_time(deadline)?.min(EXACT_RESTORE_TIMEOUT),
+    )?;
+    target.validate_media(&prepared.referenced_media, deadline)?;
+    remaining_checkpoint_time(deadline)?;
     ensure_active_config(database, config)?;
 
     let keyspace = config.target.keyspace();
@@ -708,7 +723,8 @@ fn finish_checkpoint(
         CheckpointBackupPhase::Publishing,
         Some(prepared.checkpoint_id.clone()),
     );
-    target.publish_and_verify_manifest(&manifest_key, &manifest)?;
+    target.publish_and_verify_manifest(&manifest_key, &manifest, deadline)?;
+    remaining_checkpoint_time(deadline)?;
     database
         .mark_offsite_checkpoint_published(
             prepared.checkpoint_id.clone(),
@@ -760,12 +776,17 @@ fn wait_for_media(
                 .last_error_code
                 .unwrap_or(BackupErrorCode::WorkerUnavailable));
         }
-        if Instant::now() >= deadline {
-            return Err(BackupErrorCode::NetworkTimeout);
-        }
+        let remaining = remaining_checkpoint_time(deadline)?;
         media.wake();
-        thread::sleep(MEDIA_POLL_INTERVAL);
+        thread::sleep(MEDIA_POLL_INTERVAL.min(remaining));
     }
+}
+
+fn remaining_checkpoint_time(deadline: Instant) -> Result<Duration, BackupErrorCode> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(BackupErrorCode::NetworkTimeout)
 }
 
 fn ensure_active_config(
@@ -797,7 +818,7 @@ fn validate_last_published_evidence(
     config: &OffsiteBackupConfig,
     published: &PublishedOffsiteCheckpoint,
 ) -> Result<(), BackupErrorCode> {
-    let target = factory.open(config)?;
+    let target = factory.open(config, Instant::now() + CHECKPOINT_SHUTDOWN_BUDGET)?;
     target.validate_published_manifest(published)?;
     let checked_at = now_millis().map_err(|_| BackupErrorCode::WorkerUnavailable)?;
     let sampled_media = rotating_media_evidence_sample(&published.referenced_media, checked_at)?;
@@ -916,19 +937,26 @@ trait CheckpointTargetFactory: Send + Sync {
     fn open(
         &self,
         config: &OffsiteBackupConfig,
+        deadline: Instant,
     ) -> Result<Box<dyn CheckpointTarget>, BackupErrorCode>;
 }
 
 trait CheckpointTarget: Send + Sync {
-    fn validate_exact_txid(&self, txid: LitestreamTxid) -> Result<(), BackupErrorCode>;
+    fn validate_exact_txid(
+        &self,
+        txid: LitestreamTxid,
+        timeout: Duration,
+    ) -> Result<(), BackupErrorCode>;
     fn validate_media(
         &self,
         references: &[CheckpointMediaReference],
+        deadline: Instant,
     ) -> Result<(), BackupErrorCode>;
     fn publish_and_verify_manifest(
         &self,
         key: &R2ObjectKey,
         manifest: &CheckpointManifestV1,
+        deadline: Instant,
     ) -> Result<(), BackupErrorCode>;
     fn validate_published_manifest(
         &self,
@@ -951,7 +979,9 @@ impl<C: CredentialStore> CheckpointTargetFactory for SystemCheckpointTargetFacto
     fn open(
         &self,
         config: &OffsiteBackupConfig,
+        deadline: Instant,
     ) -> Result<Box<dyn CheckpointTarget>, BackupErrorCode> {
+        remaining_checkpoint_time(deadline)?;
         let credentials = self
             .credentials
             .load(&config.backup_set_id)
@@ -962,8 +992,14 @@ impl<C: CredentialStore> CheckpointTargetFactory for SystemCheckpointTargetFacto
         let store = R2ObjectStore::new(config.target.clone(), &credentials)
             .map_err(|error| map_store_error(error.code))?;
         let store: Arc<dyn ObjectStore> = Arc::new(store);
-        validate_backup_authority(store.as_ref(), config, &installation_id)?;
+        validate_backup_authority_with_deadline(
+            store.as_ref(),
+            config,
+            &installation_id,
+            deadline,
+        )?;
 
+        remaining_checkpoint_time(deadline)?;
         let runtime = LitestreamRuntimePaths::new(&self.data_root)
             .map_err(|_| BackupErrorCode::LitestreamUnavailable)?;
         let replica_path = config
@@ -1008,7 +1044,11 @@ struct SystemCheckpointTarget {
 }
 
 impl CheckpointTarget for SystemCheckpointTarget {
-    fn validate_exact_txid(&self, txid: LitestreamTxid) -> Result<(), BackupErrorCode> {
+    fn validate_exact_txid(
+        &self,
+        txid: LitestreamTxid,
+        timeout: Duration,
+    ) -> Result<(), BackupErrorCode> {
         let output = self.runtime.directory().join(format!(
             ".checkpoint-restore-{}-{}.sqlite3",
             std::process::id(),
@@ -1021,6 +1061,7 @@ impl CheckpointTarget for SystemCheckpointTarget {
             &output,
             txid,
             &self.credentials,
+            timeout,
         )?;
         if plan.target_path != output || plan.replica != ReplicaKind::S3 || plan.max_txid != txid {
             return Err(BackupErrorCode::ExactTxidUnavailable);
@@ -1031,12 +1072,13 @@ impl CheckpointTarget for SystemCheckpointTarget {
     fn validate_media(
         &self,
         references: &[CheckpointMediaReference],
+        deadline: Instant,
     ) -> Result<(), BackupErrorCode> {
         for reference in references {
             let key = self.keyspace.media(reference.sha256);
             let metadata = self
                 .store
-                .head(&key)
+                .head_with_timeout(&key, remaining_checkpoint_time(deadline)?)
                 .map_err(|error| map_store_error(error.code))?
                 .ok_or(BackupErrorCode::RemoteMediaMissing)?;
             if metadata.byte_length != reference.byte_length
@@ -1054,23 +1096,27 @@ impl CheckpointTarget for SystemCheckpointTarget {
         &self,
         key: &R2ObjectKey,
         manifest: &CheckpointManifestV1,
+        deadline: Instant,
     ) -> Result<(), BackupErrorCode> {
         let expected = manifest
             .to_json()
             .map_err(|_| BackupErrorCode::MalformedManifest)?;
         let outcome = self
             .store
-            .put(PutObjectRequest {
-                key: key.clone(),
-                bytes: expected.clone(),
-                content_type: ObjectContentType::Json,
-                dara_sha256: None,
-                condition: PutCondition::IfAbsent,
-            })
+            .put_with_timeout(
+                PutObjectRequest {
+                    key: key.clone(),
+                    bytes: expected.clone(),
+                    content_type: ObjectContentType::Json,
+                    dara_sha256: None,
+                    condition: PutCondition::IfAbsent,
+                },
+                remaining_checkpoint_time(deadline)?,
+            )
             .map_err(|error| map_store_error(error.code))?;
         let stored = self
             .store
-            .get(key)
+            .get_with_timeout(key, remaining_checkpoint_time(deadline)?)
             .map_err(|error| map_store_error(error.code))?;
         if outcome == PutObjectOutcome::ConditionNotMet && stored.bytes != expected {
             return Err(BackupErrorCode::ImmutableObjectConflict);
@@ -1169,7 +1215,11 @@ fn exact_restore_dry_run(
     output_path: &Path,
     txid: LitestreamTxid,
     credentials: &R2Credentials,
+    timeout: Duration,
 ) -> Result<super::litestream::RestorePlan, BackupErrorCode> {
+    if timeout.is_zero() {
+        return Err(BackupErrorCode::NetworkTimeout);
+    }
     if !database_path.is_absolute() || !output_path.is_absolute() {
         return Err(BackupErrorCode::RestoreValidationFailed);
     }
@@ -1216,7 +1266,9 @@ fn exact_restore_dry_run(
             return Err(BackupErrorCode::WorkerUnavailable);
         }
     };
-    let deadline = Instant::now() + EXACT_RESTORE_TIMEOUT;
+    let deadline = Instant::now()
+        .checked_add(timeout.min(EXACT_RESTORE_TIMEOUT))
+        .ok_or(BackupErrorCode::NetworkTimeout)?;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -1311,6 +1363,7 @@ mod tests {
     struct FakeTarget {
         events: Arc<Mutex<Vec<TargetEvent>>>,
         failure: Option<TargetFailureStage>,
+        exact_txid_delay: Option<Duration>,
         manifest: Arc<Mutex<Option<Vec<u8>>>>,
     }
 
@@ -1319,8 +1372,14 @@ mod tests {
             Self {
                 events: Arc::new(Mutex::new(Vec::new())),
                 failure,
+                exact_txid_delay: None,
                 manifest: Arc::new(Mutex::new(None)),
             }
+        }
+
+        fn with_exact_txid_delay(mut self, delay: Duration) -> Self {
+            self.exact_txid_delay = Some(delay);
+            self
         }
 
         fn events(&self) -> Vec<TargetEvent> {
@@ -1332,11 +1391,22 @@ mod tests {
     }
 
     impl CheckpointTarget for FakeTarget {
-        fn validate_exact_txid(&self, _txid: LitestreamTxid) -> Result<(), BackupErrorCode> {
+        fn validate_exact_txid(
+            &self,
+            _txid: LitestreamTxid,
+            timeout: Duration,
+        ) -> Result<(), BackupErrorCode> {
             self.events
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(TargetEvent::ExactTxid);
+            if self.exact_txid_delay.is_some_and(|delay| delay > timeout) {
+                thread::sleep(timeout);
+                return Err(BackupErrorCode::NetworkTimeout);
+            }
+            if let Some(delay) = self.exact_txid_delay {
+                thread::sleep(delay);
+            }
             if self.failure == Some(TargetFailureStage::ExactTxid) {
                 return Err(BackupErrorCode::ExactTxidUnavailable);
             }
@@ -1346,6 +1416,7 @@ mod tests {
         fn validate_media(
             &self,
             _references: &[CheckpointMediaReference],
+            _deadline: Instant,
         ) -> Result<(), BackupErrorCode> {
             self.events
                 .lock()
@@ -1361,6 +1432,7 @@ mod tests {
             &self,
             _key: &R2ObjectKey,
             manifest: &CheckpointManifestV1,
+            _deadline: Instant,
         ) -> Result<(), BackupErrorCode> {
             self.events
                 .lock()
@@ -1417,6 +1489,7 @@ mod tests {
         fn open(
             &self,
             _config: &OffsiteBackupConfig,
+            _deadline: Instant,
         ) -> Result<Box<dyn CheckpointTarget>, BackupErrorCode> {
             Ok(Box::new(self.target.clone()))
         }
@@ -1464,11 +1537,11 @@ mod tests {
             }
         }
 
-        fn sync_local(&self) -> Result<LitestreamTxid, BackupErrorCode> {
+        fn sync_local(&self, _timeout: Duration) -> Result<LitestreamTxid, BackupErrorCode> {
             Ok(self.local_txid)
         }
 
-        fn sync_remote(&self) -> Result<SyncResult, BackupErrorCode> {
+        fn sync_remote(&self, _timeout: Duration) -> Result<SyncResult, BackupErrorCode> {
             if let Some(callback) = self
                 .before_remote
                 .lock()
@@ -1521,6 +1594,20 @@ mod tests {
         runtime: Arc<dyn CheckpointRuntime>,
         target: &FakeTarget,
     ) -> Result<CheckpointId, BackupErrorCode> {
+        run_checkpoint_with_deadline(
+            database,
+            runtime,
+            target,
+            Instant::now() + Duration::from_secs(1),
+        )
+    }
+
+    fn run_checkpoint_with_deadline(
+        database: &Database,
+        runtime: Arc<dyn CheckpointRuntime>,
+        target: &FakeTarget,
+        deadline: Instant,
+    ) -> Result<CheckpointId, BackupErrorCode> {
         let status = Mutex::new(CheckpointBackupStatus::default());
         create_checkpoint(
             &database.client(),
@@ -1532,7 +1619,7 @@ mod tests {
             "test",
             &status,
             true,
-            Instant::now() + Duration::from_secs(1),
+            deadline,
         )
     }
 
@@ -1994,6 +2081,27 @@ mod tests {
     }
 
     #[test]
+    fn finalization_stops_when_the_shared_checkpoint_deadline_expires() {
+        let (_directory, database, _config) = enabled_database();
+        let target = FakeTarget::new(None).with_exact_txid_delay(Duration::from_millis(500));
+        let started = Instant::now();
+        let error = run_checkpoint_with_deadline(
+            &database,
+            Arc::new(FakeRuntime::caught_up()),
+            &target,
+            started + Duration::from_millis(100),
+        )
+        .expect_err("checkpoint must respect its deadline");
+
+        assert_eq!(error, BackupErrorCode::NetworkTimeout);
+        assert_eq!(target.events(), vec![TargetEvent::ExactTxid]);
+        assert!(
+            started.elapsed() < Duration::from_millis(300),
+            "finalization outlived the shared deadline"
+        );
+    }
+
+    #[test]
     fn immutable_manifest_create_is_idempotent_but_rejects_different_existing_bytes() {
         let directory = tempfile::tempdir().expect("runtime");
         let keyspace = R2Target {
@@ -2020,10 +2128,10 @@ mod tests {
         let (manifest, key) =
             manifest_fixture(&keyspace, CheckpointId::new(), ReplicaEpochId::new());
         target
-            .publish_and_verify_manifest(&key, &manifest)
+            .publish_and_verify_manifest(&key, &manifest, Instant::now() + Duration::from_secs(5))
             .expect("first publication");
         target
-            .publish_and_verify_manifest(&key, &manifest)
+            .publish_and_verify_manifest(&key, &manifest, Instant::now() + Duration::from_secs(5))
             .expect("idempotent retry");
         assert_eq!(
             store.operations(),
@@ -2047,7 +2155,11 @@ mod tests {
             })
             .expect("seed conflict");
         assert_eq!(
-            target.publish_and_verify_manifest(&conflicting_key, &conflicting_manifest),
+            target.publish_and_verify_manifest(
+                &conflicting_key,
+                &conflicting_manifest,
+                Instant::now() + Duration::from_secs(5),
+            ),
             Err(BackupErrorCode::ImmutableObjectConflict)
         );
 
@@ -2055,7 +2167,11 @@ mod tests {
             manifest_fixture(&keyspace, CheckpointId::new(), ReplicaEpochId::new());
         store.fail_next(ObjectOperation::Get, ObjectStoreErrorCode::Network);
         assert_eq!(
-            target.publish_and_verify_manifest(&readback_key, &readback_manifest),
+            target.publish_and_verify_manifest(
+                &readback_key,
+                &readback_manifest,
+                Instant::now() + Duration::from_secs(5),
+            ),
             Err(BackupErrorCode::NetworkOffline)
         );
     }
