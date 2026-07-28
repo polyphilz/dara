@@ -82,6 +82,12 @@ enum CoordinatorSignal {
     Shutdown,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum RemoteEvidenceState {
+    Valid,
+    Invalid,
+}
+
 trait CheckpointRuntime: Send + Sync {
     fn status(&self) -> RelationalBackupStatus;
     fn sync_local(&self) -> Result<LitestreamTxid, BackupErrorCode>;
@@ -357,7 +363,7 @@ fn checkpoint_worker(
     let mut dirty: Option<DirtyWindow> = None;
     let mut next_automatic_attempt = Instant::now();
     let mut next_remote_evidence_check = Instant::now();
-    let mut remote_evidence_invalid = false;
+    let mut remote_evidence = RemoteEvidenceState::Valid;
 
     loop {
         let signal = match receiver.recv_timeout(schedule.poll_interval) {
@@ -373,6 +379,7 @@ fn checkpoint_worker(
                 let final_factory = Arc::clone(&factory);
                 let final_version = dara_version.clone();
                 let final_status = Arc::clone(&status);
+                let final_evidence = remote_evidence;
                 let (done, completed) = mpsc::sync_channel(1);
                 match thread::Builder::new()
                     .name("dara-offsite-checkpoint-final".into())
@@ -384,6 +391,7 @@ fn checkpoint_worker(
                             final_factory.as_ref(),
                             &final_version,
                             &final_status,
+                            final_evidence,
                         );
                         let _ = done.send(());
                     }) {
@@ -411,7 +419,7 @@ fn checkpoint_worker(
                 );
                 if result.is_ok() {
                     dirty = None;
-                    remote_evidence_invalid = false;
+                    remote_evidence = RemoteEvidenceState::Valid;
                     next_remote_evidence_check = Instant::now() + schedule.remote_evidence_interval;
                 }
                 let _ = reply.send(result);
@@ -432,7 +440,7 @@ fn checkpoint_worker(
         };
         let Some(config) = config.filter(|config| config.enabled) else {
             dirty = None;
-            remote_evidence_invalid = false;
+            remote_evidence = RemoteEvidenceState::Valid;
             *lock_status(&status) = CheckpointBackupStatus::default();
             continue;
         };
@@ -448,7 +456,7 @@ fn checkpoint_worker(
         let current_checkpoint = state.last_published.as_ref().is_some_and(|published| {
             published_covers_config(published, &config, state.content_revision)
         });
-        if current_checkpoint && !remote_evidence_invalid {
+        if current_checkpoint && remote_evidence == RemoteEvidenceState::Valid {
             dirty = None;
             if Instant::now() >= next_remote_evidence_check {
                 let evidence = validate_last_published_evidence(
@@ -467,7 +475,7 @@ fn checkpoint_worker(
                     }
                     Err(error) => {
                         set_failure_status(&status, error);
-                        remote_evidence_invalid = true;
+                        remote_evidence = RemoteEvidenceState::Invalid;
                         dirty = Some(DirtyWindow {
                             revision: state.content_revision,
                             first_seen: Instant::now(),
@@ -499,7 +507,7 @@ fn checkpoint_worker(
             );
             if result.is_ok() {
                 dirty = None;
-                remote_evidence_invalid = false;
+                remote_evidence = RemoteEvidenceState::Valid;
                 next_remote_evidence_check = now + schedule.remote_evidence_interval;
             } else {
                 next_automatic_attempt = now + schedule.retry_delay;
@@ -515,6 +523,7 @@ fn attempt_final_checkpoint(
     factory: &dyn CheckpointTargetFactory,
     dara_version: &str,
     status: &Mutex<CheckpointBackupStatus>,
+    remote_evidence: RemoteEvidenceState,
 ) {
     let state = match database.load_offsite_checkpoint_schedule_state() {
         Ok(state) => state,
@@ -524,9 +533,11 @@ fn attempt_final_checkpoint(
         Ok(Some(config)) if config.enabled => config,
         _ => return,
     };
-    if state.last_published.as_ref().is_some_and(|published| {
-        published_covers_config(published, &config, state.content_revision)
-    }) {
+    if remote_evidence == RemoteEvidenceState::Valid
+        && state.last_published.as_ref().is_some_and(|published| {
+            published_covers_config(published, &config, state.content_revision)
+        })
+    {
         return;
     }
     let deadline = Instant::now() + CHECKPOINT_SHUTDOWN_BUDGET;
@@ -788,12 +799,13 @@ fn validate_last_published_evidence(
 ) -> Result<(), BackupErrorCode> {
     let target = factory.open(config)?;
     target.validate_published_manifest(published)?;
-    match target.validate_published_media(&published.referenced_media) {
+    let checked_at = now_millis().map_err(|_| BackupErrorCode::WorkerUnavailable)?;
+    let sampled_media = rotating_media_evidence_sample(&published.referenced_media, checked_at)?;
+    match target.validate_published_media(sampled_media) {
         Err(
             error @ (BackupErrorCode::RemoteMediaMissing | BackupErrorCode::RemoteMediaCorrupt),
         ) => {
-            let sha256s = published
-                .referenced_media
+            let sha256s = sampled_media
                 .iter()
                 .map(|reference| reference.sha256)
                 .collect();
@@ -802,7 +814,7 @@ fn validate_last_published_evidence(
                     published.backup_set_id.clone(),
                     sha256s,
                     error,
-                    now_millis().map_err(|_| BackupErrorCode::WorkerUnavailable)?,
+                    checked_at,
                 )
                 .map_err(map_database_error)?;
             media.wake();
@@ -810,6 +822,23 @@ fn validate_last_published_evidence(
         }
         result => result,
     }
+}
+
+fn rotating_media_evidence_sample(
+    references: &[CheckpointMediaReference],
+    checked_at: i64,
+) -> Result<&[CheckpointMediaReference], BackupErrorCode> {
+    if references.is_empty() {
+        return Ok(&[]);
+    }
+    let checked_at = u64::try_from(checked_at).map_err(|_| BackupErrorCode::WorkerUnavailable)?;
+    let interval_millis = u64::try_from(REMOTE_EVIDENCE_INTERVAL.as_millis())
+        .map_err(|_| BackupErrorCode::WorkerUnavailable)?;
+    let reference_count =
+        u64::try_from(references.len()).map_err(|_| BackupErrorCode::WorkerUnavailable)?;
+    let sample_index = usize::try_from((checked_at / interval_millis) % reference_count)
+        .map_err(|_| BackupErrorCode::WorkerUnavailable)?;
+    Ok(&references[sample_index..sample_index + 1])
 }
 
 fn refresh_last_complete(
@@ -1628,6 +1657,33 @@ mod tests {
     }
 
     #[test]
+    fn media_evidence_sampling_is_bounded_and_rotates_with_wall_time() {
+        let references = [0x11, 0x22, 0x33].map(|byte| CheckpointMediaReference {
+            sha256: ContentSha256::from_bytes([byte; 32]),
+            byte_length: 10,
+        });
+        let interval =
+            i64::try_from(REMOTE_EVIDENCE_INTERVAL.as_millis()).expect("interval milliseconds");
+
+        for (slot, expected) in references.iter().enumerate() {
+            let checked_at = interval
+                .checked_mul(i64::try_from(slot).expect("slot"))
+                .expect("sample timestamp");
+            assert_eq!(
+                rotating_media_evidence_sample(&references, checked_at).expect("sample"),
+                std::slice::from_ref(expected)
+            );
+        }
+        assert_eq!(
+            rotating_media_evidence_sample(&references, interval * 3).expect("wrapped sample"),
+            &references[..1]
+        );
+        assert!(rotating_media_evidence_sample(&[], 0)
+            .expect("empty sample")
+            .is_empty());
+    }
+
+    #[test]
     fn backend_backup_now_bypasses_debounce_and_automatic_scheduler_stays_idle_after_publish() {
         let (_directory, database, _config) = enabled_database();
         let target = FakeTarget::new(None);
@@ -1736,6 +1792,57 @@ mod tests {
             );
             service.shutdown();
         }
+    }
+
+    #[test]
+    fn shutdown_repairs_a_checkpoint_with_known_invalid_remote_evidence() {
+        let (_directory, database, _config) = enabled_database();
+        let target = FakeTarget::new(Some(TargetFailureStage::ValidatePublished));
+        let service = CheckpointCoordinator::start_with_parts(
+            database.client(),
+            Arc::new(FakeMediaWorker),
+            Arc::new(FakeRuntime::caught_up()),
+            Arc::new(FakeTargetFactory {
+                target: target.clone(),
+            }),
+            "test".into(),
+            CoordinatorSchedule {
+                debounce: Duration::from_secs(60),
+                maximum_delay: Duration::from_secs(300),
+                remote_evidence_interval: Duration::from_millis(20),
+                ..test_schedule()
+            },
+        );
+        service.backup_now().expect("initial checkpoint");
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < deadline
+            && service.status().last_error_code != Some(BackupErrorCode::MalformedManifest)
+        {
+            thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(
+            service.status().last_error_code,
+            Some(BackupErrorCode::MalformedManifest)
+        );
+        assert_eq!(
+            target
+                .events()
+                .into_iter()
+                .filter(|event| *event == TargetEvent::Publish)
+                .count(),
+            1
+        );
+
+        service.shutdown();
+
+        assert_eq!(
+            target
+                .events()
+                .into_iter()
+                .filter(|event| *event == TargetEvent::Publish)
+                .count(),
+            2
+        );
     }
 
     #[test]
