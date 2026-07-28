@@ -61,6 +61,8 @@ const BUCKET_ENV: &str = "DARA_LITESTREAM_R2_BUCKET";
 const PREFIX_ENV: &str = "DARA_LITESTREAM_R2_PREFIX";
 const ACCESS_KEY_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCESS_KEY_ID";
 const SECRET_ACCESS_KEY_ENV: &str = "DARA_LITESTREAM_R2_SECRET_ACCESS_KEY";
+const RESTORE_RUNTIME_PREFIX: &str = ".dara-ls-restore-";
+const RESTORE_RUNTIME_CREATE_ATTEMPTS: usize = 8;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RemoteCheckpointSelector {
@@ -626,11 +628,11 @@ impl RelationalRestore for SystemRelationalRestore {
         txid: LitestreamTxid,
         output: &Path,
     ) -> Result<(), BackupErrorCode> {
-        let (runtime, database_path) = self.prepare_config(task_root, epoch)?;
+        let prepared = self.prepare_config(task_root, epoch)?;
         let result = execute_restore(
             &self.binary,
-            runtime.config(),
-            &database_path,
+            prepared.runtime.config(),
+            &prepared.database_path,
             output,
             txid,
             &self.credentials,
@@ -649,11 +651,11 @@ impl RelationalRestore for SystemRelationalRestore {
         txid: LitestreamTxid,
         output: &Path,
     ) -> Result<(), BackupErrorCode> {
-        let (runtime, database_path) = self.prepare_config(task_root, epoch)?;
+        let prepared = self.prepare_config(task_root, epoch)?;
         let result = execute_restore(
             &self.binary,
-            runtime.config(),
-            &database_path,
+            prepared.runtime.config(),
+            &prepared.database_path,
             output,
             txid,
             &self.credentials,
@@ -671,8 +673,9 @@ impl SystemRelationalRestore {
         &self,
         task_root: &Path,
         epoch: &ReplicaEpochId,
-    ) -> Result<(LitestreamRuntimePaths, PathBuf), BackupErrorCode> {
-        let runtime = LitestreamRuntimePaths::new(task_root)
+    ) -> Result<PreparedRestoreRuntime, BackupErrorCode> {
+        let runtime_root = ShortRestoreRuntimeRoot::create()?;
+        let runtime = LitestreamRuntimePaths::new(runtime_root.path())
             .map_err(|_| BackupErrorCode::LitestreamUnavailable)?;
         let database_path = task_root.join("remote-dara.sqlite3");
         let replica_path = self.target.keyspace().litestream(epoch);
@@ -689,8 +692,81 @@ impl SystemRelationalRestore {
         runtime
             .write_config(&config)
             .map_err(|_| BackupErrorCode::LitestreamUnavailable)?;
-        Ok((runtime, database_path))
+        Ok(PreparedRestoreRuntime {
+            _root: runtime_root,
+            runtime,
+            database_path,
+        })
     }
+}
+
+struct PreparedRestoreRuntime {
+    _root: ShortRestoreRuntimeRoot,
+    runtime: LitestreamRuntimePaths,
+    database_path: PathBuf,
+}
+
+struct ShortRestoreRuntimeRoot {
+    path: PathBuf,
+}
+
+impl ShortRestoreRuntimeRoot {
+    fn create() -> Result<Self, BackupErrorCode> {
+        let base = restore_runtime_base();
+        let base = fs::canonicalize(base).map_err(|_| BackupErrorCode::LitestreamUnavailable)?;
+        for _ in 0..RESTORE_RUNTIME_CREATE_ATTEMPTS {
+            let path = base.join(format!("{RESTORE_RUNTIME_PREFIX}{}", Uuid::now_v7()));
+            match create_private_runtime_directory(&path) {
+                Ok(()) => {
+                    if LitestreamRuntimePaths::new(&path).is_err() {
+                        let _ = fs::remove_dir(&path);
+                        return Err(BackupErrorCode::LitestreamUnavailable);
+                    }
+                    return Ok(Self { path });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(_) => return Err(BackupErrorCode::LitestreamUnavailable),
+            }
+        }
+        Err(BackupErrorCode::LitestreamUnavailable)
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for ShortRestoreRuntimeRoot {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("could not remove off-site restore runtime data: {error}");
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+fn restore_runtime_base() -> &'static Path {
+    Path::new("/tmp")
+}
+
+#[cfg(not(unix))]
+fn restore_runtime_base() -> PathBuf {
+    std::env::temp_dir()
+}
+
+#[cfg(unix)]
+fn create_private_runtime_directory(path: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+
+    let mut builder = fs::DirBuilder::new();
+    builder.mode(0o700).create(path)
+}
+
+#[cfg(not(unix))]
+fn create_private_runtime_directory(path: &Path) -> std::io::Result<()> {
+    fs::create_dir(path)
 }
 
 #[derive(Clone, Copy)]
@@ -2139,6 +2215,41 @@ mod tests {
         assert!(!first_path.exists());
         assert!(!second_path.exists());
         assert!(unrelated.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn system_restore_keeps_litestream_runtime_outside_long_task_roots() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = tempfile::tempdir().expect("restore base");
+        let task_root = base.path().join("x".repeat(160));
+        create_private_directory(&task_root).expect("long restore task");
+        assert!(LitestreamRuntimePaths::new(&task_root).is_err());
+        let restore = SystemRelationalRestore {
+            binary: PathBuf::from("/not-used/litestream"),
+            target: target(),
+            credentials: R2Credentials::new("1".repeat(32), "2".repeat(64)).expect("credentials"),
+        };
+
+        let prepared = restore
+            .prepare_config(&task_root, &ReplicaEpochId::new())
+            .expect("short restore runtime");
+        assert!(!prepared.runtime.directory().starts_with(&task_root));
+        assert!(prepared.database_path.starts_with(&task_root));
+        let runtime_root = prepared._root.path().to_owned();
+        assert!(runtime_root.exists());
+        assert_eq!(
+            fs::metadata(&runtime_root)
+                .expect("runtime root metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+
+        drop(prepared);
+        assert!(!runtime_root.exists());
     }
 
     #[cfg(unix)]
