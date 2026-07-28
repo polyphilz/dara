@@ -726,7 +726,7 @@ fn wait_for_media(
     loop {
         ensure_active_config(database, config)?;
         let summary = database
-            .load_offsite_media_summary(config.backup_set_id.clone())
+            .load_referenced_offsite_media_summary(config.backup_set_id.clone())
             .map_err(map_database_error)?;
         if summary.blocked_count > 0 {
             return Err(summary

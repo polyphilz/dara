@@ -58,6 +58,21 @@ enum EnqueueAvailableResult {
     Unchanged,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OffsiteMediaSummaryScope {
+    All,
+    Referenced,
+}
+
+impl OffsiteMediaSummaryScope {
+    const fn referenced_only(self) -> i64 {
+        match self {
+            Self::All => 0,
+            Self::Referenced => 1,
+        }
+    }
+}
+
 pub(super) fn enqueue_ingested(
     transaction: &Transaction<'_>,
     sha256: &[u8],
@@ -389,6 +404,25 @@ pub(super) fn summary(
     connection: &Connection,
     backup_set_id: &BackupSetId,
 ) -> Result<OffsiteMediaSummary> {
+    summary_for_scope(connection, backup_set_id, OffsiteMediaSummaryScope::All)
+}
+
+pub(super) fn referenced_summary(
+    connection: &Connection,
+    backup_set_id: &BackupSetId,
+) -> Result<OffsiteMediaSummary> {
+    summary_for_scope(
+        connection,
+        backup_set_id,
+        OffsiteMediaSummaryScope::Referenced,
+    )
+}
+
+fn summary_for_scope(
+    connection: &Connection,
+    backup_set_id: &BackupSetId,
+    scope: OffsiteMediaSummaryScope,
+) -> Result<OffsiteMediaSummary> {
     let counts = connection.query_row(
         "SELECT
             coalesce(sum(CASE WHEN state = ?2 THEN 1 ELSE 0 END), 0),
@@ -397,14 +431,23 @@ pub(super) fn summary(
             coalesce(sum(CASE WHEN state = ?4 THEN 1 ELSE 0 END), 0),
             coalesce(sum(CASE WHEN state = ?5 THEN 1 ELSE 0 END), 0),
             min(CASE WHEN state = ?3 THEN next_attempt_at END)
-         FROM offsite_media_object
-         WHERE backup_set_id = ?1",
+         FROM offsite_media_object AS object
+         WHERE object.backup_set_id = ?1
+           AND (
+                ?6 = 0
+                OR EXISTS (
+                    SELECT 1
+                    FROM image AS referenced
+                    WHERE referenced.sha256 = object.sha256
+                )
+           )",
         params![
             backup_set_id.as_str(),
             OffsiteMediaState::Pending.as_db_str(),
             OffsiteMediaState::RetryWait.as_db_str(),
             OffsiteMediaState::Verified.as_db_str(),
             OffsiteMediaState::Blocked.as_db_str(),
+            scope.referenced_only(),
         ],
         |row| {
             Ok((
@@ -419,12 +462,21 @@ pub(super) fn summary(
     )?;
     let last_error = connection
         .query_row(
-            "SELECT last_error_code
-             FROM offsite_media_object
-             WHERE backup_set_id = ?1 AND last_error_code IS NOT NULL
-             ORDER BY updated_at DESC, sha256
+            "SELECT object.last_error_code
+             FROM offsite_media_object AS object
+             WHERE object.backup_set_id = ?1
+               AND object.last_error_code IS NOT NULL
+               AND (
+                    ?2 = 0
+                    OR EXISTS (
+                        SELECT 1
+                        FROM image AS referenced
+                        WHERE referenced.sha256 = object.sha256
+                    )
+               )
+             ORDER BY object.updated_at DESC, object.sha256
              LIMIT 1",
-            [backup_set_id.as_str()],
+            params![backup_set_id.as_str(), scope.referenced_only()],
             |row| row.get::<_, String>(0),
         )
         .optional()?

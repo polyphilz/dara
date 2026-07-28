@@ -544,6 +544,12 @@ fn writer_loop(
             } => {
                 let _ = reply.send(offsite_media::summary(&main, &backup_set_id));
             }
+            WriterMessage::LoadReferencedOffsiteMediaSummary {
+                backup_set_id,
+                reply,
+            } => {
+                let _ = reply.send(offsite_media::referenced_summary(&main, &backup_set_id));
+            }
             WriterMessage::ReleaseOffsiteMediaRetries {
                 backup_set_id,
                 now,

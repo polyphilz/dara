@@ -157,6 +157,10 @@ pub(super) enum WriterMessage {
         backup_set_id: BackupSetId,
         reply: SyncSender<Result<OffsiteMediaSummary>>,
     },
+    LoadReferencedOffsiteMediaSummary {
+        backup_set_id: BackupSetId,
+        reply: SyncSender<Result<OffsiteMediaSummary>>,
+    },
     ReleaseOffsiteMediaRetries {
         backup_set_id: BackupSetId,
         now: i64,
@@ -303,6 +307,7 @@ impl WriterMessage {
             | Self::LoadOffsiteBackupConfig { .. }
             | Self::LoadNextOffsiteMedia { .. }
             | Self::LoadOffsiteMediaSummary { .. }
+            | Self::LoadReferencedOffsiteMediaSummary { .. }
             | Self::LoadMediaPayload { .. }
             | Self::LoadOffsiteCheckpointScheduleState { .. } => WriterContentEffect::ReadOnly,
             Self::CreateSnapshotPair { .. } | Self::Shutdown => WriterContentEffect::Lifecycle,
@@ -715,6 +720,22 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::LoadOffsiteMediaSummary {
+                backup_set_id,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_referenced_offsite_media_summary(
+        &self,
+        backup_set_id: BackupSetId,
+    ) -> Result<OffsiteMediaSummary> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadReferencedOffsiteMediaSummary {
                 backup_set_id,
                 reply,
             })
