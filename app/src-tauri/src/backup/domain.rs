@@ -861,6 +861,20 @@ pub(crate) struct CheckpointManifestInput {
     pub(crate) referenced_hash_set_sha256: ContentSha256,
 }
 
+pub(crate) struct PublishedCheckpointEvidence<'a> {
+    pub(crate) checkpoint_id: &'a CheckpointId,
+    pub(crate) backup_set_id: &'a BackupSetId,
+    pub(crate) replica_epoch_id: &'a ReplicaEpochId,
+    pub(crate) content_revision: u64,
+    pub(crate) dara_version: &'a str,
+    pub(crate) main_migration_head: u32,
+    pub(crate) media_migration_head: u32,
+    pub(crate) referenced_hash_count: u64,
+    pub(crate) referenced_total_bytes: u64,
+    pub(crate) referenced_hash_set_sha256: ContentSha256,
+    pub(crate) litestream_txid: &'a str,
+}
+
 impl CheckpointManifestV1 {
     pub(crate) fn new(input: CheckpointManifestInput) -> Result<Self, BackupDomainError> {
         if input.dara_version.is_empty()
@@ -935,17 +949,19 @@ impl CheckpointManifestV1 {
 
     pub(crate) fn matches_published_evidence(
         &self,
-        checkpoint_id: &CheckpointId,
-        backup_set_id: &BackupSetId,
-        replica_epoch_id: &ReplicaEpochId,
-        content_revision: u64,
-        litestream_txid: &str,
+        evidence: &PublishedCheckpointEvidence<'_>,
     ) -> bool {
-        self.checkpoint_id == *checkpoint_id
-            && self.backup_set_id == *backup_set_id
-            && self.replica_epoch_id == *replica_epoch_id
-            && self.content_revision == content_revision
-            && self.main.txid == litestream_txid
+        self.checkpoint_id == *evidence.checkpoint_id
+            && self.backup_set_id == *evidence.backup_set_id
+            && self.replica_epoch_id == *evidence.replica_epoch_id
+            && self.content_revision == evidence.content_revision
+            && self.dara_version == evidence.dara_version
+            && self.main.migration_head == evidence.main_migration_head
+            && self.media.migration_head == evidence.media_migration_head
+            && self.media.referenced_hash_count == evidence.referenced_hash_count
+            && self.media.referenced_total_bytes == evidence.referenced_total_bytes
+            && self.media.referenced_hash_set_sha256 == evidence.referenced_hash_set_sha256
+            && self.main.txid == evidence.litestream_txid
     }
 }
 
@@ -1072,10 +1088,13 @@ mod tests {
         let target = target();
         let keyspace = target.keyspace();
         let epoch = ReplicaEpochId::new();
+        let backup_set_id = BackupSetId::new();
+        let checkpoint_id = CheckpointId::new();
+        let reference_digest = ContentSha256::from_bytes([0xcd; 32]);
         let checkpoint = CheckpointManifestV1::new(CheckpointManifestInput {
-            backup_set_id: BackupSetId::new(),
+            backup_set_id: backup_set_id.clone(),
             replica_epoch_id: epoch.clone(),
-            checkpoint_id: CheckpointId::new(),
+            checkpoint_id: checkpoint_id.clone(),
             created_at: UtcTimestamp::parse("2026-07-27T16:28:33Z").expect("timestamp"),
             dara_version: "0.1.0".into(),
             content_revision: 42,
@@ -1085,11 +1104,31 @@ mod tests {
             media_migration_head: 2,
             referenced_hash_count: 1,
             referenced_total_bytes: 12,
-            referenced_hash_set_sha256: ContentSha256::from_bytes([0xcd; 32]),
+            referenced_hash_set_sha256: reference_digest,
         })
         .expect("checkpoint");
         let json = checkpoint.to_json().expect("checkpoint JSON");
         CheckpointManifestV1::from_json(&json, &keyspace).expect("checkpoint round trip");
+        let evidence = PublishedCheckpointEvidence {
+            checkpoint_id: &checkpoint_id,
+            backup_set_id: &backup_set_id,
+            replica_epoch_id: &epoch,
+            content_revision: 42,
+            dara_version: "0.1.0",
+            main_migration_head: 8,
+            media_migration_head: 2,
+            referenced_hash_count: 1,
+            referenced_total_bytes: 12,
+            referenced_hash_set_sha256: reference_digest,
+            litestream_txid: "0000000000000042",
+        };
+        assert!(checkpoint.matches_published_evidence(&evidence));
+        assert!(
+            !checkpoint.matches_published_evidence(&PublishedCheckpointEvidence {
+                referenced_total_bytes: 13,
+                ..evidence
+            })
+        );
 
         let other = R2Target {
             prefix: R2Prefix::parse("dara/other").expect("other prefix"),

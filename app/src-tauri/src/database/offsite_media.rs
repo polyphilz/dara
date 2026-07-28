@@ -537,6 +537,51 @@ pub(super) fn release_all_retries(
     Ok(changed as u64)
 }
 
+pub(super) fn requeue_remote_evidence(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+    sha256s: &[ContentSha256],
+    error_code: BackupErrorCode,
+    now: i64,
+) -> Result<u64> {
+    validate_timestamp(now, "remote media evidence timestamp")?;
+    if !matches!(
+        error_code,
+        BackupErrorCode::RemoteMediaMissing | BackupErrorCode::RemoteMediaCorrupt
+    ) {
+        return Err(invalid_media_state(
+            "remote media evidence has an unsupported error code",
+        ));
+    }
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut changed = 0_u64;
+    for sha256 in sha256s {
+        let updated = transaction.execute(
+            "UPDATE offsite_media_object
+             SET state = ?1,
+                 next_attempt_at = NULL,
+                 last_error_code = ?2,
+                 updated_at = max(updated_at, ?3)
+             WHERE backup_set_id = ?4
+               AND sha256 = ?5
+               AND state = ?6",
+            params![
+                OffsiteMediaState::Pending.as_db_str(),
+                error_code.as_db_str(),
+                now,
+                backup_set_id.as_str(),
+                sha256.as_bytes().as_slice(),
+                OffsiteMediaState::Verified.as_db_str(),
+            ],
+        )?;
+        changed = changed
+            .checked_add(updated as u64)
+            .ok_or_else(|| invalid_media_state("remote media requeue count overflow"))?;
+    }
+    transaction.commit()?;
+    Ok(changed)
+}
+
 pub(super) fn requeue_credential_failures(
     connection: &mut Connection,
     backup_set_id: &BackupSetId,

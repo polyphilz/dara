@@ -11,12 +11,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use sha2::{Digest, Sha256};
+
 use super::{
     credentials::{CredentialStore, MacOsKeychainCredentialStore, R2Credentials},
     domain::{
         BackupErrorCode, CheckpointBackupPhase, CheckpointId, CheckpointManifestInput,
-        CheckpointManifestV1, MediaBackupPhase, R2Keyspace, R2ObjectKey, UtcTimestamp,
-        OBJECT_FORMAT_VERSION,
+        CheckpointManifestV1, ContentSha256, MediaBackupPhase, PublishedCheckpointEvidence,
+        R2Keyspace, R2ObjectKey, UtcTimestamp, OBJECT_FORMAT_VERSION,
     },
     installation::InstallationIdentityStore,
     litestream::{
@@ -450,6 +452,8 @@ fn checkpoint_worker(
             dirty = None;
             if Instant::now() >= next_remote_evidence_check {
                 let evidence = validate_last_published_evidence(
+                    &database,
+                    media.as_ref(),
                     factory.as_ref(),
                     &config,
                     state
@@ -776,12 +780,36 @@ fn ensure_litestream_healthy(status: &RelationalBackupStatus) -> Result<(), Back
 }
 
 fn validate_last_published_evidence(
+    database: &DatabaseClient,
+    media: &dyn CheckpointMediaWorker,
     factory: &dyn CheckpointTargetFactory,
     config: &OffsiteBackupConfig,
     published: &PublishedOffsiteCheckpoint,
 ) -> Result<(), BackupErrorCode> {
     let target = factory.open(config)?;
-    target.validate_published_manifest(published)
+    target.validate_published_manifest(published)?;
+    match target.validate_published_media(&published.referenced_media) {
+        Err(
+            error @ (BackupErrorCode::RemoteMediaMissing | BackupErrorCode::RemoteMediaCorrupt),
+        ) => {
+            let sha256s = published
+                .referenced_media
+                .iter()
+                .map(|reference| reference.sha256)
+                .collect();
+            database
+                .requeue_offsite_media_evidence(
+                    published.backup_set_id.clone(),
+                    sha256s,
+                    error,
+                    now_millis().map_err(|_| BackupErrorCode::WorkerUnavailable)?,
+                )
+                .map_err(map_database_error)?;
+            media.wake();
+            Err(error)
+        }
+        result => result,
+    }
 }
 
 fn refresh_last_complete(
@@ -876,6 +904,10 @@ trait CheckpointTarget: Send + Sync {
     fn validate_published_manifest(
         &self,
         published: &PublishedOffsiteCheckpoint,
+    ) -> Result<(), BackupErrorCode>;
+    fn validate_published_media(
+        &self,
+        references: &[CheckpointMediaReference],
     ) -> Result<(), BackupErrorCode>;
 }
 
@@ -1057,15 +1089,45 @@ impl CheckpointTarget for SystemCheckpointTarget {
                 .object_key(&self.keyspace)
                 .map_err(|_| BackupErrorCode::MalformedManifest)?
                 != key
-            || !manifest.matches_published_evidence(
-                &published.checkpoint_id,
-                &published.backup_set_id,
-                &published.replica_epoch_id,
-                published.content_revision,
-                &published.litestream_txid.to_string(),
-            )
+            || !manifest.matches_published_evidence(&PublishedCheckpointEvidence {
+                checkpoint_id: &published.checkpoint_id,
+                backup_set_id: &published.backup_set_id,
+                replica_epoch_id: &published.replica_epoch_id,
+                content_revision: published.content_revision,
+                dara_version: &published.dara_version,
+                main_migration_head: published.main_migration_head,
+                media_migration_head: published.media_migration_head,
+                referenced_hash_count: published.referenced_hash_count,
+                referenced_total_bytes: published.referenced_total_bytes,
+                referenced_hash_set_sha256: published.referenced_hash_set_sha256,
+                litestream_txid: &published.litestream_txid.to_string(),
+            })
         {
             return Err(BackupErrorCode::MalformedManifest);
+        }
+        Ok(())
+    }
+
+    fn validate_published_media(
+        &self,
+        references: &[CheckpointMediaReference],
+    ) -> Result<(), BackupErrorCode> {
+        for reference in references {
+            let key = self.keyspace.media(reference.sha256);
+            let stored = self
+                .store
+                .get(&key)
+                .map_err(|error| map_store_error(error.code))?;
+            let actual_sha256 = ContentSha256::from_bytes(Sha256::digest(&stored.bytes).into());
+            if stored.metadata.byte_length != reference.byte_length
+                || stored.metadata.byte_length != stored.bytes.len() as u64
+                || stored.metadata.content_type != Some(ObjectContentType::Webp)
+                || stored.metadata.dara_sha256 != Some(reference.sha256)
+                || stored.metadata.object_format_version != Some(OBJECT_FORMAT_VERSION)
+                || actual_sha256 != reference.sha256
+            {
+                return Err(BackupErrorCode::RemoteMediaCorrupt);
+            }
         }
         Ok(())
     }
@@ -1204,6 +1266,7 @@ mod tests {
         Media,
         Publish,
         ValidatePublished,
+        ValidatePublishedMedia,
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1212,6 +1275,7 @@ mod tests {
         Media,
         Publish,
         ValidatePublished,
+        ValidatePublishedMedia,
     }
 
     #[derive(Clone)]
@@ -1297,6 +1361,20 @@ mod tests {
                 .push(TargetEvent::ValidatePublished);
             if self.failure == Some(TargetFailureStage::ValidatePublished) {
                 return Err(BackupErrorCode::MalformedManifest);
+            }
+            Ok(())
+        }
+
+        fn validate_published_media(
+            &self,
+            _references: &[CheckpointMediaReference],
+        ) -> Result<(), BackupErrorCode> {
+            self.events
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .push(TargetEvent::ValidatePublishedMedia);
+            if self.failure == Some(TargetFailureStage::ValidatePublishedMedia) {
+                return Err(BackupErrorCode::RemoteMediaMissing);
             }
             Ok(())
         }
@@ -1618,41 +1696,46 @@ mod tests {
 
     #[test]
     fn automatic_scheduler_republishes_when_same_revision_remote_evidence_is_invalid() {
-        let (_directory, database, _config) = enabled_database();
-        let target = FakeTarget::new(Some(TargetFailureStage::ValidatePublished));
-        let service = CheckpointCoordinator::start_with_parts(
-            database.client(),
-            Arc::new(FakeMediaWorker),
-            Arc::new(FakeRuntime::caught_up()),
-            Arc::new(FakeTargetFactory {
-                target: target.clone(),
-            }),
-            "test".into(),
-            CoordinatorSchedule {
-                remote_evidence_interval: Duration::from_millis(20),
-                ..test_schedule()
-            },
-        );
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while Instant::now() < deadline
-            && target
-                .events()
-                .into_iter()
-                .filter(|event| *event == TargetEvent::Publish)
-                .count()
-                < 2
-        {
-            thread::sleep(Duration::from_millis(5));
+        for failure in [
+            TargetFailureStage::ValidatePublished,
+            TargetFailureStage::ValidatePublishedMedia,
+        ] {
+            let (_directory, database, _config) = enabled_database();
+            let target = FakeTarget::new(Some(failure));
+            let service = CheckpointCoordinator::start_with_parts(
+                database.client(),
+                Arc::new(FakeMediaWorker),
+                Arc::new(FakeRuntime::caught_up()),
+                Arc::new(FakeTargetFactory {
+                    target: target.clone(),
+                }),
+                "test".into(),
+                CoordinatorSchedule {
+                    remote_evidence_interval: Duration::from_millis(20),
+                    ..test_schedule()
+                },
+            );
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Instant::now() < deadline
+                && target
+                    .events()
+                    .into_iter()
+                    .filter(|event| *event == TargetEvent::Publish)
+                    .count()
+                    < 2
+            {
+                thread::sleep(Duration::from_millis(5));
+            }
+            assert!(
+                target
+                    .events()
+                    .into_iter()
+                    .filter(|event| *event == TargetEvent::Publish)
+                    .count()
+                    >= 2
+            );
+            service.shutdown();
         }
-        assert!(
-            target
-                .events()
-                .into_iter()
-                .filter(|event| *event == TargetEvent::Publish)
-                .count()
-                >= 2
-        );
-        service.shutdown();
     }
 
     #[test]
@@ -1867,6 +1950,58 @@ mod tests {
         assert_eq!(
             target.publish_and_verify_manifest(&readback_key, &readback_manifest),
             Err(BackupErrorCode::NetworkOffline)
+        );
+    }
+
+    #[test]
+    fn published_media_evidence_downloads_and_hashes_the_remote_object() {
+        let directory = tempfile::tempdir().expect("runtime");
+        let keyspace = R2Target {
+            account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef").expect("account ID"),
+            jurisdiction: R2Jurisdiction::Default,
+            bucket: R2BucketName::parse("dara-test").expect("bucket"),
+            prefix: R2Prefix::parse("dara/media-evidence-test").expect("prefix"),
+        }
+        .keyspace();
+        let store = Arc::new(FakeObjectStore::default());
+        let target = SystemCheckpointTarget {
+            store: store.clone(),
+            keyspace: keyspace.clone(),
+            binary: PathBuf::from("/unused/litestream"),
+            runtime: LitestreamRuntimePaths::new(directory.path()).expect("runtime paths"),
+            database_path: directory.path().join("dara.sqlite3"),
+            credentials: R2Credentials::new(
+                "0123456789abcdef0123456789abcdef",
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            )
+            .expect("credentials"),
+        };
+        let expected_bytes = b"expected-media";
+        let expected_sha256 = ContentSha256::from_bytes(Sha256::digest(expected_bytes).into());
+        let reference = CheckpointMediaReference {
+            sha256: expected_sha256,
+            byte_length: expected_bytes.len() as u64,
+        };
+        store
+            .put(PutObjectRequest {
+                key: keyspace.media(expected_sha256),
+                bytes: b"corrupt-media!".to_vec(),
+                content_type: ObjectContentType::Webp,
+                dara_sha256: Some(expected_sha256),
+                condition: PutCondition::IfAbsent,
+            })
+            .expect("seed corrupt object");
+
+        assert_eq!(
+            target.validate_published_media(std::slice::from_ref(&reference)),
+            Err(BackupErrorCode::RemoteMediaCorrupt)
+        );
+        store
+            .delete(&keyspace.media(expected_sha256))
+            .expect("remove object");
+        assert_eq!(
+            target.validate_published_media(&[reference]),
+            Err(BackupErrorCode::RemoteMediaMissing)
         );
     }
 }

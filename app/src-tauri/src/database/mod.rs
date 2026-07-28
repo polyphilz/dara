@@ -583,6 +583,21 @@ fn writer_loop(
                     now,
                 ));
             }
+            WriterMessage::RequeueOffsiteMediaEvidence {
+                backup_set_id,
+                sha256s,
+                error_code,
+                now,
+                reply,
+            } => {
+                let _ = reply.send(offsite_media::requeue_remote_evidence(
+                    &mut main,
+                    &backup_set_id,
+                    &sha256s,
+                    error_code,
+                    now,
+                ));
+            }
             WriterMessage::PrepareOffsiteCheckpoint {
                 input,
                 local_sync,

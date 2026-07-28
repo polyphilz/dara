@@ -385,6 +385,71 @@ fn offsite_media_work_survives_offline_restart_and_converges_without_duplicates(
 }
 
 #[test]
+fn invalid_remote_evidence_requeues_verified_media_for_repair() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    let backup_set_id = BackupSetId::new();
+    client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            target: R2Target {
+                account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef")
+                    .expect("account ID"),
+                jurisdiction: R2Jurisdiction::Default,
+                bucket: R2BucketName::parse("dara-test").expect("bucket"),
+                prefix: R2Prefix::parse("dara/remote-evidence-repair").expect("prefix"),
+            },
+        })
+        .expect("backup configuration");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"remote-evidence-media".to_vec(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("image");
+    let now = super::now_millis().expect("time");
+    let candidate = client
+        .load_next_offsite_media(backup_set_id.clone(), now)
+        .expect("load candidate")
+        .expect("candidate");
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: candidate.sha256,
+            expected_attempt_count: candidate.attempt_count,
+            attempted_at: now,
+            outcome: OffsiteMediaAttemptOutcome::Verified,
+        })
+        .expect("verify candidate");
+
+    assert_eq!(
+        client
+            .requeue_offsite_media_evidence(
+                backup_set_id.clone(),
+                vec![candidate.sha256],
+                BackupErrorCode::RemoteMediaMissing,
+                now.saturating_add(1),
+            )
+            .expect("requeue invalid evidence"),
+        1
+    );
+    let requeued = client
+        .load_next_offsite_media(backup_set_id, now.saturating_add(1))
+        .expect("load requeued candidate")
+        .expect("requeued candidate");
+    assert_eq!(requeued.sha256, candidate.sha256);
+    assert_eq!(requeued.attempt_count, 1);
+}
+
+#[test]
 fn periodic_offsite_media_reconciliation_repairs_missing_desired_rows() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);

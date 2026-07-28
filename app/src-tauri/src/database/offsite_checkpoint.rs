@@ -51,6 +51,13 @@ pub(crate) struct PublishedOffsiteCheckpoint {
     pub(crate) replica_epoch_id: ReplicaEpochId,
     pub(crate) config_revision: i64,
     pub(crate) content_revision: u64,
+    pub(crate) dara_version: String,
+    pub(crate) main_migration_head: u32,
+    pub(crate) media_migration_head: u32,
+    pub(crate) referenced_media: Vec<CheckpointMediaReference>,
+    pub(crate) referenced_hash_count: u64,
+    pub(crate) referenced_total_bytes: u64,
+    pub(crate) referenced_hash_set_sha256: ContentSha256,
     pub(crate) litestream_txid: LitestreamTxid,
     pub(crate) manifest_object_key: String,
     pub(crate) created_at: i64,
@@ -64,6 +71,12 @@ pub(crate) struct OffsiteCheckpointScheduleState {
 
 pub(crate) trait LocalCheckpointSync: Send + Sync {
     fn sync_local(&self) -> std::result::Result<LitestreamTxid, BackupErrorCode>;
+}
+
+#[derive(Clone, Copy)]
+enum ReferenceStateRequirement {
+    Any,
+    Verified,
 }
 
 pub(super) fn prepare_and_fence(
@@ -291,6 +304,12 @@ pub(super) fn schedule_state(connection: &Connection) -> Result<OffsiteCheckpoin
                 replica_epoch_id,
                 config_revision,
                 content_revision,
+                dara_version,
+                main_migration_head,
+                media_migration_head,
+                referenced_hash_count,
+                referenced_total_bytes,
+                referenced_hash_set_sha256,
                 litestream_txid,
                 manifest_object_key,
                 created_at
@@ -307,8 +326,14 @@ pub(super) fn schedule_state(connection: &Connection) -> Result<OffsiteCheckpoin
                     row.get::<_, i64>(3)?,
                     row.get::<_, i64>(4)?,
                     row.get::<_, String>(5)?,
-                    row.get::<_, String>(6)?,
+                    row.get::<_, i64>(6)?,
                     row.get::<_, i64>(7)?,
+                    row.get::<_, i64>(8)?,
+                    row.get::<_, i64>(9)?,
+                    row.get::<_, Vec<u8>>(10)?,
+                    row.get::<_, String>(11)?,
+                    row.get::<_, String>(12)?,
+                    row.get::<_, i64>(13)?,
                 ))
             },
         )
@@ -321,17 +346,68 @@ pub(super) fn schedule_state(connection: &Connection) -> Result<OffsiteCheckpoin
                 replica_epoch_id,
                 config_revision,
                 revision,
+                dara_version,
+                main_migration_head,
+                media_migration_head,
+                referenced_hash_count,
+                referenced_total_bytes,
+                referenced_hash_set_sha256,
                 txid,
                 manifest_object_key,
                 created_at,
             )| {
+                let backup_set_id = BackupSetId::parse(backup_set_id).map_err(invalid_domain)?;
+                let checkpoint_content_revision =
+                    non_negative_u64(revision, "checkpoint content revision")?;
+                let referenced_hash_count =
+                    non_negative_u64(referenced_hash_count, "checkpoint referenced hash count")?;
+                let referenced_total_bytes =
+                    non_negative_u64(referenced_total_bytes, "checkpoint referenced byte total")?;
+                let referenced_hash_set_sha256 =
+                    ContentSha256::from_slice(&referenced_hash_set_sha256)
+                        .map_err(invalid_domain)?;
+                let referenced_media = if checkpoint_content_revision == content_revision {
+                    let references = load_checkpoint_references(connection, &backup_set_id)?;
+                    let actual_hash_count = u64::try_from(references.len())
+                        .map_err(|_| invalid_checkpoint("too many checkpoint media references"))?;
+                    let actual_total_bytes =
+                        references.iter().try_fold(0_u64, |total, reference| {
+                            total.checked_add(reference.byte_length).ok_or_else(|| {
+                                invalid_checkpoint("checkpoint media byte total overflow")
+                            })
+                        })?;
+                    if actual_hash_count != referenced_hash_count
+                        || actual_total_bytes != referenced_total_bytes
+                        || hash_reference_set(&references) != referenced_hash_set_sha256
+                    {
+                        return Err(invalid_checkpoint(
+                            "checkpoint media integrity facts do not match current references",
+                        ));
+                    }
+                    references
+                } else {
+                    Vec::new()
+                };
                 Ok::<PublishedOffsiteCheckpoint, DatabaseError>(PublishedOffsiteCheckpoint {
                     checkpoint_id: CheckpointId::parse(checkpoint_id).map_err(invalid_domain)?,
-                    backup_set_id: BackupSetId::parse(backup_set_id).map_err(invalid_domain)?,
+                    backup_set_id,
                     replica_epoch_id: ReplicaEpochId::parse(replica_epoch_id)
                         .map_err(invalid_domain)?,
                     config_revision,
-                    content_revision: non_negative_u64(revision, "checkpoint content revision")?,
+                    content_revision: checkpoint_content_revision,
+                    dara_version,
+                    main_migration_head: positive_u32(
+                        main_migration_head,
+                        "checkpoint main migration head",
+                    )?,
+                    media_migration_head: positive_u32(
+                        media_migration_head,
+                        "checkpoint media migration head",
+                    )?,
+                    referenced_media,
+                    referenced_hash_count,
+                    referenced_total_bytes,
+                    referenced_hash_set_sha256,
                     litestream_txid: txid
                         .parse()
                         .map_err(|_| invalid_checkpoint("checkpoint TXID is invalid"))?,
@@ -410,10 +486,29 @@ fn load_active_config_revision(
 }
 
 fn load_verified_references(
-    transaction: &Transaction<'_>,
+    connection: &Connection,
     backup_set_id: &BackupSetId,
 ) -> Result<Vec<CheckpointMediaReference>> {
-    let mut statement = transaction.prepare(
+    load_references(
+        connection,
+        backup_set_id,
+        ReferenceStateRequirement::Verified,
+    )
+}
+
+fn load_checkpoint_references(
+    connection: &Connection,
+    backup_set_id: &BackupSetId,
+) -> Result<Vec<CheckpointMediaReference>> {
+    load_references(connection, backup_set_id, ReferenceStateRequirement::Any)
+}
+
+fn load_references(
+    connection: &Connection,
+    backup_set_id: &BackupSetId,
+    state_requirement: ReferenceStateRequirement,
+) -> Result<Vec<CheckpointMediaReference>> {
+    let mut statement = connection.prepare(
         "SELECT referenced.sha256, object.byte_length, object.state
          FROM (SELECT DISTINCT sha256 FROM image) AS referenced
          LEFT JOIN offsite_media_object AS object
@@ -434,7 +529,9 @@ fn load_verified_references(
         let Some((byte_length, state)) = byte_length.zip(state) else {
             return Err(DatabaseError::OffsiteCheckpointMediaIncomplete);
         };
-        if state != crate::backup::domain::OffsiteMediaState::Verified.as_db_str() {
+        if matches!(state_requirement, ReferenceStateRequirement::Verified)
+            && state != crate::backup::domain::OffsiteMediaState::Verified.as_db_str()
+        {
             return Err(DatabaseError::OffsiteCheckpointMediaIncomplete);
         }
         references.push(CheckpointMediaReference {
@@ -493,6 +590,11 @@ fn positive_u64(value: i64, field: &str) -> Result<u64> {
             .then_some(value)
             .ok_or_else(|| invalid_checkpoint(field))
     })
+}
+
+fn positive_u32(value: i64, field: &str) -> Result<u32> {
+    let value = positive_u64(value, field)?;
+    u32::try_from(value).map_err(|_| invalid_checkpoint(&format!("{field} is too large")))
 }
 
 fn stored_i64(value: u64, field: &str) -> Result<i64> {

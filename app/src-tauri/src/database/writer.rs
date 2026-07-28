@@ -8,7 +8,7 @@ use super::embedding_index::{
     SearchMaintenanceOperation, SearchMaintenanceReport,
 };
 use super::snapshot::CreatedSnapshot;
-use crate::backup::domain::BackupSetId;
+use crate::backup::domain::{BackupSetId, ContentSha256};
 
 use super::LocalCheckpointSync;
 use super::{
@@ -176,6 +176,13 @@ pub(super) enum WriterMessage {
         now: i64,
         reply: SyncSender<Result<u64>>,
     },
+    RequeueOffsiteMediaEvidence {
+        backup_set_id: BackupSetId,
+        sha256s: Vec<ContentSha256>,
+        error_code: BackupErrorCode,
+        now: i64,
+        reply: SyncSender<Result<u64>>,
+    },
     PrepareOffsiteCheckpoint {
         input: PrepareOffsiteCheckpointInput,
         local_sync: Arc<dyn LocalCheckpointSync>,
@@ -286,6 +293,7 @@ impl WriterMessage {
             | Self::ReleaseOffsiteMediaRetries { .. }
             | Self::ReleaseAllOffsiteMediaRetries { .. }
             | Self::RequeueOffsiteMediaCredentialFailures { .. }
+            | Self::RequeueOffsiteMediaEvidence { .. }
             | Self::PrepareOffsiteCheckpoint { .. }
             | Self::MarkOffsiteCheckpointFenced { .. }
             | Self::MarkOffsiteCheckpointReplicated { .. }
@@ -790,6 +798,28 @@ impl DatabaseClient {
         self.sender
             .send(WriterMessage::RequeueOffsiteMediaCredentialFailures {
                 backup_set_id,
+                now,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn requeue_offsite_media_evidence(
+        &self,
+        backup_set_id: BackupSetId,
+        sha256s: Vec<ContentSha256>,
+        error_code: BackupErrorCode,
+        now: i64,
+    ) -> Result<u64> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::RequeueOffsiteMediaEvidence {
+                backup_set_id,
+                sha256s,
+                error_code,
                 now,
                 reply,
             })
