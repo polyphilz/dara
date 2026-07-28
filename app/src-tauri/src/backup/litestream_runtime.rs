@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use zeroize::Zeroizing;
 
 use super::{
-    credentials::{CredentialStore, MacOsKeychainCredentialStore, R2Credentials},
+    credentials::{CredentialError, CredentialStore, MacOsKeychainCredentialStore, R2Credentials},
     domain::{BackupErrorCode, InstallationId, RelationalBackupPhase},
     installation::InstallationIdentityStore,
     litestream::{
@@ -484,6 +484,17 @@ fn is_transient(code: BackupErrorCode) -> bool {
     )
 }
 
+fn map_credential_start_error(error: CredentialError) -> RuntimeFailure {
+    let code = map_credential_error(error);
+    RuntimeFailure::new(
+        code,
+        matches!(
+            code,
+            BackupErrorCode::KeychainCredentialMissing | BackupErrorCode::KeychainUnavailable
+        ),
+    )
+}
+
 struct SystemRuntimeFactory<C> {
     data_root: PathBuf,
     database_path: PathBuf,
@@ -520,10 +531,7 @@ impl<C: CredentialStore> RuntimeFactory for SystemRuntimeFactory<C> {
         let credentials = self
             .credentials
             .load(&config.backup_set_id)
-            .map_err(|error| {
-                let code = map_credential_error(error);
-                RuntimeFailure::new(code, code == BackupErrorCode::KeychainUnavailable)
-            })?;
+            .map_err(map_credential_start_error)?;
         let installation_id = InstallationIdentityStore::new(&self.data_root)
             .and_then(|store| store.load_or_create())
             .map_err(|_| RuntimeFailure::new(BackupErrorCode::WorkerUnavailable, true))?;
@@ -1638,6 +1646,28 @@ mod tests {
         wait_until(Duration::from_secs(2), || {
             factory.starts() == 2 && service.status().phase == RelationalBackupPhase::Running
         });
+        service.shutdown();
+    }
+
+    #[test]
+    fn missing_credentials_retry_without_a_configuration_change() {
+        assert_eq!(
+            map_credential_start_error(CredentialError::Missing),
+            RuntimeFailure::new(BackupErrorCode::KeychainCredentialMissing, true)
+        );
+
+        let (_directory, database, _config) = test_database(true);
+        let (success, _exited) = successful_plan(&database.paths().main);
+        let factory = FakeRuntimeFactory::new([
+            StartPlan::Failure(map_credential_start_error(CredentialError::Missing)),
+            success,
+        ]);
+        let service = start_test_service(&database, factory.clone());
+
+        wait_until(Duration::from_secs(2), || {
+            factory.starts() == 2 && service.status().phase == RelationalBackupPhase::Running
+        });
+
         service.shutdown();
     }
 
