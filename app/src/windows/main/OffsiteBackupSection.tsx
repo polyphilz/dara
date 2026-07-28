@@ -58,6 +58,15 @@ const BackupConfirmation = {
 type BackupConfirmation =
   (typeof BackupConfirmation)[keyof typeof BackupConfirmation]
 
+const BackupStatusTone = {
+  Healthy: 'healthy',
+  Neutral: 'neutral',
+  Warning: 'warning',
+} as const
+
+type BackupStatusTone =
+  (typeof BackupStatusTone)[keyof typeof BackupStatusTone]
+
 const jurisdictionOptions = [
   { label: 'Automatic', value: R2Jurisdiction.Default },
   { label: 'European Union', value: R2Jurisdiction.Eu },
@@ -868,7 +877,7 @@ function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
         detail={`Prefix ${status.target?.prefix ?? 'unavailable'} · ${jurisdictionLabel(status.target?.jurisdiction)}`}
         label="R2 target"
         state={status.target?.bucket ?? 'Unavailable'}
-        tone="neutral"
+        tone={BackupStatusTone.Neutral}
       />
       <BackupStatusItem
         detail={
@@ -882,8 +891,8 @@ function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
         state={relationalLabel(status.relational.phase)}
         tone={
           status.relational.phase === RelationalBackupPhase.Running
-            ? 'healthy'
-            : 'warning'
+            ? BackupStatusTone.Healthy
+            : BackupStatusTone.Warning
         }
       />
       <BackupStatusItem
@@ -892,8 +901,8 @@ function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
         state={mediaLabel(status.media.phase)}
         tone={
           status.media.phase === MediaBackupPhase.Idle
-            ? 'healthy'
-            : 'warning'
+            ? BackupStatusTone.Healthy
+            : BackupStatusTone.Warning
         }
       />
       <BackupStatusItem
@@ -910,7 +919,9 @@ function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
             : 'Not ready'
         }
         tone={
-          status.checkpoint.lastCompleteCheckpointId ? 'healthy' : 'warning'
+          status.checkpoint.lastCompleteCheckpointId
+            ? BackupStatusTone.Healthy
+            : BackupStatusTone.Warning
         }
       />
       <BackupStatusItem
@@ -933,10 +944,10 @@ function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
         }
         tone={
           status.lastRestoreDrill?.outcome === RestoreDrillOutcome.Success
-            ? 'healthy'
+            ? BackupStatusTone.Healthy
             : status.lastRestoreDrillError
-              ? 'warning'
-            : 'neutral'
+              ? BackupStatusTone.Warning
+            : BackupStatusTone.Neutral
         }
       />
     </dl>
@@ -952,7 +963,7 @@ function BackupStatusItem({
   detail: string
   label: string
   state: string
-  tone: 'healthy' | 'neutral' | 'warning'
+  tone: BackupStatusTone
 }) {
   return (
     <div className={`offsite-backup-status-item ${tone}`}>
