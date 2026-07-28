@@ -1,5 +1,5 @@
 pub mod commands;
-mod connection;
+pub(crate) mod connection;
 mod diagnostics;
 mod domain;
 pub(crate) mod embedding_index;
@@ -17,7 +17,7 @@ mod settings;
 #[allow(dead_code)]
 pub mod snapshot;
 mod stats;
-mod validation;
+pub(crate) mod validation;
 mod writer;
 
 use std::{

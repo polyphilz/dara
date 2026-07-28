@@ -10,6 +10,10 @@ use uuid::Uuid;
 
 use crate::{
     app_lock::{AppDataLock, AppDataLockError},
+    backup::{
+        domain::BackupErrorCode,
+        restore::{RemoteCheckpointSelector, RemoteRecoveryEngine},
+    },
     database::{
         self,
         migrations::MigrationHeads,
@@ -22,6 +26,10 @@ const RECOVERY_ARGUMENT: &str = "recovery";
 const LIST_ARGUMENT: &str = "list";
 const VERIFY_ARGUMENT: &str = "verify";
 const RESTORE_ARGUMENT: &str = "restore";
+const REMOTE_LIST_ARGUMENT: &str = "remote-list";
+const REMOTE_INSPECT_ARGUMENT: &str = "remote-inspect";
+const REMOTE_DRILL_ARGUMENT: &str = "remote-drill";
+const REMOTE_RESTORE_ARGUMENT: &str = "remote-restore";
 const RESTORE_INTENT_FILE_NAME: &str = ".dara-restore-intent.json";
 const RESTORE_INTENT_TEMP_FILE_NAME: &str = ".dara-restore-intent.json.tmp";
 const RESTORE_INTENT_FORMAT_VERSION: u32 = 1;
@@ -106,6 +114,18 @@ enum RecoveryCommand {
         manifest: PathBuf,
         data_directory: PathBuf,
     },
+    RemoteList,
+    RemoteInspect {
+        selector: RemoteCheckpointSelector,
+    },
+    RemoteDrill {
+        selector: RemoteCheckpointSelector,
+        report_directory: PathBuf,
+    },
+    RemoteRestore {
+        selector: RemoteCheckpointSelector,
+        data_directory: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -145,6 +165,9 @@ pub enum RecoveryError {
 
     #[error("a previous restore must be validated by launching Dara before another restore")]
     RestoreAwaitingLaunch,
+
+    #[error("off-site recovery failed: {0:?}")]
+    Offsite(BackupErrorCode),
 
     #[cfg(test)]
     #[error("injected restore interruption")]
@@ -204,6 +227,44 @@ pub fn run_from_args(
             manifest,
             data_directory,
         } => serde_json::to_string_pretty(&restore_snapshot(&manifest, &data_directory)?)?,
+        RecoveryCommand::RemoteList => {
+            let recovery = remote_recovery_from_environment()?;
+            serde_json::to_string_pretty(
+                &recovery
+                    .list_checkpoints()
+                    .map_err(RecoveryError::Offsite)?,
+            )?
+        }
+        RecoveryCommand::RemoteInspect { selector } => {
+            let recovery = remote_recovery_from_environment()?;
+            serde_json::to_string_pretty(
+                &recovery
+                    .inspect_checkpoint(&selector)
+                    .map_err(RecoveryError::Offsite)?,
+            )?
+        }
+        RecoveryCommand::RemoteDrill {
+            selector,
+            report_directory,
+        } => {
+            let recovery = remote_recovery_from_environment()?;
+            serde_json::to_string_pretty(
+                &recovery
+                    .run_restore_drill(&report_directory, &selector)
+                    .map_err(RecoveryError::Offsite)?,
+            )?
+        }
+        RecoveryCommand::RemoteRestore {
+            selector,
+            data_directory,
+        } => {
+            let recovery = remote_recovery_from_environment()?;
+            serde_json::to_string_pretty(
+                &recovery
+                    .restore_to(&data_directory, &selector)
+                    .map_err(RecoveryError::Offsite)?,
+            )?
+        }
     };
     Ok(Some(output))
 }
@@ -253,10 +314,43 @@ fn parse_entrypoint(
             manifest: manifest.into(),
             data_directory: data_directory.into(),
         }
+    } else if operation == OsStr::new(REMOTE_LIST_ARGUMENT) {
+        reject_extra_arguments(&mut arguments)?;
+        RecoveryCommand::RemoteList
+    } else if operation == OsStr::new(REMOTE_INSPECT_ARGUMENT) {
+        let selector = remote_selector(&mut arguments)?;
+        reject_extra_arguments(&mut arguments)?;
+        RecoveryCommand::RemoteInspect { selector }
+    } else if operation == OsStr::new(REMOTE_DRILL_ARGUMENT) {
+        let selector = remote_selector(&mut arguments)?;
+        let report_directory = required_argument(&mut arguments)?;
+        reject_extra_arguments(&mut arguments)?;
+        RecoveryCommand::RemoteDrill {
+            selector,
+            report_directory: report_directory.into(),
+        }
+    } else if operation == OsStr::new(REMOTE_RESTORE_ARGUMENT) {
+        let selector = remote_selector(&mut arguments)?;
+        let data_directory = required_argument(&mut arguments)?;
+        reject_extra_arguments(&mut arguments)?;
+        RecoveryCommand::RemoteRestore {
+            selector,
+            data_directory: data_directory.into(),
+        }
     } else {
         return Err(RecoveryError::Usage(recovery_usage()));
     };
     Ok(Entrypoint::Recovery(command))
+}
+
+fn remote_selector(
+    arguments: &mut impl Iterator<Item = OsString>,
+) -> Result<RemoteCheckpointSelector, RecoveryError> {
+    let value = required_argument(arguments)?;
+    let value = value
+        .to_str()
+        .ok_or(RecoveryError::Usage(recovery_usage()))?;
+    RemoteCheckpointSelector::parse(value).map_err(RecoveryError::Offsite)
 }
 
 fn required_argument(
@@ -277,7 +371,35 @@ fn reject_extra_arguments(
 }
 
 const fn recovery_usage() -> &'static str {
-    "usage:\n  dara recovery list <data-directory>\n  dara recovery verify <manifest>\n  dara recovery restore <manifest> <data-directory>"
+    "usage:\n  dara recovery list <data-directory>\n  dara recovery verify <manifest>\n  dara recovery restore <manifest> <data-directory>\n  dara recovery remote-list\n  dara recovery remote-inspect <latest|checkpoint-id>\n  dara recovery remote-drill <latest|checkpoint-id> <report-directory>\n  dara recovery remote-restore <latest|checkpoint-id> <data-directory>"
+}
+
+fn remote_recovery_from_environment() -> Result<RemoteRecoveryEngine, RecoveryError> {
+    let resource_directory = recovery_resource_directory()?;
+    RemoteRecoveryEngine::system_from_environment(&resource_directory)
+        .map_err(RecoveryError::Offsite)
+}
+
+fn recovery_resource_directory() -> Result<PathBuf, RecoveryError> {
+    if std::env::var_os("DARA_LITESTREAM_PATH").is_some() {
+        return std::env::current_dir().map_err(RecoveryError::Io);
+    }
+    let executable = fs::canonicalize(std::env::current_exe()?)?;
+    #[cfg(target_os = "macos")]
+    {
+        let contents = executable
+            .parent()
+            .and_then(Path::parent)
+            .ok_or_else(|| RecoveryError::InvalidDataDirectory(executable.clone()))?;
+        Ok(contents.join("Resources"))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        executable
+            .parent()
+            .map(Path::to_owned)
+            .ok_or(RecoveryError::InvalidDataDirectory(executable))
+    }
 }
 
 fn list_snapshots(paths: &DatabasePaths) -> Result<Vec<SnapshotReport>, RecoveryError> {
@@ -347,6 +469,34 @@ fn restore_snapshot(
 
     let source = snapshot::load_and_validate_snapshot(&manifest_path)?;
     prepare_restore(&paths, source, None)
+}
+
+pub(crate) fn install_offsite_snapshot(
+    target_lock: &AppDataLock,
+    manifest_path: &Path,
+) -> Result<(), RecoveryError> {
+    prepare_offsite_restore_target(target_lock)?;
+    let target_root = fs::canonicalize(target_lock.data_root())?;
+    let manifest_path = fs::canonicalize(manifest_path)?;
+    if !manifest_path.starts_with(&target_root) {
+        return Err(RecoveryError::ManifestOutsideBackups(manifest_path));
+    }
+    let paths = DatabasePaths::new(target_root);
+    let source = snapshot::load_and_validate_snapshot(&manifest_path)?;
+    prepare_restore(&paths, source, None)?;
+    Ok(())
+}
+
+pub(crate) fn prepare_offsite_restore_target(
+    target_lock: &AppDataLock,
+) -> Result<(), RecoveryError> {
+    let target_root = fs::canonicalize(target_lock.data_root())?;
+    let paths = DatabasePaths::new(target_root);
+    recover_interrupted_restore(&paths)?;
+    if restore_intent_path(&paths).exists() {
+        return Err(RecoveryError::RestoreAwaitingLaunch);
+    }
+    Ok(())
 }
 
 fn acquire_ordered_locks(
@@ -867,9 +1017,12 @@ mod tests {
     use std::io::Write;
 
     use super::*;
-    use crate::database::{
-        snapshot::SnapshotManifest, CanonicalImage, CardContentDraft, InitializationOptions,
-        SearchCardContentInput, SetZoomPercentInput,
+    use crate::{
+        backup::domain::CheckpointId,
+        database::{
+            snapshot::SnapshotManifest, CanonicalImage, CardContentDraft, InitializationOptions,
+            SearchCardContentInput, SetZoomPercentInput,
+        },
     };
 
     const TEST_MEDIA_LEASE_ID: &str = "01980c8e-6c00-7000-8000-000000000901";
@@ -967,6 +1120,49 @@ mod tests {
                 ["dara", "recovery", "restore", "/tmp/snapshot.json"].map(OsString::from)
             ),
             Err(RecoveryError::Usage(_))
+        ));
+        assert_eq!(
+            parse_entrypoint(["dara", "recovery", "remote-list"].map(OsString::from))
+                .expect("remote list command"),
+            Entrypoint::Recovery(RecoveryCommand::RemoteList)
+        );
+        assert_eq!(
+            parse_entrypoint(
+                [
+                    "dara",
+                    "recovery",
+                    "remote-drill",
+                    "latest",
+                    "/tmp/dara-drill"
+                ]
+                .map(OsString::from)
+            )
+            .expect("remote drill command"),
+            Entrypoint::Recovery(RecoveryCommand::RemoteDrill {
+                selector: RemoteCheckpointSelector::Latest,
+                report_directory: PathBuf::from("/tmp/dara-drill"),
+            })
+        );
+        let checkpoint_id = CheckpointId::new();
+        assert_eq!(
+            parse_entrypoint([
+                OsString::from("dara"),
+                OsString::from("recovery"),
+                OsString::from("remote-restore"),
+                OsString::from(checkpoint_id.as_str()),
+                OsString::from("/tmp/dara"),
+            ])
+            .expect("remote restore command"),
+            Entrypoint::Recovery(RecoveryCommand::RemoteRestore {
+                selector: RemoteCheckpointSelector::Checkpoint(checkpoint_id),
+                data_directory: PathBuf::from("/tmp/dara"),
+            })
+        );
+        assert!(matches!(
+            parse_entrypoint(
+                ["dara", "recovery", "remote-inspect", "not-a-checkpoint"].map(OsString::from)
+            ),
+            Err(RecoveryError::Offsite(BackupErrorCode::CheckpointNotFound))
         ));
     }
 

@@ -167,7 +167,8 @@ impl CheckpointPhase {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum BackupErrorCode {
     NetworkOffline,
     NetworkTimeout,
@@ -189,6 +190,7 @@ pub enum BackupErrorCode {
     LitestreamFailed,
     FenceTimeout,
     ReplicaBehind,
+    CheckpointNotFound,
     ExactTxidUnavailable,
     MalformedManifest,
     RemoteMediaMissing,
@@ -219,6 +221,7 @@ impl BackupErrorCode {
             Self::LitestreamFailed => "LITESTREAM_FAILED",
             Self::FenceTimeout => "FENCE_TIMEOUT",
             Self::ReplicaBehind => "REPLICA_BEHIND",
+            Self::CheckpointNotFound => "CHECKPOINT_NOT_FOUND",
             Self::ExactTxidUnavailable => "EXACT_TXID_UNAVAILABLE",
             Self::MalformedManifest => "MALFORMED_MANIFEST",
             Self::RemoteMediaMissing => "REMOTE_MEDIA_MISSING",
@@ -249,6 +252,7 @@ impl BackupErrorCode {
             "LITESTREAM_FAILED" => Ok(Self::LitestreamFailed),
             "FENCE_TIMEOUT" => Ok(Self::FenceTimeout),
             "REPLICA_BEHIND" => Ok(Self::ReplicaBehind),
+            "CHECKPOINT_NOT_FOUND" => Ok(Self::CheckpointNotFound),
             "EXACT_TXID_UNAVAILABLE" => Ok(Self::ExactTxidUnavailable),
             "MALFORMED_MANIFEST" => Ok(Self::MalformedManifest),
             "REMOTE_MEDIA_MISSING" => Ok(Self::RemoteMediaMissing),
@@ -604,6 +608,14 @@ impl R2Keyspace {
         )))
     }
 
+    pub(crate) fn checkpoints(&self, epoch: &ReplicaEpochId) -> R2ListPrefix {
+        R2ListPrefix(format!(
+            "{}/checkpoints/v1/{}/",
+            self.prefix.as_str(),
+            epoch.as_str()
+        ))
+    }
+
     pub(crate) fn probe_prefix(&self, run_id: &ProbeRunId) -> R2ListPrefix {
         R2ListPrefix(format!(
             "{}/probes/{}/",
@@ -686,6 +698,13 @@ impl UtcTimestamp {
 
     pub(crate) fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub(crate) fn unix_timestamp_millis(&self) -> Result<i64, BackupDomainError> {
+        let value = OffsetDateTime::parse(&self.0, &Rfc3339)
+            .map_err(|_| BackupDomainError::InvalidField("createdAt"))?;
+        i64::try_from(value.unix_timestamp_nanos() / 1_000_000)
+            .map_err(|_| BackupDomainError::InvalidField("createdAt"))
     }
 
     fn basic_utc(&self) -> Result<String, BackupDomainError> {
@@ -799,6 +818,14 @@ impl OwnerManifestV1 {
             return Err(BackupDomainError::UnsupportedManifestVersion);
         }
         Ok(manifest)
+    }
+
+    pub(crate) fn backup_set_id(&self) -> &BackupSetId {
+        &self.backup_set_id
+    }
+
+    pub(crate) fn replica_epoch_id(&self) -> &ReplicaEpochId {
+        &self.replica_epoch_id
     }
 
     pub(crate) fn matches(
@@ -945,6 +972,58 @@ impl CheckpointManifestV1 {
             &self.checkpoint_id,
             &self.created_at,
         )
+    }
+
+    pub(crate) fn backup_set_id(&self) -> &BackupSetId {
+        &self.backup_set_id
+    }
+
+    pub(crate) fn replica_epoch_id(&self) -> &ReplicaEpochId {
+        &self.replica_epoch_id
+    }
+
+    pub(crate) fn checkpoint_id(&self) -> &CheckpointId {
+        &self.checkpoint_id
+    }
+
+    pub(crate) fn created_at(&self) -> &UtcTimestamp {
+        &self.created_at
+    }
+
+    pub(crate) fn dara_version(&self) -> &str {
+        &self.dara_version
+    }
+
+    pub(crate) const fn content_revision(&self) -> u64 {
+        self.content_revision
+    }
+
+    pub(crate) const fn main_migration_head(&self) -> u32 {
+        self.main.migration_head
+    }
+
+    pub(crate) fn litestream_path(&self) -> &str {
+        &self.main.litestream_path
+    }
+
+    pub(crate) fn txid(&self) -> &str {
+        &self.main.txid
+    }
+
+    pub(crate) const fn media_migration_head(&self) -> u32 {
+        self.media.migration_head
+    }
+
+    pub(crate) const fn referenced_hash_count(&self) -> u64 {
+        self.media.referenced_hash_count
+    }
+
+    pub(crate) const fn referenced_total_bytes(&self) -> u64 {
+        self.media.referenced_total_bytes
+    }
+
+    pub(crate) const fn referenced_hash_set_sha256(&self) -> ContentSha256 {
+        self.media.referenced_hash_set_sha256
     }
 
     pub(crate) fn matches_published_evidence(

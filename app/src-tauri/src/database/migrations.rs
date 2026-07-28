@@ -1,4 +1,4 @@
-use refinery::{Migration, Runner};
+use refinery::{Migration, Runner, Target};
 use rusqlite::{Connection, OptionalExtension};
 
 use super::{
@@ -57,6 +57,34 @@ pub fn run_main(connection: &mut Connection) -> Result<()> {
 
 pub fn run_media(connection: &mut Connection) -> Result<()> {
     media_runner().run(connection)?;
+    Ok(())
+}
+
+pub(crate) fn run_media_to(connection: &mut Connection, target: u32) -> Result<()> {
+    let target = i32::try_from(target).map_err(|_| DatabaseError::Validation {
+        kind: DatabaseKind::Media.label(),
+        reason: "requested migration head exceeds supported SQLite limits".into(),
+    })?;
+    let latest = latest_version(&media_runner()).ok_or_else(|| DatabaseError::Validation {
+        kind: DatabaseKind::Media.label(),
+        reason: "no embedded media migrations are available".into(),
+    })?;
+    if target <= 0 || target > latest {
+        return Err(DatabaseError::Validation {
+            kind: DatabaseKind::Media.label(),
+            reason: format!("requested migration head is {target}, supported head is {latest}"),
+        });
+    }
+    media_runner()
+        .set_target(Target::Version(target))
+        .run(connection)?;
+    let actual = inspect_media(connection)?.head;
+    if actual != Some(target) {
+        return Err(DatabaseError::Validation {
+            kind: DatabaseKind::Media.label(),
+            reason: format!("migration head is {actual:?}, expected {target}"),
+        });
+    }
     Ok(())
 }
 

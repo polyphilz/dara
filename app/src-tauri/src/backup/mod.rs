@@ -8,3 +8,4 @@ pub(crate) mod media_reconciliation;
 pub(crate) mod object_store;
 pub(crate) mod probe;
 pub(crate) mod remote_authority;
+pub(crate) mod restore;

@@ -11,6 +11,7 @@ use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 use super::{
     connection::{self, DatabaseKind, FileState},
@@ -216,6 +217,74 @@ pub(super) fn create_snapshot_pair_from_connections(
         media_source,
         SnapshotRetention::Managed,
     )
+}
+
+pub(crate) fn finalize_external_snapshot_pair(
+    backups: &Path,
+    main_path: &Path,
+    media_path: &Path,
+    created_at: i64,
+    application_version: &str,
+    recorded_heads: MigrationHeads,
+) -> Result<CreatedSnapshot> {
+    timestamp(created_at)?;
+    if application_version.is_empty()
+        || application_version.len() > 64
+        || application_version.chars().any(char::is_control)
+    {
+        return Err(DatabaseError::InvalidSnapshot(
+            "application version is invalid".into(),
+        ));
+    }
+    if main_path.parent() != Some(backups) || media_path.parent() != Some(backups) {
+        return Err(DatabaseError::InvalidSnapshot(
+            "external snapshot files must be direct children of the backups directory".into(),
+        ));
+    }
+    fs::create_dir_all(backups)?;
+    sync_file(main_path)?;
+    sync_file(media_path)?;
+
+    let mut main = connection::open_read_only(main_path, DatabaseKind::Main)?;
+    let mut media = connection::open_read_only(media_path, DatabaseKind::Media)?;
+    let relationship_validated =
+        validation::validate_snapshot_pair(&mut main, &mut media, main_path, media_path)?;
+    let actual_heads = migrations::current_heads(&mut main, &mut media)?;
+    if actual_heads != recorded_heads {
+        return Err(DatabaseError::InvalidSnapshot(format!(
+            "migration heads are {actual_heads:?}, expected {recorded_heads:?}"
+        )));
+    }
+    drop(main);
+    drop(media);
+
+    let identifier = Uuid::now_v7();
+    let manifest_name = format!("remote-restore-{identifier}.json");
+    let manifest_temp = backups.join(format!(".{manifest_name}.tmp"));
+    let manifest_final = backups.join(manifest_name);
+    let manifest = SnapshotManifest {
+        format_version: 1,
+        created_at,
+        application_version: application_version.to_owned(),
+        main: SnapshotFile {
+            file_name: snapshot_file_name(main_path)?,
+            sha256: hash_file(main_path)?,
+            migration_head: recorded_heads.main,
+        },
+        media: SnapshotFile {
+            file_name: snapshot_file_name(media_path)?,
+            sha256: hash_file(media_path)?,
+            migration_head: recorded_heads.media,
+        },
+        relationship_validated,
+    };
+    write_manifest(&manifest_temp, &manifest)?;
+    fs::rename(&manifest_temp, &manifest_final)?;
+    sync_directory(backups)?;
+    Ok(CreatedSnapshot {
+        manifest_path: manifest_final,
+        manifest,
+    })
 }
 
 fn create_snapshot_pair_from_connections_with_retention(
@@ -651,6 +720,22 @@ fn resolve_snapshot_file(directory: &Path, file_name: &str) -> Result<PathBuf> {
         )));
     }
     Ok(directory.join(file_name))
+}
+
+fn snapshot_file_name(path: &Path) -> Result<String> {
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            DatabaseError::InvalidSnapshot("snapshot file name is not valid UTF-8".into())
+        })?;
+    resolve_snapshot_file(
+        path.parent().ok_or_else(|| {
+            DatabaseError::InvalidSnapshot("snapshot file has no containing directory".into())
+        })?,
+        file_name,
+    )?;
+    Ok(file_name.to_owned())
 }
 
 fn timestamp(milliseconds: i64) -> Result<OffsetDateTime> {
