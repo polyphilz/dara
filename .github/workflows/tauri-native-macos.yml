@@ -35,10 +35,16 @@ jobs:
         with:
           workspaces: app/src-tauri
       - run: pnpm install --frozen-lockfile
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+      - name: Lint the complete Rust graph
+        run: cargo clippy --locked --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
       - name: Prove the ordinary Rust graph builds without E2E
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml
       - name: Run Rust library tests
         run: cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
+      - name: Verify pinned Litestream release contracts
+        run: pnpm release:verify-contracts
       - name: Prove native test-driver isolation
         run: pnpm test:native-bundle-safety
       - name: Build and run serial native boundary suite

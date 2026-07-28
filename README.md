@@ -7,8 +7,8 @@ A personal spaced-repetition app for macOS. Built to replace Anki after 6–7 ye
 - **Fast and resident.** Lives in the menu bar (Docker-style), launches instantly, costs ~nothing at idle.
 - **Capture in five seconds.** A global hotkey shows an ephemeral Quick Add window over the current workspace and puts the caret in the editor. Dara remains a menu-bar-only Accessory app with no Dock icon or application menu. Save or cancel and keyboard control returns immediately to the app and window you were using.
 - **Keyboard-first everywhere.** Reviews, editing, search, occlusion editing — time off the keyboard is the enemy.
-- **Local-first.** One relational SQLite database plus one blob-only media database. No server, sync, or required account. Capture, review, and lexical search work immediately offline; semantic search runs locally after a background model download. Optional R2 backups and the AI mistake-explainer are the only networked features.
-- **AI is advisory, never generative.** The AI explains *why you got a card wrong* (you tell it your reasoning, it finds the fault in your understanding). It never writes cards and never touches scheduling.
+- **Local-first.** One relational SQLite database plus one blob-only media database. No server, sync, or required account. Capture, review, and lexical search work immediately offline; semantic search runs locally after a background model download. Optional R2 backup is the only networked personal-v1 feature.
+- **AI stays advisory.** If the deferred mistake-explainer is added later, it may explain *why you got a card wrong*. It will never write cards or touch scheduling.
 - **No feature bloat.** No decks (one interleaved pool). No tags (search is the organization). Three card types, nothing else.
 
 ## What v1 is
@@ -19,11 +19,14 @@ A personal spaced-repetition app for macOS. Built to replace Anki after 6–7 ye
 - Hybrid search on Enter: lexical FTS5 + local text embeddings fused with Reciprocal Rank Fusion
 - OCR on pasted images, so text inside screenshots is searchable
 - Edit / suspend / unsuspend / delete / undo-last-grade
-- AI mistake-explainer (BYOK or `codex exec`)
+- Optional continuous, private off-site backup to Cloudflare R2, with restore drills and explicit recovery
 
 ## What v1 is not
 
-Mobile, sync, decks, tags, AI card generation, or a hosted service. UUIDs, tombstones, and append-only history preserve sync-compatible foundations, but no merge protocol or sync guarantee exists. Anki import is specced but optional — a fresh start is the likely path.
+Mobile, sync, decks, tags, AI card generation, the AI mistake-explainer, or a hosted service.
+UUIDs, tombstones, and append-only history preserve sync-compatible foundations, but no merge
+protocol or sync guarantee exists. Anki import is specced but optional — a fresh start is the
+likely path.
 
 ## Stack
 
@@ -120,6 +123,9 @@ pnpm release:build:app
 See [`docs/RELEASE.md`](docs/RELEASE.md) for the complete versioning, build,
 installation, smoke-check, and tagging procedure.
 
+See [`docs/OFFSITE_BACKUP.md`](docs/OFFSITE_BACKUP.md) for plain-language R2
+setup, privacy, recovery, and decommissioning guidance.
+
 This personal-v1 command targets arm64 macOS 14 or newer. It intentionally rebuilds and rechecks
 the sidecar before packaging. The GGUF remains outside the `.app` and is downloaded and verified
 under Dara's data directory on first semantic use.
@@ -171,4 +177,7 @@ A new upstream GGUF or `llama.cpp` commit does not itself create a new index. Da
 
 ## Status
 
-Early development. The macOS windowing and SQLite foundations are implemented, together with all three card types, images/OCR, saved-card editing, suspension, tombstone deletion, and Enter-only local hybrid search. FSRS configurability and resilience work, the AI explainer, and distribution remain under construction.
+Personal-v1 release-candidate work. The macOS windowing and SQLite foundations are implemented,
+together with all three card types, images/OCR, saved-card editing, suspension, tombstone deletion,
+FSRS review, local hybrid search, and optional off-site backup and recovery through Litestream and
+Cloudflare R2. Final release acceptance and distribution preparation remain in progress.

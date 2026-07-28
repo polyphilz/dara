@@ -1580,12 +1580,15 @@ mod tests {
     use super::*;
     use crate::{
         backup::{
+            credentials::R2Credentials,
             domain::{
                 CheckpointManifestInput, InstallationId, R2AccountId, R2BucketName, R2Jurisdiction,
                 R2ObjectKey, R2Prefix, UtcTimestamp,
             },
+            litestream::{parse_sync_json, LitestreamConfig, LitestreamRuntimePaths},
             object_store::{
                 fake::FakeObjectStore, PutCondition, PutObjectOutcome, PutObjectRequest,
+                R2ObjectStore,
             },
         },
         database::{
@@ -1646,6 +1649,118 @@ mod tests {
         epoch: ReplicaEpochId,
         checkpoint_id: CheckpointId,
         image_bytes: Vec<u8>,
+    }
+
+    struct R2CanaryCleanup {
+        store: R2ObjectStore,
+        keyspace: R2Keyspace,
+        armed: bool,
+    }
+
+    impl R2CanaryCleanup {
+        fn new(store: R2ObjectStore, keyspace: R2Keyspace) -> Self {
+            Self {
+                store,
+                keyspace,
+                armed: true,
+            }
+        }
+
+        fn cleanup(&mut self) -> Result<u64, &'static str> {
+            let mut keys = Vec::new();
+            let mut continuation = None;
+            for _ in 0..100 {
+                let page = self
+                    .store
+                    .list(&self.keyspace.root_prefix(), continuation.as_ref())
+                    .map_err(|_| "could not list the unique R2 canary prefix")?;
+                keys.extend(page.objects.into_iter().map(|object| object.key));
+                match page.next {
+                    Some(next) => continuation = Some(next),
+                    None => break,
+                }
+            }
+            for key in &keys {
+                self.store
+                    .delete(key)
+                    .map_err(|_| "could not delete an object from the unique R2 canary prefix")?;
+            }
+            let residue = self
+                .store
+                .list(&self.keyspace.root_prefix(), None)
+                .map_err(|_| "could not verify R2 canary cleanup")?
+                .objects
+                .len();
+            if residue != 0 {
+                return Err("the unique R2 canary prefix still contains objects");
+            }
+            self.armed = false;
+            u64::try_from(keys.len()).map_err(|_| "R2 canary object count overflow")
+        }
+    }
+
+    impl Drop for R2CanaryCleanup {
+        fn drop(&mut self) {
+            if self.armed {
+                let _ = self.cleanup();
+            }
+        }
+    }
+
+    struct R2CanaryLitestreamChild {
+        child: Option<Child>,
+    }
+
+    impl R2CanaryLitestreamChild {
+        fn new(child: Child) -> Self {
+            Self { child: Some(child) }
+        }
+
+        fn child_mut(&mut self) -> &mut Child {
+            self.child.as_mut().expect("canary child is present")
+        }
+
+        fn kill_and_wait(mut self) {
+            self.child_mut()
+                .kill()
+                .expect("interrupt first canary daemon");
+            self.child
+                .take()
+                .expect("canary child is present")
+                .wait()
+                .expect("reap interrupted canary daemon");
+        }
+
+        fn terminate_and_wait(mut self) {
+            #[cfg(unix)]
+            {
+                let result = unsafe { libc::kill(self.child_mut().id() as i32, libc::SIGTERM) };
+                assert_eq!(result, 0, "stop canary daemon");
+            }
+            #[cfg(not(unix))]
+            self.child_mut().kill().expect("stop canary daemon");
+            assert!(
+                self.child
+                    .take()
+                    .expect("canary child is present")
+                    .wait()
+                    .expect("reap canary daemon")
+                    .success(),
+                "canary daemon did not stop cleanly"
+            );
+        }
+    }
+
+    impl Drop for R2CanaryLitestreamChild {
+        fn drop(&mut self) {
+            let Some(mut child) = self.child.take() else {
+                return;
+            };
+            if child.try_wait().ok().flatten().is_none() {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
     }
 
     fn target() -> R2Target {
@@ -2015,6 +2130,352 @@ mod tests {
             checkpoint_id,
             image_bytes,
         }
+    }
+
+    #[test]
+    #[ignore = "requires bucket-scoped R2 credentials and the pinned Litestream binary"]
+    fn live_r2_canary_restores_complete_checkpoint_and_cleans_unique_prefix() {
+        assert_eq!(
+            required_canary_environment("DARA_RUN_R2_CANARY"),
+            "1",
+            "set DARA_RUN_R2_CANARY=1 explicitly"
+        );
+        let run_id = Uuid::now_v7();
+        let prefix = format!(
+            "{}/canary/{run_id}",
+            required_canary_environment("DARA_LITESTREAM_R2_PREFIX").trim_end_matches('/')
+        );
+        let target = R2Target {
+            account_id: R2AccountId::parse(required_canary_environment(
+                "DARA_LITESTREAM_R2_ACCOUNT_ID",
+            ))
+            .expect("canary account ID"),
+            jurisdiction: R2Jurisdiction::from_db(&required_canary_environment(
+                "DARA_LITESTREAM_R2_JURISDICTION",
+            ))
+            .expect("canary jurisdiction"),
+            bucket: R2BucketName::parse(required_canary_environment("DARA_LITESTREAM_R2_BUCKET"))
+                .expect("canary bucket"),
+            prefix: R2Prefix::parse(prefix).expect("unique canary prefix"),
+        };
+        let keyspace = target.keyspace();
+        let credentials = canary_credentials();
+        let store = R2ObjectStore::new(target.clone(), &credentials).expect("canary object store");
+        let mut cleanup = R2CanaryCleanup::new(store, keyspace.clone());
+        let local_root = PathBuf::from(required_canary_environment("DARA_R2_CANARY_DATA_DIR"));
+        assert!(
+            !local_root.exists(),
+            "R2 canary data directory must be unique"
+        );
+        assert!(
+            local_root.parent().is_some_and(|parent| parent.is_dir()),
+            "R2 canary data parent must already exist"
+        );
+        create_private_directory(&local_root).expect("canary data directory");
+
+        let fixture = rich_remote_fixture();
+        let source_main = fixture.relational.main_source.clone();
+        rewrite_canary_target(&source_main, &target);
+        let manifest = replicate_canary_source(
+            &source_main,
+            &local_root,
+            &target,
+            &credentials,
+            &fixture.manifest,
+        );
+        let installation_id = InstallationId::new();
+        put_canary_json(
+            &cleanup.store,
+            keyspace.identity(),
+            IdentityManifestV1::new(manifest.backup_set_id().clone(), installation_id.clone())
+                .to_json()
+                .expect("canary identity JSON"),
+        );
+        put_canary_json(
+            &cleanup.store,
+            keyspace.owner(),
+            OwnerManifestV1::new(
+                manifest.backup_set_id().clone(),
+                installation_id,
+                manifest.replica_epoch_id().clone(),
+                UtcTimestamp::now().expect("canary owner timestamp"),
+            )
+            .to_json()
+            .expect("canary owner JSON"),
+        );
+        let main = connection::open_read_only(&source_main, DatabaseKind::Main)
+            .expect("canary source main");
+        let sha256 = main
+            .query_row(
+                "SELECT sha256 FROM offsite_media_object WHERE backup_set_id = ?1 LIMIT 1",
+                [manifest.backup_set_id().as_str()],
+                |row| row.get::<_, Vec<u8>>(0),
+            )
+            .map(|bytes| ContentSha256::from_slice(&bytes).expect("canary media SHA"))
+            .expect("canary media reference");
+        drop(main);
+        let media_key = keyspace.media(sha256);
+        assert_eq!(
+            cleanup
+                .store
+                .put(PutObjectRequest {
+                    key: media_key.clone(),
+                    bytes: fixture.image_bytes.clone(),
+                    content_type: ObjectContentType::Webp,
+                    dara_sha256: Some(sha256),
+                    condition: PutCondition::IfAbsent,
+                })
+                .expect("canary media upload"),
+            PutObjectOutcome::Stored
+        );
+        assert_eq!(
+            cleanup
+                .store
+                .put(PutObjectRequest {
+                    key: media_key.clone(),
+                    bytes: fixture.image_bytes.clone(),
+                    content_type: ObjectContentType::Webp,
+                    dara_sha256: Some(sha256),
+                    condition: PutCondition::IfAbsent,
+                })
+                .expect("idempotent canary media retry"),
+            PutObjectOutcome::ConditionNotMet
+        );
+        assert_eq!(
+            cleanup
+                .store
+                .get(&media_key)
+                .expect("canary media read")
+                .bytes,
+            fixture.image_bytes
+        );
+        put_canary_json(
+            &cleanup.store,
+            keyspace
+                .checkpoint(
+                    manifest.replica_epoch_id(),
+                    manifest.checkpoint_id(),
+                    manifest.created_at(),
+                )
+                .expect("canary checkpoint key"),
+            manifest.to_json().expect("canary checkpoint JSON"),
+        );
+
+        let engine = RemoteRecoveryEngine::system(
+            target,
+            canary_credentials(),
+            Path::new("/unused-with-development-binary-override"),
+        )
+        .expect("canary recovery engine");
+        let report_directory = local_root.join("drill");
+        let report = engine
+            .run_restore_drill(&report_directory, &RemoteCheckpointSelector::Latest)
+            .expect("real R2 restore drill");
+        assert_eq!(report.outcome, RestoreDrillOutcome::Success);
+        assert!(report.matches_scope(manifest.backup_set_id(), manifest.replica_epoch_id(),));
+
+        let restored_root = local_root.join("restored");
+        let restored = engine
+            .restore_to(&restored_root, &RemoteCheckpointSelector::Latest)
+            .expect("real R2 restore");
+        assert_eq!(restored.checkpoint_id, *manifest.checkpoint_id());
+        let restored_paths = DatabasePaths::new(&restored_root);
+        let restored_main = connection::open_read_only(&restored_paths.main, DatabaseKind::Main)
+            .expect("restored canary main");
+        assert_eq!(
+            restored_main
+                .query_row("SELECT count(*) FROM card_content", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+                .expect("restored canary card count"),
+            3
+        );
+        drop(restored_main);
+        let restored_media = connection::open_read_only(&restored_paths.media, DatabaseKind::Media)
+            .expect("restored canary media");
+        assert_eq!(
+            restored_media
+                .query_row("SELECT bytes FROM media_blob", [], |row| {
+                    row.get::<_, Vec<u8>>(0)
+                })
+                .expect("restored canary media bytes"),
+            fixture.image_bytes
+        );
+        drop(restored_media);
+        drop(engine);
+
+        let removed_objects = cleanup.cleanup().expect("unique canary prefix cleanup");
+        fs::write(
+            local_root.join("canary-report-v1.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "formatVersion": 1,
+                "runId": run_id,
+                "checkpointId": manifest.checkpoint_id(),
+                "restoreDrill": "PASSED",
+                "remoteRestore": "PASSED",
+                "interruptedReplicationRetry": "PASSED",
+                "idempotentMediaRetry": "PASSED",
+                "removedObjectCount": removed_objects,
+                "cleanupResidueCount": 0,
+            }))
+            .expect("canary report JSON"),
+        )
+        .expect("canary report");
+    }
+
+    fn rewrite_canary_target(database_path: &Path, target: &R2Target) {
+        let main = Connection::open(database_path).expect("canary source database");
+        main.execute(
+            "UPDATE offsite_backup_config
+             SET jurisdiction = ?1,
+                 account_id = ?2,
+                 bucket = ?3,
+                 prefix = ?4",
+            params![
+                target.jurisdiction.as_db_str(),
+                target.account_id.as_str(),
+                target.bucket.as_str(),
+                target.prefix.as_str(),
+            ],
+        )
+        .expect("canary target update");
+        main.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)")
+            .expect("canary source checkpoint");
+    }
+
+    fn replicate_canary_source(
+        database_path: &Path,
+        local_root: &Path,
+        target: &R2Target,
+        credentials: &R2Credentials,
+        fixture_manifest: &CheckpointManifestV1,
+    ) -> CheckpointManifestV1 {
+        let binary_path = PathBuf::from(required_canary_environment("DARA_LITESTREAM_PATH"));
+        let binary = super::super::litestream::VerifiedLitestreamBinary::resolve_staged_for_test(
+            &binary_path,
+        )
+        .expect("pinned canary Litestream binary");
+        let runtime_root = ShortRestoreRuntimeRoot::create().expect("canary runtime root");
+        let runtime =
+            LitestreamRuntimePaths::new(runtime_root.path()).expect("canary runtime paths");
+        let replica_path = target
+            .keyspace()
+            .litestream(fixture_manifest.replica_epoch_id());
+        let endpoint = target.endpoint();
+        let config = LitestreamConfig {
+            database_path,
+            runtime: &runtime,
+            bucket: target.bucket.as_str(),
+            replica_path: replica_path.as_str(),
+            endpoint: &endpoint,
+        }
+        .render()
+        .expect("canary Litestream config");
+        runtime.write_config(&config).expect("write canary config");
+
+        let mut interrupted = spawn_canary_litestream(binary.path(), runtime.config(), credentials);
+        wait_for_canary_socket(interrupted.child_mut(), runtime.socket());
+        interrupted.kill_and_wait();
+        remove_file_if_exists(runtime.socket()).expect("remove interrupted canary socket");
+
+        let mut daemon = spawn_canary_litestream(binary.path(), runtime.config(), credentials);
+        wait_for_canary_socket(daemon.child_mut(), runtime.socket());
+        let mut sync = Command::new(binary.path());
+        sync.args(["sync", "-wait", "-timeout", "60", "-json", "-socket"])
+            .arg(runtime.socket())
+            .arg(database_path)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null());
+        configure_credentials_environment(&mut sync, credentials);
+        let output = sync.output().expect("execute canary remote sync");
+        assert!(output.status.success(), "canary remote sync failed");
+        let synced = parse_sync_json(&output.stdout, true).expect("canary sync contract");
+        assert_eq!(synced.database_path, database_path);
+        assert_eq!(synced.replica_txid, Some(synced.txid));
+
+        daemon.terminate_and_wait();
+
+        let created_at = UtcTimestamp::now().expect("canary checkpoint timestamp");
+        let manifest = CheckpointManifestV1::new(CheckpointManifestInput {
+            backup_set_id: fixture_manifest.backup_set_id().clone(),
+            replica_epoch_id: fixture_manifest.replica_epoch_id().clone(),
+            checkpoint_id: fixture_manifest.checkpoint_id().clone(),
+            created_at,
+            dara_version: fixture_manifest.dara_version().to_owned(),
+            content_revision: fixture_manifest.content_revision(),
+            main_migration_head: fixture_manifest.main_migration_head(),
+            litestream_path: replica_path,
+            txid: synced.txid.to_string(),
+            media_migration_head: fixture_manifest.media_migration_head(),
+            referenced_hash_count: fixture_manifest.referenced_hash_count(),
+            referenced_total_bytes: fixture_manifest.referenced_total_bytes(),
+            referenced_hash_set_sha256: fixture_manifest.referenced_hash_set_sha256(),
+        })
+        .expect("canary checkpoint manifest");
+        fs::write(
+            local_root.join("checkpoint-manifest-v1.json"),
+            manifest.to_json().expect("canary checkpoint manifest JSON"),
+        )
+        .expect("canary checkpoint evidence");
+        manifest
+    }
+
+    fn spawn_canary_litestream(
+        binary: &Path,
+        config: &Path,
+        credentials: &R2Credentials,
+    ) -> R2CanaryLitestreamChild {
+        let mut command = Command::new(binary);
+        command
+            .args(["replicate", "-config"])
+            .arg(config)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_credentials_environment(&mut command, credentials);
+        R2CanaryLitestreamChild::new(command.spawn().expect("start canary Litestream"))
+    }
+
+    fn wait_for_canary_socket(child: &mut Child, socket: &Path) {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while !socket.exists() {
+            assert!(
+                child.try_wait().expect("canary daemon status").is_none(),
+                "canary Litestream exited before creating its socket"
+            );
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for canary Litestream socket"
+            );
+            thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn put_canary_json(store: &R2ObjectStore, key: R2ObjectKey, bytes: Vec<u8>) {
+        assert_eq!(
+            store
+                .put(PutObjectRequest {
+                    key,
+                    bytes,
+                    content_type: ObjectContentType::Json,
+                    dara_sha256: None,
+                    condition: PutCondition::IfAbsent,
+                })
+                .expect("put canary JSON"),
+            PutObjectOutcome::Stored
+        );
+    }
+
+    fn canary_credentials() -> R2Credentials {
+        R2Credentials::new(
+            required_canary_environment("DARA_LITESTREAM_R2_ACCESS_KEY_ID"),
+            required_canary_environment("DARA_LITESTREAM_R2_SECRET_ACCESS_KEY"),
+        )
+        .expect("canary credentials")
+    }
+
+    fn required_canary_environment(name: &str) -> String {
+        std::env::var(name).unwrap_or_else(|_| panic!("missing {name}"))
     }
 
     #[test]
