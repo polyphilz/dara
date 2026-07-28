@@ -1,3 +1,5 @@
+use std::time::{Duration, Instant};
+
 use super::{
     credentials::CredentialError,
     domain::{BackupErrorCode, IdentityManifestV1, InstallationId, OwnerManifestV1},
@@ -55,6 +57,59 @@ pub(crate) fn validate_backup_authority(
         return Err(BackupErrorCode::OwnerMismatch);
     }
     Ok(())
+}
+
+pub(crate) fn validate_backup_authority_with_deadline(
+    store: &dyn ObjectStore,
+    config: &OffsiteBackupConfig,
+    installation_id: &InstallationId,
+    deadline: Instant,
+) -> Result<(), BackupErrorCode> {
+    let identity_key = config.target.keyspace().identity();
+    match store
+        .head_with_timeout(&identity_key, remaining(deadline)?)
+        .map_err(|error| map_store_error(error.code))?
+    {
+        Some(_) => {}
+        None => return Err(BackupErrorCode::PrefixIdentityMismatch),
+    }
+    let identity = store
+        .get_with_timeout(&identity_key, remaining(deadline)?)
+        .map_err(|error| map_store_error(error.code))?;
+    let identity = IdentityManifestV1::from_json(&identity.bytes)
+        .map_err(|_| BackupErrorCode::MalformedManifest)?;
+    if identity.backup_set_id() != &config.backup_set_id {
+        return Err(BackupErrorCode::PrefixIdentityMismatch);
+    }
+
+    let owner_key = config.target.keyspace().owner();
+    match store
+        .head_with_timeout(&owner_key, remaining(deadline)?)
+        .map_err(|error| map_store_error(error.code))?
+    {
+        Some(_) => {}
+        None => return Err(BackupErrorCode::OwnerMismatch),
+    }
+    let owner = store
+        .get_with_timeout(&owner_key, remaining(deadline)?)
+        .map_err(|error| map_store_error(error.code))?;
+    let owner =
+        OwnerManifestV1::from_json(&owner.bytes).map_err(|_| BackupErrorCode::MalformedManifest)?;
+    if !owner.matches(
+        &config.backup_set_id,
+        installation_id,
+        &config.replica_epoch_id,
+    ) {
+        return Err(BackupErrorCode::OwnerMismatch);
+    }
+    Ok(())
+}
+
+fn remaining(deadline: Instant) -> Result<Duration, BackupErrorCode> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(BackupErrorCode::NetworkTimeout)
 }
 
 pub(crate) fn map_store_error(error: ObjectStoreErrorCode) -> BackupErrorCode {

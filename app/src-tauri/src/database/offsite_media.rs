@@ -58,6 +58,21 @@ enum EnqueueAvailableResult {
     Unchanged,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OffsiteMediaSummaryScope {
+    All,
+    Referenced,
+}
+
+impl OffsiteMediaSummaryScope {
+    const fn referenced_only(self) -> i64 {
+        match self {
+            Self::All => 0,
+            Self::Referenced => 1,
+        }
+    }
+}
+
 pub(super) fn enqueue_ingested(
     transaction: &Transaction<'_>,
     sha256: &[u8],
@@ -389,6 +404,25 @@ pub(super) fn summary(
     connection: &Connection,
     backup_set_id: &BackupSetId,
 ) -> Result<OffsiteMediaSummary> {
+    summary_for_scope(connection, backup_set_id, OffsiteMediaSummaryScope::All)
+}
+
+pub(super) fn referenced_summary(
+    connection: &Connection,
+    backup_set_id: &BackupSetId,
+) -> Result<OffsiteMediaSummary> {
+    summary_for_scope(
+        connection,
+        backup_set_id,
+        OffsiteMediaSummaryScope::Referenced,
+    )
+}
+
+fn summary_for_scope(
+    connection: &Connection,
+    backup_set_id: &BackupSetId,
+    scope: OffsiteMediaSummaryScope,
+) -> Result<OffsiteMediaSummary> {
     let counts = connection.query_row(
         "SELECT
             coalesce(sum(CASE WHEN state = ?2 THEN 1 ELSE 0 END), 0),
@@ -397,14 +431,23 @@ pub(super) fn summary(
             coalesce(sum(CASE WHEN state = ?4 THEN 1 ELSE 0 END), 0),
             coalesce(sum(CASE WHEN state = ?5 THEN 1 ELSE 0 END), 0),
             min(CASE WHEN state = ?3 THEN next_attempt_at END)
-         FROM offsite_media_object
-         WHERE backup_set_id = ?1",
+         FROM offsite_media_object AS object
+         WHERE object.backup_set_id = ?1
+           AND (
+                ?6 = 0
+                OR EXISTS (
+                    SELECT 1
+                    FROM image AS referenced
+                    WHERE referenced.sha256 = object.sha256
+                )
+           )",
         params![
             backup_set_id.as_str(),
             OffsiteMediaState::Pending.as_db_str(),
             OffsiteMediaState::RetryWait.as_db_str(),
             OffsiteMediaState::Verified.as_db_str(),
             OffsiteMediaState::Blocked.as_db_str(),
+            scope.referenced_only(),
         ],
         |row| {
             Ok((
@@ -419,12 +462,21 @@ pub(super) fn summary(
     )?;
     let last_error = connection
         .query_row(
-            "SELECT last_error_code
-             FROM offsite_media_object
-             WHERE backup_set_id = ?1 AND last_error_code IS NOT NULL
-             ORDER BY updated_at DESC, sha256
+            "SELECT object.last_error_code
+             FROM offsite_media_object AS object
+             WHERE object.backup_set_id = ?1
+               AND object.last_error_code IS NOT NULL
+               AND (
+                    ?2 = 0
+                    OR EXISTS (
+                        SELECT 1
+                        FROM image AS referenced
+                        WHERE referenced.sha256 = object.sha256
+                    )
+               )
+             ORDER BY object.updated_at DESC, object.sha256
              LIMIT 1",
-            [backup_set_id.as_str()],
+            params![backup_set_id.as_str(), scope.referenced_only()],
             |row| row.get::<_, String>(0),
         )
         .optional()?
@@ -464,6 +516,70 @@ pub(super) fn release_transient_retries(
         ],
     )?;
     Ok(changed as u64)
+}
+
+pub(super) fn release_all_retries(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+    now: i64,
+) -> Result<u64> {
+    validate_timestamp(now, "manual backup timestamp")?;
+    let changed = connection.execute(
+        "UPDATE offsite_media_object
+         SET next_attempt_at = ?1, updated_at = max(updated_at, ?1)
+         WHERE backup_set_id = ?2 AND state = ?3",
+        params![
+            now,
+            backup_set_id.as_str(),
+            OffsiteMediaState::RetryWait.as_db_str(),
+        ],
+    )?;
+    Ok(changed as u64)
+}
+
+pub(super) fn requeue_remote_evidence(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+    sha256s: &[ContentSha256],
+    error_code: BackupErrorCode,
+    now: i64,
+) -> Result<u64> {
+    validate_timestamp(now, "remote media evidence timestamp")?;
+    if !matches!(
+        error_code,
+        BackupErrorCode::RemoteMediaMissing | BackupErrorCode::RemoteMediaCorrupt
+    ) {
+        return Err(invalid_media_state(
+            "remote media evidence has an unsupported error code",
+        ));
+    }
+    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let mut changed = 0_u64;
+    for sha256 in sha256s {
+        let updated = transaction.execute(
+            "UPDATE offsite_media_object
+             SET state = ?1,
+                 next_attempt_at = NULL,
+                 last_error_code = ?2,
+                 updated_at = max(updated_at, ?3)
+             WHERE backup_set_id = ?4
+               AND sha256 = ?5
+               AND state = ?6",
+            params![
+                OffsiteMediaState::Pending.as_db_str(),
+                error_code.as_db_str(),
+                now,
+                backup_set_id.as_str(),
+                sha256.as_bytes().as_slice(),
+                OffsiteMediaState::Verified.as_db_str(),
+            ],
+        )?;
+        changed = changed
+            .checked_add(updated as u64)
+            .ok_or_else(|| invalid_media_state("remote media requeue count overflow"))?;
+    }
+    transaction.commit()?;
+    Ok(changed)
 }
 
 pub(super) fn requeue_credential_failures(

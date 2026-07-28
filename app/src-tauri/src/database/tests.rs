@@ -131,7 +131,7 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 8);
+    assert_eq!(history_rows, 9);
 }
 
 #[test]
@@ -385,6 +385,71 @@ fn offsite_media_work_survives_offline_restart_and_converges_without_duplicates(
 }
 
 #[test]
+fn invalid_remote_evidence_requeues_verified_media_for_repair() {
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let client = database.client();
+    let backup_set_id = BackupSetId::new();
+    client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: 0,
+            backup_set_id: backup_set_id.clone(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            target: R2Target {
+                account_id: R2AccountId::parse("0123456789abcdef0123456789abcdef")
+                    .expect("account ID"),
+                jurisdiction: R2Jurisdiction::Default,
+                bucket: R2BucketName::parse("dara-test").expect("bucket"),
+                prefix: R2Prefix::parse("dara/remote-evidence-repair").expect("prefix"),
+            },
+        })
+        .expect("backup configuration");
+    client
+        .ingest_image(
+            CanonicalImage {
+                bytes: b"remote-evidence-media".to_vec(),
+                natural_width: 10,
+                natural_height: 10,
+            },
+            super::TEST_MEDIA_LEASE_ID.into(),
+        )
+        .expect("image");
+    let now = super::now_millis().expect("time");
+    let candidate = client
+        .load_next_offsite_media(backup_set_id.clone(), now)
+        .expect("load candidate")
+        .expect("candidate");
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: candidate.sha256,
+            expected_attempt_count: candidate.attempt_count,
+            attempted_at: now,
+            outcome: OffsiteMediaAttemptOutcome::Verified,
+        })
+        .expect("verify candidate");
+
+    assert_eq!(
+        client
+            .requeue_offsite_media_evidence(
+                backup_set_id.clone(),
+                vec![candidate.sha256],
+                BackupErrorCode::RemoteMediaMissing,
+                now.saturating_add(1),
+            )
+            .expect("requeue invalid evidence"),
+        1
+    );
+    let requeued = client
+        .load_next_offsite_media(backup_set_id, now.saturating_add(1))
+        .expect("load requeued candidate")
+        .expect("requeued candidate");
+    assert_eq!(requeued.sha256, candidate.sha256);
+    assert_eq!(requeued.attempt_count, 1);
+}
+
+#[test]
 fn periodic_offsite_media_reconciliation_repairs_missing_desired_rows() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);
@@ -587,7 +652,7 @@ fn available_local_media_requeues_only_local_missing_blocks() {
 }
 
 #[test]
-fn local_media_reaping_keeps_offsite_backup_work_append_only() {
+fn retired_media_work_stays_append_only_but_does_not_block_referenced_media() {
     let (_directory, paths) = test_paths();
     let database = initialize_test(&paths);
     let client = database.client();
@@ -618,6 +683,21 @@ fn local_media_reaping_keeps_offsite_backup_work_append_only() {
         )
         .expect("image");
     let base = super::now_millis().expect("base time");
+    let candidate = client
+        .load_next_offsite_media(backup_set_id.clone(), base)
+        .expect("load candidate")
+        .expect("pending candidate");
+    client
+        .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+            backup_set_id: backup_set_id.clone(),
+            sha256: candidate.sha256,
+            expected_attempt_count: candidate.attempt_count,
+            attempted_at: base,
+            outcome: OffsiteMediaAttemptOutcome::Blocked {
+                error_code: BackupErrorCode::ImmutableObjectConflict,
+            },
+        })
+        .expect("block media");
     let orphaned_at = base
         .saturating_add(super::media::MEDIA_LEASE_DURATION_MILLIS)
         .saturating_add(1);
@@ -634,10 +714,22 @@ fn local_media_reaping_keeps_offsite_backup_work_append_only() {
     assert_eq!(report.cleanup.deleted_blob_count, 1);
 
     let summary = client
-        .load_offsite_media_summary(backup_set_id)
+        .load_offsite_media_summary(backup_set_id.clone())
         .expect("off-site summary");
-    assert_eq!(summary.pending_count, 1);
+    assert_eq!(summary.blocked_count, 1);
     assert_eq!(summary.verified_count, 0);
+    assert_eq!(
+        summary.last_error_code,
+        Some(BackupErrorCode::ImmutableObjectConflict)
+    );
+
+    let referenced = client
+        .load_referenced_offsite_media_summary(backup_set_id)
+        .expect("referenced media summary");
+    assert_eq!(referenced.pending_count, 0);
+    assert_eq!(referenced.retry_wait_count, 0);
+    assert_eq!(referenced.blocked_count, 0);
+    assert_eq!(referenced.last_error_code, None);
 }
 
 #[test]
@@ -1538,7 +1630,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 9, 'future', applied_on, '0'
+         SELECT 10, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -1559,17 +1651,17 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V9__grouped_good.sql",
+            "V10__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
-        .expect("V9 migration"),
+        .expect("V10 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V10__grouped_failure.sql",
+            "V11__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
-        .expect("V10 migration"),
+        .expect("V11 migration"),
     );
     let runner = Runner::new(&all).set_grouped(true);
     assert!(runner.run(&mut main).is_err());
@@ -1578,9 +1670,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V8")
+            .expect("V9")
             .version(),
-        8
+        9
     );
 }
 
@@ -1624,7 +1716,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(8));
+    assert_eq!(launch.manifest.main.migration_head, Some(9));
     drop(database);
 
     let base = launch.manifest.created_at;

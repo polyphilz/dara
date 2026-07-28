@@ -147,8 +147,29 @@ pub(crate) struct ListObjectsPage {
 
 pub(crate) trait ObjectStore: Send + Sync {
     fn head(&self, key: &R2ObjectKey) -> Result<Option<ObjectMetadata>, ObjectStoreError>;
+    fn head_with_timeout(
+        &self,
+        key: &R2ObjectKey,
+        _timeout: Duration,
+    ) -> Result<Option<ObjectMetadata>, ObjectStoreError> {
+        self.head(key)
+    }
     fn get(&self, key: &R2ObjectKey) -> Result<GetObjectResult, ObjectStoreError>;
+    fn get_with_timeout(
+        &self,
+        key: &R2ObjectKey,
+        _timeout: Duration,
+    ) -> Result<GetObjectResult, ObjectStoreError> {
+        self.get(key)
+    }
     fn put(&self, request: PutObjectRequest) -> Result<PutObjectOutcome, ObjectStoreError>;
+    fn put_with_timeout(
+        &self,
+        request: PutObjectRequest,
+        _timeout: Duration,
+    ) -> Result<PutObjectOutcome, ObjectStoreError> {
+        self.put(request)
+    }
     fn list(
         &self,
         prefix: &R2ListPrefix,
@@ -242,14 +263,33 @@ impl R2ObjectStore {
             }
         })
     }
+
+    fn bounded_request_timeout(timeout: Duration) -> Result<Duration, ObjectStoreError> {
+        if timeout.is_zero() {
+            return Err(ObjectStoreError::new(ObjectStoreErrorCode::Timeout));
+        }
+        Ok(timeout.min(REQUEST_TIMEOUT))
+    }
 }
 
 impl ObjectStore for R2ObjectStore {
     fn head(&self, key: &R2ObjectKey) -> Result<Option<ObjectMetadata>, ObjectStoreError> {
+        self.head_with_timeout(key, REQUEST_TIMEOUT)
+    }
+
+    fn head_with_timeout(
+        &self,
+        key: &R2ObjectKey,
+        timeout: Duration,
+    ) -> Result<Option<ObjectMetadata>, ObjectStoreError> {
         self.validate_key(key)?;
         let credentials = self.signing_credentials();
         let action = self.bucket.head_object(Some(&credentials), key.as_str());
-        let response = self.send(self.client.head(action.sign(SIGNED_URL_LIFETIME)))?;
+        let response = self.send(
+            self.client
+                .head(action.sign(SIGNED_URL_LIFETIME))
+                .timeout(Self::bounded_request_timeout(timeout)?),
+        )?;
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
@@ -258,10 +298,22 @@ impl ObjectStore for R2ObjectStore {
     }
 
     fn get(&self, key: &R2ObjectKey) -> Result<GetObjectResult, ObjectStoreError> {
+        self.get_with_timeout(key, REQUEST_TIMEOUT)
+    }
+
+    fn get_with_timeout(
+        &self,
+        key: &R2ObjectKey,
+        timeout: Duration,
+    ) -> Result<GetObjectResult, ObjectStoreError> {
         self.validate_key(key)?;
         let credentials = self.signing_credentials();
         let action = self.bucket.get_object(Some(&credentials), key.as_str());
-        let response = self.send(self.client.get(action.sign(SIGNED_URL_LIFETIME)))?;
+        let response = self.send(
+            self.client
+                .get(action.sign(SIGNED_URL_LIFETIME))
+                .timeout(Self::bounded_request_timeout(timeout)?),
+        )?;
         ensure_success(response.status())?;
         let metadata = parse_metadata(response.headers())?;
         let bytes = read_bounded(response, MAX_OBJECT_BYTES)?;
@@ -272,6 +324,14 @@ impl ObjectStore for R2ObjectStore {
     }
 
     fn put(&self, request: PutObjectRequest) -> Result<PutObjectOutcome, ObjectStoreError> {
+        self.put_with_timeout(request, REQUEST_TIMEOUT)
+    }
+
+    fn put_with_timeout(
+        &self,
+        request: PutObjectRequest,
+        timeout: Duration,
+    ) -> Result<PutObjectOutcome, ObjectStoreError> {
         self.validate_key(&request.key)?;
         if request.bytes.len() > MAX_OBJECT_BYTES {
             return Err(ObjectStoreError::new(ObjectStoreErrorCode::ObjectTooLarge));
@@ -321,7 +381,7 @@ impl ObjectStore for R2ObjectStore {
             PutCondition::IfAbsent => builder.header(IF_NONE_MATCH, "*"),
             PutCondition::IfMatch(version) => builder.header(IF_MATCH, version.as_str()),
         };
-        let response = self.send(builder)?;
+        let response = self.send(builder.timeout(Self::bounded_request_timeout(timeout)?))?;
         if response.status() == StatusCode::PRECONDITION_FAILED {
             return Ok(PutObjectOutcome::ConditionNotMet);
         }

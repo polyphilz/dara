@@ -1,5 +1,7 @@
 use std::{io, path::PathBuf};
 
+use crate::backup::domain::BackupErrorCode;
+
 #[derive(Debug, thiserror::Error)]
 pub enum DatabaseError {
     #[error("database I/O failed: {0}")]
@@ -81,6 +83,18 @@ pub enum DatabaseError {
 
     #[error("stored off-site media state is invalid: {0}")]
     InvalidOffsiteMediaState(String),
+
+    #[error("off-site checkpoint cannot proceed until all referenced media is verified")]
+    OffsiteCheckpointMediaIncomplete,
+
+    #[error("off-site checkpoint fence failed: {0:?}")]
+    OffsiteCheckpointFence(BackupErrorCode),
+
+    #[error("off-site checkpoint phase is stale")]
+    StaleOffsiteCheckpoint,
+
+    #[error("stored off-site checkpoint state is invalid: {0}")]
+    InvalidOffsiteCheckpoint(String),
 
     #[error("card content is stale: {0}")]
     StaleCardContent(String),
