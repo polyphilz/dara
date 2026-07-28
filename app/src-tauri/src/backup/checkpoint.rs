@@ -46,7 +46,7 @@ const AUTOMATIC_DEBOUNCE: Duration = Duration::from_secs(60);
 const AUTOMATIC_MAX_DELAY: Duration = Duration::from_secs(5 * 60);
 const AUTOMATIC_RETRY_DELAY: Duration = Duration::from_secs(30);
 const REMOTE_EVIDENCE_INTERVAL: Duration = Duration::from_secs(5 * 60);
-const MEDIA_WAIT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const CHECKPOINT_COMPLETION_BUDGET: Duration = Duration::from_secs(5 * 60);
 const MEDIA_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const CHECKPOINT_SHUTDOWN_BUDGET: Duration = Duration::from_secs(45);
 const CHECKPOINT_COORDINATOR_JOIN_BUDGET: Duration = Duration::from_secs(46);
@@ -300,7 +300,7 @@ struct CoordinatorSchedule {
     maximum_delay: Duration,
     retry_delay: Duration,
     remote_evidence_interval: Duration,
-    media_wait_timeout: Duration,
+    checkpoint_budget: Duration,
 }
 
 impl CoordinatorSchedule {
@@ -311,7 +311,7 @@ impl CoordinatorSchedule {
             maximum_delay: AUTOMATIC_MAX_DELAY,
             retry_delay: AUTOMATIC_RETRY_DELAY,
             remote_evidence_interval: REMOTE_EVIDENCE_INTERVAL,
-            media_wait_timeout: MEDIA_WAIT_TIMEOUT,
+            checkpoint_budget: CHECKPOINT_COMPLETION_BUDGET,
         }
     }
 }
@@ -419,7 +419,7 @@ fn checkpoint_worker(
                     &dara_version,
                     &status,
                     true,
-                    Instant::now() + schedule.media_wait_timeout,
+                    Instant::now() + schedule.checkpoint_budget,
                 );
                 if result.is_ok() {
                     dirty = None;
@@ -507,7 +507,7 @@ fn checkpoint_worker(
                 &dara_version,
                 &status,
                 false,
-                now + schedule.poll_interval,
+                now + schedule.checkpoint_budget,
             );
             if result.is_ok() {
                 dirty = None;
@@ -1646,7 +1646,7 @@ mod tests {
             maximum_delay: Duration::from_millis(50),
             retry_delay: Duration::from_millis(20),
             remote_evidence_interval: Duration::from_secs(1),
-            media_wait_timeout: Duration::from_secs(1),
+            checkpoint_budget: Duration::from_secs(1),
         }
     }
 
@@ -1812,9 +1812,9 @@ mod tests {
     }
 
     #[test]
-    fn automatic_scheduler_publishes_the_first_checkpoint_after_debounce() {
+    fn automatic_scheduler_budget_is_independent_of_its_poll_interval() {
         let (_directory, database, _config) = enabled_database();
-        let target = FakeTarget::new(None);
+        let target = FakeTarget::new(None).with_exact_txid_delay(Duration::from_millis(20));
         let service = CheckpointCoordinator::start_with_parts(
             database.client(),
             Arc::new(FakeMediaWorker),
