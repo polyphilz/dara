@@ -7,6 +7,7 @@ import {
 } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import {
+  BackupErrorCode,
   CheckpointBackupPhase,
   CredentialAvailability,
   MediaBackupPhase,
@@ -47,7 +48,7 @@ test('starts off, explains local independence, and never implies client-side enc
 test('validates locally, sends credentials once, and clears both credential fields after failure', async () => {
   const fixture = backupFixture(disabledStatus())
   fixture.gateway.testAndEnable.mockRejectedValueOnce({
-    code: 'AUTHENTICATION_REJECTED',
+    code: BackupErrorCode.AuthenticationRejected,
     message: 'Cloudflare rejected the R2 credentials.',
   })
   const { findByRole, findByText, getByLabelText } = renderSection(fixture.gateway)
@@ -92,6 +93,7 @@ test('validates locally, sends credentials once, and clears both credential fiel
   expect((getByLabelText('Secret Access Key') as HTMLInputElement).value).toBe(
     '',
   )
+  expect(fixture.gateway.loadStatus).toHaveBeenCalledTimes(2)
 })
 
 test('keeps component freshness separate from a complete recoverable checkpoint', async () => {
@@ -197,6 +199,44 @@ test('keeps credential removal available after backup is disabled', async () => 
   ).toBeTruthy()
 })
 
+test('offers explicit takeover after a disabled restored backup detects another owner', async () => {
+  const disabled = configuredDisabledStatus()
+  const fixture = backupFixture(disabled)
+  fixture.gateway.loadStatus
+    .mockResolvedValueOnce(structuredClone(disabled))
+    .mockResolvedValue({
+      ...structuredClone(disabled),
+      takeoverAvailable: true,
+    })
+  fixture.gateway.testAndEnable.mockRejectedValueOnce({
+    code: BackupErrorCode.OwnerMismatch,
+    message: 'Another Dara installation currently owns this backup.',
+  })
+  const { findByLabelText, findByRole, findByText, getByRole } = renderSection(
+    fixture.gateway,
+  )
+
+  fireEvent.change(await findByLabelText('Access Key ID'), {
+    target: { value: ACCESS_KEY_ID },
+  })
+  fireEvent.change(await findByLabelText('Secret Access Key'), {
+    target: { value: SECRET_ACCESS_KEY },
+  })
+  fireEvent.click(
+    await findByRole('button', { name: 'Test and re-enable backup' }),
+  )
+  expect(
+    await findByText('Another Dara installation currently owns this backup.'),
+  ).toBeTruthy()
+
+  fireEvent.click(
+    await findByRole('button', { name: 'Take over restored backup' }),
+  )
+  expect(
+    getByRole('alertdialog', { name: 'Take over this restored backup?' }),
+  ).toBeTruthy()
+})
+
 test('confirms a new target before invoking the backend and returns focus on cancel', async () => {
   const fixture = backupFixture(enabledStatus({ complete: true }))
   const {
@@ -230,6 +270,29 @@ test('confirms a new target before invoking the backend and returns focus on can
 
   expect(queryByRole('alertdialog')).toBeNull()
   await waitFor(() => expect(document.activeElement).toBe(submit))
+})
+
+test('preserves target edits when status refreshes', async () => {
+  const fixture = backupFixture(enabledStatus({ complete: true }))
+  const { findByLabelText, findByRole } = renderSection(fixture.gateway)
+
+  fireEvent.click(await findByRole('button', { name: 'Change target' }))
+  const bucket = await findByLabelText('Bucket')
+  fireEvent.change(bucket, {
+    target: { value: 'dara-edited-target' },
+  })
+  await waitFor(() => expect(fixture.progress).toBeTypeOf('function'))
+  await act(async () => {
+    fixture.progress?.({
+      errorCode: null,
+      operation: OffsiteBackupOperationKind.ChangeTarget,
+      operationId: '019f547b-6200-7000-8000-000000000099',
+      phase: OffsiteBackupProgressPhase.Complete,
+    })
+  })
+  await waitFor(() => expect(fixture.gateway.loadStatus).toHaveBeenCalledTimes(2))
+
+  expect((bucket as HTMLInputElement).value).toBe('dara-edited-target')
 })
 
 type MockBackupGateway = OffsiteBackupGateway & {

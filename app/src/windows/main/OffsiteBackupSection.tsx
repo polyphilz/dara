@@ -112,6 +112,7 @@ export function OffsiteBackupSection({
   const disableButtonRef = useRef<HTMLButtonElement>(null)
   const removeButtonRef = useRef<HTMLButtonElement>(null)
   const takeoverButtonRef = useRef<HTMLButtonElement>(null)
+  const targetFormDirtyRef = useRef(false)
   const accountId = useId()
   const bucketId = useId()
   const prefixId = useId()
@@ -121,7 +122,7 @@ export function OffsiteBackupSection({
   const applyStatus = useCallback((next: OffsiteBackupStatus) => {
     setStatus(next)
     setLoadingError(null)
-    if (next.target) {
+    if (next.target && !targetFormDirtyRef.current) {
       setForm((current) => ({
         ...current,
         accountId: next.target?.accountId ?? '',
@@ -214,10 +215,12 @@ export function OffsiteBackupSection({
         setNotice('That backup task is already running.')
       } else {
         setNotice(success)
+        targetFormDirtyRef.current = false
         setFormMode(BackupFormMode.Configure)
       }
     } catch (error) {
       setOperationError(errorMessage(error))
+      await reload()
     } finally {
       clearCredentials(setForm)
       setOperation(null)
@@ -317,7 +320,14 @@ export function OffsiteBackupSection({
                 onCancel={
                   status.configured && formMode !== BackupFormMode.Configure
                     ? () => {
+                        targetFormDirtyRef.current = false
                         clearCredentials(setForm)
+                        const target = status.target
+                        if (target) {
+                          setForm((current) =>
+                            applyTargetToForm(current, target),
+                          )
+                        }
                         setFormErrors({})
                         setFormMode(BackupFormMode.Configure)
                         requestAnimationFrame(() => {
@@ -331,6 +341,9 @@ export function OffsiteBackupSection({
                     : undefined
                 }
                 onChange={(field, value) => {
+                  if (isTargetFormField(field)) {
+                    targetFormDirtyRef.current = true
+                  }
                   setForm((current) => ({ ...current, [field]: value }))
                   setFormErrors((current) => ({ ...current, [field]: undefined }))
                   setOperationError(null)
@@ -402,6 +415,14 @@ export function OffsiteBackupSection({
                   <DaraButton
                     disabled={controlsDisabled}
                     onClick={() => {
+                      targetFormDirtyRef.current = false
+                      clearCredentials(setForm)
+                      const target = status.target
+                      if (target) {
+                        setForm((current) =>
+                          applyTargetToForm(current, target),
+                        )
+                      }
                       setFormMode(BackupFormMode.ChangeTarget)
                       setOperationError(null)
                     }}
@@ -459,6 +480,20 @@ export function OffsiteBackupSection({
               status.credentials !== CredentialAvailability.Missing && (
                 <div className="offsite-backup-actions">
                   <div className="offsite-backup-secondary-actions">
+                    {status.takeoverAvailable && (
+                      <DaraButton
+                        disabled={controlsDisabled}
+                        onClick={() =>
+                          setConfirmation(BackupConfirmation.TakeOver)
+                        }
+                        ref={takeoverButtonRef}
+                        size={DaraButtonSize.Mini}
+                        type="button"
+                        variant={DaraButtonVariant.Ghost}
+                      >
+                        Take over restored backup
+                      </DaraButton>
+                    )}
                     <DaraButton
                       disabled={controlsDisabled}
                       onClick={() =>
@@ -948,6 +983,28 @@ function targetFromForm(form: BackupForm): OffsiteBackupTarget {
     bucket: form.bucket.trim(),
     prefix: form.prefix.trim(),
   }
+}
+
+function applyTargetToForm(
+  form: BackupForm,
+  target: OffsiteBackupTarget,
+): BackupForm {
+  return {
+    ...form,
+    accountId: target.accountId,
+    jurisdiction: target.jurisdiction,
+    bucket: target.bucket,
+    prefix: target.prefix,
+  }
+}
+
+function isTargetFormField(field: keyof BackupForm): boolean {
+  return (
+    field === 'accountId' ||
+    field === 'jurisdiction' ||
+    field === 'bucket' ||
+    field === 'prefix'
+  )
 }
 
 function targetsMatch(

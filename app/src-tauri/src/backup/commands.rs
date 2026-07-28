@@ -40,16 +40,22 @@ const RESTORE_DRILL_DIRECTORY: &str = "offsite-restore-drills";
 
 #[derive(Default)]
 pub(crate) struct OffsiteBackupOperationRegistry {
-    active: Mutex<Option<ActiveOperation>>,
+    state: Mutex<OperationRegistryState>,
+}
+
+#[derive(Default)]
+struct OperationRegistryState {
+    active: Option<ActiveOperation>,
+    takeover_available: bool,
 }
 
 impl OffsiteBackupOperationRegistry {
     fn begin(&self, kind: OffsiteBackupOperationKind) -> OperationStart {
-        let mut active = self
-            .active
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(operation) = active.as_ref() {
+        if let Some(operation) = state.active.as_ref() {
             return OperationStart {
                 operation_id: operation.operation_id.clone(),
                 operation: operation.kind,
@@ -57,7 +63,7 @@ impl OffsiteBackupOperationRegistry {
             };
         }
         let operation_id = Uuid::now_v7().to_string();
-        *active = Some(ActiveOperation {
+        state.active = Some(ActiveOperation {
             operation_id: operation_id.clone(),
             kind,
         });
@@ -68,24 +74,48 @@ impl OffsiteBackupOperationRegistry {
         }
     }
 
-    fn finish(&self, operation_id: &str) {
-        let mut active = self
-            .active
+    fn finish(&self, operation_id: &str, result: Result<(), BackupErrorCode>) {
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if active
+        let Some(operation) = state
+            .active
             .as_ref()
-            .is_some_and(|operation| operation.operation_id == operation_id)
-        {
-            *active = None;
+            .filter(|operation| operation.operation_id == operation_id)
+            .cloned()
+        else {
+            return;
+        };
+        state.active = None;
+        match (operation.kind, result) {
+            (OffsiteBackupOperationKind::TestAndEnable, Err(BackupErrorCode::OwnerMismatch)) => {
+                state.takeover_available = true
+            }
+            (
+                OffsiteBackupOperationKind::TestAndEnable
+                | OffsiteBackupOperationKind::ChangeTarget
+                | OffsiteBackupOperationKind::TakeOver
+                | OffsiteBackupOperationKind::RemoveCredentials,
+                Ok(()),
+            ) => state.takeover_available = false,
+            _ => {}
         }
     }
 
     fn active(&self) -> Option<ActiveOperation> {
-        self.active
+        self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .active
             .clone()
+    }
+
+    fn takeover_available(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .takeover_available
     }
 }
 
@@ -375,6 +405,7 @@ pub(crate) async fn load_offsite_backup_status(
     let relational_status = litestream.status();
     let checkpoint_status = checkpoint.status();
     let active_operation = operations.active();
+    let takeover_available = operations.takeover_available();
     tauri::async_runtime::spawn_blocking(move || {
         load_status(
             client,
@@ -383,6 +414,7 @@ pub(crate) async fn load_offsite_backup_status(
             relational_status,
             checkpoint_status,
             active_operation,
+            takeover_available,
         )
     })
     .await
@@ -424,7 +456,7 @@ pub(crate) async fn test_and_enable_offsite_backup(
     .await
     .map_err(|_| BackupErrorCode::WorkerUnavailable)
     .and_then(|result| result);
-    operations.finish(&started.operation_id);
+    operations.finish(&started.operation_id, result);
     if result.is_ok() {
         reload_services(&app);
     }
@@ -469,7 +501,7 @@ pub(crate) async fn replace_offsite_backup_credentials(
     .await
     .map_err(|_| BackupErrorCode::WorkerUnavailable)
     .and_then(|result| result);
-    operations.finish(&started.operation_id);
+    operations.finish(&started.operation_id, result);
     if result.is_ok() {
         reload_services(&app);
     }
@@ -517,7 +549,7 @@ pub(crate) async fn change_offsite_backup_target(
     .await
     .map_err(|_| BackupErrorCode::WorkerUnavailable)
     .and_then(|result| result);
-    operations.finish(&started.operation_id);
+    operations.finish(&started.operation_id, result);
     if result.is_ok() {
         reload_services(&app);
     }
@@ -561,7 +593,7 @@ pub(crate) async fn take_over_restored_offsite_backup(
     .await
     .map_err(|_| BackupErrorCode::WorkerUnavailable)
     .and_then(|result| result);
-    operations.finish(&started.operation_id);
+    operations.finish(&started.operation_id, result);
     // A successful remote owner CAS fences the old local configuration even
     // if persisting the new epoch is the step that failed.
     reload_services(&app);
@@ -632,7 +664,7 @@ pub(crate) async fn create_offsite_backup_now(
     .await
     .map_err(|_| BackupErrorCode::WorkerUnavailable)
     .and_then(|result| result);
-    operations.finish(&started.operation_id);
+    operations.finish(&started.operation_id, result);
     finish_operation(
         &app,
         &started.operation_id,
@@ -672,7 +704,7 @@ pub(crate) async fn run_offsite_restore_drill(
     .await
     .map_err(|_| BackupErrorCode::WorkerUnavailable)
     .and_then(|result| result);
-    operations.finish(&started.operation_id);
+    operations.finish(&started.operation_id, result);
     finish_operation(
         &app,
         &started.operation_id,
@@ -692,7 +724,7 @@ impl From<OperationStart> for OffsiteBackupOperation {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum ConfigurationMode {
     Enable,
     ChangeTarget,
@@ -776,7 +808,21 @@ fn configure_backup(
         created_at: current.as_ref().map_or(0, |config| config.created_at),
         updated_at: current.as_ref().map_or(0, |config| config.updated_at),
     };
-    create_or_validate_backup_authority(&store, &candidate, &installation_id)?;
+    let credential_store = MacOsKeychainCredentialStore;
+    if let Err(error) = create_or_validate_backup_authority(&store, &candidate, &installation_id) {
+        if mode == ConfigurationMode::Enable
+            && current.is_some()
+            && error == BackupErrorCode::OwnerMismatch
+        {
+            // The connection probe and backup-set identity both passed. Keep
+            // these tested credentials so the explicit takeover action can
+            // authenticate without enabling the old ownership epoch.
+            credential_store
+                .save(&backup_set_id, &credentials)
+                .map_err(map_credential_error)?;
+        }
+        return Err(error);
+    }
 
     emit_progress(
         app,
@@ -785,7 +831,6 @@ fn configure_backup(
         OffsiteBackupProgressPhase::SavingConfiguration,
         None,
     );
-    let credential_store = MacOsKeychainCredentialStore;
     let previous_credentials = credential_store.load(&backup_set_id).ok();
     credential_store
         .save(&backup_set_id, &credentials)
@@ -1000,7 +1045,7 @@ async fn run_local_configuration_operation(
     .await
     .map_err(|_| BackupErrorCode::WorkerUnavailable)
     .and_then(|result| result);
-    operations.finish(&started.operation_id);
+    operations.finish(&started.operation_id, result);
     // The database config may already be disabled when a later Keychain
     // removal fails, so always apply the stored configuration.
     reload_services(&app);
@@ -1068,6 +1113,7 @@ fn load_status(
     relational_status: RelationalBackupStatus,
     checkpoint_status: CheckpointBackupStatus,
     active_operation: Option<ActiveOperation>,
+    takeover_hint: bool,
 ) -> CommandResult<OffsiteBackupStatus> {
     let config = client
         .load_offsite_backup_config()
@@ -1103,7 +1149,8 @@ fn load_status(
             }
         });
     let takeover_available = config.is_some()
-        && relational_status.last_error_code == Some(BackupErrorCode::OwnerMismatch);
+        && (takeover_hint
+            || relational_status.last_error_code == Some(BackupErrorCode::OwnerMismatch));
     let active_operation = active_operation.map(|operation| OffsiteBackupOperation {
         operation_id: operation.operation_id,
         operation: operation.kind,
@@ -1304,11 +1351,30 @@ mod tests {
         assert!(second.reused);
         assert_eq!(first.operation_id, second.operation_id);
 
-        registry.finish(&first.operation_id);
+        registry.finish(&first.operation_id, Ok(()));
 
         let third = registry.begin(OffsiteBackupOperationKind::RestoreDrill);
         assert!(!third.reused);
         assert_ne!(first.operation_id, third.operation_id);
+    }
+
+    #[test]
+    fn operation_registry_exposes_owner_mismatch_until_recovery_succeeds() {
+        let registry = OffsiteBackupOperationRegistry::default();
+        let reenable = registry.begin(OffsiteBackupOperationKind::TestAndEnable);
+        registry.finish(&reenable.operation_id, Err(BackupErrorCode::OwnerMismatch));
+        assert!(registry.takeover_available());
+
+        let failed_takeover = registry.begin(OffsiteBackupOperationKind::TakeOver);
+        registry.finish(
+            &failed_takeover.operation_id,
+            Err(BackupErrorCode::NetworkOffline),
+        );
+        assert!(registry.takeover_available());
+
+        let successful_takeover = registry.begin(OffsiteBackupOperationKind::TakeOver);
+        registry.finish(&successful_takeover.operation_id, Ok(()));
+        assert!(!registry.takeover_available());
     }
 
     #[test]
