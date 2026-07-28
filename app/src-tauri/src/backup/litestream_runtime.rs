@@ -21,8 +21,8 @@ use super::{
     installation::InstallationIdentityStore,
     litestream::{
         configure_credentials_environment, CommandLitestreamControl, LitestreamConfig,
-        LitestreamControl, LitestreamError, LitestreamRuntimePaths, LitestreamTxid, SyncResult,
-        SystemCommandExecutor, VerifiedLitestreamBinary,
+        LitestreamError, LitestreamRuntimePaths, LitestreamTxid, SyncResult, SystemCommandExecutor,
+        VerifiedLitestreamBinary,
     },
     object_store::{ObjectStore, R2ObjectStore},
     remote_authority::{map_credential_error, validate_backup_authority},
@@ -39,6 +39,9 @@ const CONTROL_REMOTE_TIMEOUT_SECONDS: u64 = 30;
 // Leave time inside the fence budget to kill, reap, and report a timed-out command.
 const CHECKPOINT_LOCAL_COMMAND_TIMEOUT: Duration = Duration::from_secs(4);
 const CHECKPOINT_LOCAL_SYNC_TIMEOUT: Duration = Duration::from_secs(5);
+// Litestream's protocol timeout is 30 seconds; keep one second to kill and reap
+// before the checkpoint handle's outer deadline.
+const CHECKPOINT_REMOTE_COMMAND_TIMEOUT: Duration = Duration::from_secs(34);
 const CHECKPOINT_REMOTE_SYNC_TIMEOUT: Duration = Duration::from_secs(35);
 const DAEMON_STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
 const DAEMON_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(35);
@@ -749,6 +752,17 @@ fn map_checkpoint_local_sync_error(error: LitestreamError) -> RuntimeFailure {
     }
 }
 
+fn map_checkpoint_remote_sync_error(error: LitestreamError) -> RuntimeFailure {
+    if matches!(
+        &error,
+        LitestreamError::Execute(source) if source.kind() == std::io::ErrorKind::TimedOut
+    ) {
+        RuntimeFailure::new(BackupErrorCode::NetworkTimeout, true)
+    } else {
+        map_litestream_start_error(error)
+    }
+}
+
 struct SystemManagedLitestream {
     child: Option<Child>,
     runtime: LitestreamRuntimePaths,
@@ -915,8 +929,8 @@ impl CheckpointControl for SystemCheckpointControl {
     fn sync_remote(&self) -> Result<SyncResult, RuntimeFailure> {
         self.authority.validate()?;
         self.control
-            .sync_remote(&self.database_path)
-            .map_err(map_litestream_start_error)
+            .sync_remote_with_timeout(&self.database_path, CHECKPOINT_REMOTE_COMMAND_TIMEOUT)
+            .map_err(map_checkpoint_remote_sync_error)
     }
 }
 
@@ -1834,6 +1848,18 @@ mod tests {
         assert_eq!(
             failure,
             RuntimeFailure::new(BackupErrorCode::FenceTimeout, true)
+        );
+    }
+
+    #[test]
+    fn remote_command_timeout_maps_to_a_retryable_network_timeout() {
+        let failure = map_checkpoint_remote_sync_error(LitestreamError::Execute(
+            std::io::Error::new(std::io::ErrorKind::TimedOut, "test timeout"),
+        ));
+
+        assert_eq!(
+            failure,
+            RuntimeFailure::new(BackupErrorCode::NetworkTimeout, true)
         );
     }
 

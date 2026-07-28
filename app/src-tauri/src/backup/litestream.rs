@@ -812,6 +812,14 @@ impl<E: CommandExecutor> CommandLitestreamControl<E> {
     ) -> Result<SyncResult, LitestreamError> {
         self.sync(database_path, false, Some(timeout))
     }
+
+    pub(crate) fn sync_remote_with_timeout(
+        &self,
+        database_path: &Path,
+        timeout: Duration,
+    ) -> Result<SyncResult, LitestreamError> {
+        self.sync(database_path, true, Some(timeout))
+    }
 }
 
 impl<E: CommandExecutor> LitestreamControl for CommandLitestreamControl<E> {
@@ -1077,26 +1085,31 @@ mod tests {
         );
         let database_path = directory.path().join("dara.sqlite3");
 
-        let error = control
-            .sync_local_with_timeout(&database_path, Duration::from_secs(1))
+        for remote in [false, true] {
+            let error = if remote {
+                control.sync_remote_with_timeout(&database_path, Duration::from_secs(1))
+            } else {
+                control.sync_local_with_timeout(&database_path, Duration::from_secs(1))
+            }
             .expect_err("blocking command must time out");
-        assert!(matches!(
-            error,
-            LitestreamError::Execute(ref source)
-                if source.kind() == std::io::ErrorKind::TimedOut
-        ));
+            assert!(matches!(
+                error,
+                LitestreamError::Execute(ref source)
+                    if source.kind() == std::io::ErrorKind::TimedOut
+            ));
 
-        let pid = fs::read_to_string(pid_path)
-            .expect("control pid")
-            .trim()
-            .parse::<i32>()
-            .expect("numeric control pid");
-        let result = unsafe { libc::kill(pid, 0) };
-        assert_eq!(result, -1);
-        assert_eq!(
-            std::io::Error::last_os_error().raw_os_error(),
-            Some(libc::ESRCH)
-        );
+            let pid = fs::read_to_string(&pid_path)
+                .expect("control pid")
+                .trim()
+                .parse::<i32>()
+                .expect("numeric control pid");
+            let result = unsafe { libc::kill(pid, 0) };
+            assert_eq!(result, -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ESRCH)
+            );
+        }
     }
 
     #[test]
