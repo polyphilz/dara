@@ -764,20 +764,8 @@ fn configure_backup(
         .map_err(|_| BackupErrorCode::WorkerUnavailable)?
         .load_or_create()
         .map_err(|_| BackupErrorCode::WorkerUnavailable)?;
-    let (backup_set_id, replica_epoch_id) = match (mode, current.as_ref()) {
-        (ConfigurationMode::Enable, Some(config)) => (
-            config.backup_set_id.clone(),
-            config.replica_epoch_id.clone(),
-        ),
-        (ConfigurationMode::Enable, None) => {
-            recover_uncommitted_authority(&store, &target, &installation_id)?
-                .unwrap_or_else(|| (BackupSetId::new(), ReplicaEpochId::new()))
-        }
-        (ConfigurationMode::ChangeTarget, Some(_)) => (BackupSetId::new(), ReplicaEpochId::new()),
-        (ConfigurationMode::ChangeTarget, None) => {
-            return Err(BackupErrorCode::InvalidTarget);
-        }
-    };
+    let (backup_set_id, replica_epoch_id) =
+        select_configuration_authority(mode, current.as_ref(), &store, &target, &installation_id)?;
     let candidate = OffsiteBackupConfig {
         revision: expected_revision,
         backup_set_id: backup_set_id.clone(),
@@ -830,6 +818,26 @@ fn configure_backup(
         None,
     );
     Ok(())
+}
+
+fn select_configuration_authority(
+    mode: ConfigurationMode,
+    current: Option<&OffsiteBackupConfig>,
+    store: &dyn ObjectStore,
+    target: &R2Target,
+    installation_id: &InstallationId,
+) -> Result<(BackupSetId, ReplicaEpochId), BackupErrorCode> {
+    match (mode, current) {
+        (ConfigurationMode::Enable, Some(config)) => Ok((
+            config.backup_set_id.clone(),
+            config.replica_epoch_id.clone(),
+        )),
+        (ConfigurationMode::Enable, None) | (ConfigurationMode::ChangeTarget, Some(_)) => Ok(
+            recover_uncommitted_authority(store, target, installation_id)?
+                .unwrap_or_else(|| (BackupSetId::new(), ReplicaEpochId::new())),
+        ),
+        (ConfigurationMode::ChangeTarget, None) => Err(BackupErrorCode::InvalidTarget),
+    }
 }
 
 fn recover_uncommitted_authority(
@@ -1005,7 +1013,7 @@ fn run_restore_drill(
     operation_id: &str,
     client: DatabaseClient,
     resource_dir: std::path::PathBuf,
-    report_directory: std::path::PathBuf,
+    report_root: std::path::PathBuf,
 ) -> Result<(), BackupErrorCode> {
     emit_progress(
         app,
@@ -1021,6 +1029,7 @@ fn run_restore_drill(
     let store = R2ObjectStore::new(config.target.clone(), &credentials)
         .map_err(|error| map_store_error(error.code))?;
     validate_backup_identity(&store, &config)?;
+    let report_directory = restore_drill_directory(&report_root, &config);
     let engine = RemoteRecoveryEngine::system(config.target, credentials, &resource_dir)?;
     emit_progress(
         app,
@@ -1054,7 +1063,7 @@ fn require_config(client: &DatabaseClient) -> Result<OffsiteBackupConfig, Backup
 
 fn load_status(
     client: DatabaseClient,
-    report_directory: std::path::PathBuf,
+    report_root: std::path::PathBuf,
     media_status: MediaBackupStatus,
     relational_status: RelationalBackupStatus,
     checkpoint_status: CheckpointBackupStatus,
@@ -1074,18 +1083,25 @@ fn load_status(
             },
         );
     let (last_restore_drill, last_restore_drill_at, last_restore_drill_error) =
-        match load_restore_drill_report(&report_directory) {
-            Ok(report) => {
-                // The report itself is the useful durable result. A platform that
-                // cannot expose its modification time should not make all backup
-                // status unavailable.
-                let updated_at = restore_drill_report_updated_at(&report_directory)
-                    .ok()
-                    .flatten();
-                (report, updated_at, None)
+        config.as_ref().map_or((None, None, None), |config| {
+            let report_directory = restore_drill_directory(&report_root, config);
+            match load_restore_drill_report(&report_directory) {
+                Ok(Some(report))
+                    if report.matches_scope(&config.backup_set_id, &config.replica_epoch_id) =>
+                {
+                    // The report itself is the useful durable result. A platform that
+                    // cannot expose its modification time should not make all backup
+                    // status unavailable.
+                    let updated_at = restore_drill_report_updated_at(&report_directory)
+                        .ok()
+                        .flatten();
+                    (Some(report), updated_at, None)
+                }
+                Ok(Some(_)) => (None, None, Some(BackupErrorCode::RestoreValidationFailed)),
+                Ok(None) => (None, None, None),
+                Err(error) => (None, None, Some(error)),
             }
-            Err(error) => (None, None, Some(error)),
-        };
+        });
     let takeover_available = config.is_some()
         && relational_status.last_error_code == Some(BackupErrorCode::OwnerMismatch);
     let active_operation = active_operation.map(|operation| OffsiteBackupOperation {
@@ -1103,13 +1119,22 @@ fn load_status(
         credentials,
         relational: relational_status.into(),
         media: media_status.into(),
-        checkpoint: checkpoint_status.into(),
+        checkpoint: checkpoint_status.scoped_to(config.as_ref()).into(),
         last_restore_drill,
         last_restore_drill_at,
         last_restore_drill_error,
         takeover_available,
         active_operation,
     })
+}
+
+fn restore_drill_directory(
+    report_root: &std::path::Path,
+    config: &OffsiteBackupConfig,
+) -> std::path::PathBuf {
+    report_root
+        .join(config.backup_set_id.as_str())
+        .join(config.replica_epoch_id.as_str())
 }
 
 fn reload_services(app: &AppHandle) {
@@ -1322,6 +1347,96 @@ mod tests {
             recover_uncommitted_authority(&store, &target, &InstallationId::new())
                 .expect("foreign authority"),
             None
+        );
+    }
+
+    #[test]
+    fn target_change_retry_recovers_authority_created_by_this_installation() {
+        let target = OffsiteBackupTargetInput {
+            account_id: "0123456789abcdef0123456789abcdef".into(),
+            jurisdiction: R2Jurisdiction::Default,
+            bucket: "dara-local".into(),
+            prefix: "dara/new-target".into(),
+        }
+        .parse()
+        .expect("target");
+        let installation_id = InstallationId::new();
+        let remote = OffsiteBackupConfig {
+            revision: 3,
+            backup_set_id: BackupSetId::new(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            provider: super::super::domain::BackupProvider::R2,
+            target: target.clone(),
+            created_at: 0,
+            updated_at: 0,
+        };
+        let current = OffsiteBackupConfig {
+            backup_set_id: BackupSetId::new(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            target: R2Target {
+                prefix: R2Prefix::parse("dara/old-target").expect("old prefix"),
+                ..target.clone()
+            },
+            ..remote.clone()
+        };
+        let store = FakeObjectStore::default();
+        create_or_validate_backup_authority(&store, &remote, &installation_id).expect("authority");
+
+        assert_eq!(
+            select_configuration_authority(
+                ConfigurationMode::ChangeTarget,
+                Some(&current),
+                &store,
+                &target,
+                &installation_id,
+            )
+            .expect("recovered authority"),
+            (
+                remote.backup_set_id.clone(),
+                remote.replica_epoch_id.clone()
+            )
+        );
+    }
+
+    #[test]
+    fn restore_drill_directories_are_scoped_to_backup_set_and_epoch() {
+        let target = OffsiteBackupTargetInput {
+            account_id: "0123456789abcdef0123456789abcdef".into(),
+            jurisdiction: R2Jurisdiction::Default,
+            bucket: "dara-local".into(),
+            prefix: "dara/primary".into(),
+        }
+        .parse()
+        .expect("target");
+        let config = OffsiteBackupConfig {
+            revision: 1,
+            backup_set_id: BackupSetId::new(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            enabled: true,
+            provider: super::super::domain::BackupProvider::R2,
+            target,
+            created_at: 0,
+            updated_at: 0,
+        };
+        let changed_target = OffsiteBackupConfig {
+            backup_set_id: BackupSetId::new(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            ..config.clone()
+        };
+        let taken_over = OffsiteBackupConfig {
+            replica_epoch_id: ReplicaEpochId::new(),
+            ..config.clone()
+        };
+        let root = std::path::Path::new("/tmp/dara-restore-drills");
+
+        assert_ne!(
+            restore_drill_directory(root, &config),
+            restore_drill_directory(root, &changed_target)
+        );
+        assert_ne!(
+            restore_drill_directory(root, &config),
+            restore_drill_directory(root, &taken_over)
         );
     }
 

@@ -671,7 +671,9 @@ function successfulDrillReport(): NonNullable<
   OffsiteBackupStatus['lastRestoreDrill']
 > {
   return {
-    formatVersion: 1,
+    formatVersion: 2,
+    backupSetId: '019f547b-6200-7000-8000-000000000010',
+    replicaEpochId: '019f547b-6200-7000-8000-000000000011',
     outcome: RestoreDrillOutcome.Success,
     checkpointId: '019f547b-6200-7000-8000-000000000001',
     checkpointCreatedAt: '2026-09-03T12:00:00Z',

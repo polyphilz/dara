@@ -184,6 +184,8 @@ export interface CheckpointBackupStatus {
 
 export interface RestoreDrillReport {
   formatVersion: number
+  backupSetId: string | null
+  replicaEpochId: string | null
   outcome: RestoreDrillOutcome
   checkpointId: string | null
   checkpointCreatedAt: string | null
