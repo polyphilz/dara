@@ -12,15 +12,16 @@ use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 
 use super::{
-    credentials::{CredentialError, CredentialStore, MacOsKeychainCredentialStore},
+    credentials::{CredentialStore, MacOsKeychainCredentialStore},
     domain::{
-        BackupErrorCode, BackupSetId, ContentSha256, IdentityManifestV1, MediaBackupPhase,
-        R2Keyspace, OBJECT_FORMAT_VERSION,
+        BackupErrorCode, BackupSetId, ContentSha256, MediaBackupPhase, R2Keyspace,
+        OBJECT_FORMAT_VERSION,
     },
     object_store::{
         GetObjectResult, ObjectContentType, ObjectMetadata, ObjectStore, ObjectStoreErrorCode,
         PutCondition, PutObjectOutcome, PutObjectRequest, R2ObjectStore, MAX_OBJECT_BYTES,
     },
+    remote_authority::{map_credential_error, map_store_error, validate_backup_identity},
 };
 use crate::database::{
     now_millis, DatabaseClient, OffsiteBackupConfig, OffsiteMediaAttemptOutcome,
@@ -242,41 +243,8 @@ impl<C: CredentialStore> ObjectStoreFactory for KeychainR2ObjectStoreFactory<C> 
         let store = R2ObjectStore::new(config.target.clone(), &credentials)
             .map_err(|_| BackupErrorCode::InvalidTarget)?;
         let store: Arc<dyn ObjectStore> = Arc::new(store);
-        validate_prefix_identity(store.as_ref(), config)?;
+        validate_backup_identity(store.as_ref(), config)?;
         Ok(store)
-    }
-}
-
-fn validate_prefix_identity(
-    store: &dyn ObjectStore,
-    config: &OffsiteBackupConfig,
-) -> Result<(), BackupErrorCode> {
-    let key = config.target.keyspace().identity();
-    match store
-        .head(&key)
-        .map_err(|error| map_store_error(error.code))?
-    {
-        Some(_) => {}
-        None => return Err(BackupErrorCode::PrefixIdentityMismatch),
-    }
-    let identity = store
-        .get(&key)
-        .map_err(|error| map_store_error(error.code))?;
-    let identity = IdentityManifestV1::from_json(&identity.bytes)
-        .map_err(|_| BackupErrorCode::MalformedManifest)?;
-    if identity.backup_set_id() != &config.backup_set_id {
-        return Err(BackupErrorCode::PrefixIdentityMismatch);
-    }
-    Ok(())
-}
-
-fn map_credential_error(error: CredentialError) -> BackupErrorCode {
-    match error {
-        CredentialError::Missing => BackupErrorCode::KeychainCredentialMissing,
-        CredentialError::Unavailable
-        | CredentialError::InvalidCredential(_)
-        | CredentialError::UnsupportedPayloadVersion
-        | CredentialError::CorruptPayload => BackupErrorCode::KeychainUnavailable,
     }
 }
 
@@ -828,28 +796,6 @@ fn classify_store_error(error: ObjectStoreErrorCode) -> MediaAttempt {
     }
 }
 
-fn map_store_error(error: ObjectStoreErrorCode) -> BackupErrorCode {
-    match error {
-        ObjectStoreErrorCode::Network => BackupErrorCode::NetworkOffline,
-        ObjectStoreErrorCode::Timeout => BackupErrorCode::NetworkTimeout,
-        ObjectStoreErrorCode::RateLimited => BackupErrorCode::RateLimited,
-        ObjectStoreErrorCode::ServiceUnavailable => BackupErrorCode::ServiceUnavailable,
-        ObjectStoreErrorCode::NotFound => BackupErrorCode::RemoteMediaMissing,
-        ObjectStoreErrorCode::AuthenticationRejected => BackupErrorCode::AuthenticationRejected,
-        ObjectStoreErrorCode::AuthorizationRejected => BackupErrorCode::AuthorizationRejected,
-        ObjectStoreErrorCode::InvalidConfiguration | ObjectStoreErrorCode::KeyOutsidePrefix => {
-            BackupErrorCode::InvalidTarget
-        }
-        ObjectStoreErrorCode::ObjectTooLarge => BackupErrorCode::LocalMediaTooLarge,
-        ObjectStoreErrorCode::ResponseTooLarge | ObjectStoreErrorCode::InvalidResponse => {
-            BackupErrorCode::RemoteMediaCorrupt
-        }
-        ObjectStoreErrorCode::Conflict | ObjectStoreErrorCode::PreconditionFailed => {
-            BackupErrorCode::ImmutableObjectConflict
-        }
-    }
-}
-
 fn is_retryable(error: BackupErrorCode) -> bool {
     matches!(
         error,
@@ -874,8 +820,8 @@ mod tests {
     use crate::backup::{
         credentials::R2Credentials,
         domain::{
-            BackupProvider, InstallationId, ProbeRunId, R2AccountId, R2BucketName, R2Jurisdiction,
-            R2Prefix, R2Target, ReplicaEpochId,
+            BackupProvider, IdentityManifestV1, InstallationId, ProbeRunId, R2AccountId,
+            R2BucketName, R2Jurisdiction, R2Prefix, R2Target, ReplicaEpochId,
         },
         object_store::{
             fake::{FakeObjectStore, ObjectOperation},
@@ -1156,7 +1102,7 @@ mod tests {
         let config = config(backup_set_id.clone(), target.clone());
         let empty = FakeObjectStore::default();
         assert_eq!(
-            validate_prefix_identity(&empty, &config),
+            validate_backup_identity(&empty, &config),
             Err(BackupErrorCode::PrefixIdentityMismatch)
         );
 
@@ -1173,7 +1119,7 @@ mod tests {
                 condition: PutCondition::IfAbsent,
             })
             .expect("matching identity");
-        validate_prefix_identity(&matching, &config).expect("matching prefix identity");
+        validate_backup_identity(&matching, &config).expect("matching prefix identity");
 
         let mismatched = FakeObjectStore::default();
         let other_identity = IdentityManifestV1::new(BackupSetId::new(), InstallationId::new())
@@ -1189,7 +1135,7 @@ mod tests {
             })
             .expect("mismatched identity");
         assert_eq!(
-            validate_prefix_identity(&mismatched, &config),
+            validate_backup_identity(&mismatched, &config),
             Err(BackupErrorCode::PrefixIdentityMismatch)
         );
     }
@@ -1536,7 +1482,7 @@ mod tests {
                 condition: PutCondition::IfAbsent,
             })
             .expect("create disposable identity");
-        validate_prefix_identity(&store, &config).expect("validate disposable identity");
+        validate_backup_identity(&store, &config).expect("validate disposable identity");
 
         let result = reconcile_media_object(
             &store,

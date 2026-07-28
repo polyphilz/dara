@@ -11,9 +11,68 @@ mod recovery;
 mod search;
 mod windows;
 
+use std::{
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread,
+};
+
 use tauri::{Emitter, Manager, RunEvent};
 
 pub use recovery::run_from_args as run_recovery_from_args;
+
+#[derive(Default)]
+struct ExitShutdownState {
+    started: AtomicBool,
+    complete: AtomicBool,
+}
+
+impl ExitShutdownState {
+    fn should_prevent_exit(&self) -> bool {
+        !self.complete.load(Ordering::Acquire)
+    }
+
+    fn start_once(&self) -> bool {
+        !self.started.swap(true, Ordering::AcqRel)
+    }
+
+    fn mark_complete(&self) {
+        self.complete.store(true, Ordering::Release);
+    }
+}
+
+fn shutdown_managed_services(app: &tauri::AppHandle) {
+    app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
+        .shutdown();
+    app.state::<search::SearchService>().shutdown();
+    app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
+        .shutdown();
+}
+
+fn finish_exit_after_shutdown(
+    app: &tauri::AppHandle,
+    exit_code: i32,
+    state: Arc<ExitShutdownState>,
+) {
+    let shutdown_app = app.clone();
+    let shutdown_state = Arc::clone(&state);
+    let spawned = thread::Builder::new()
+        .name("dara-exit-shutdown".into())
+        .spawn(move || {
+            shutdown_managed_services(&shutdown_app);
+            shutdown_state.mark_complete();
+            shutdown_app.exit(exit_code);
+        });
+
+    if let Err(error) = spawned {
+        log::error!("could not start graceful application shutdown: {error}");
+        shutdown_managed_services(app);
+        state.mark_complete();
+        app.exit(exit_code);
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -99,11 +158,18 @@ pub fn run() {
                 database.client(),
                 database.paths().media.clone(),
             );
+            let litestream = backup::litestream_runtime::LitestreamRuntimeService::start(
+                database.client(),
+                database.paths().root.clone(),
+                database.paths().main.clone(),
+                resource_dir.clone(),
+            );
             let startup_settings = database.client().load_settings()?;
             app.manage(database);
             app.manage(search);
             app.manage(ocr);
             app.manage(offsite_media);
+            app.manage(litestream);
 
             windows::setup(app, startup_settings)?;
             recovery::confirm_restored_launch(&database_paths)?;
@@ -113,7 +179,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|app, event| {
+    let exit_shutdown = Arc::new(ExitShutdownState::default());
+    app.run(move |app, event| {
         if matches!(&event, RunEvent::Resumed) {
             if let Err(error) = app.emit_to("main", windows::macos::REVIEW_CLOCK_REFRESH_EVENT, ())
             {
@@ -121,11 +188,38 @@ pub fn run() {
             }
             app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
                 .connectivity_restored();
+            app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
+                .connectivity_restored();
         }
-        if matches!(&event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-            app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
-                .shutdown();
-            app.state::<search::SearchService>().shutdown();
+        if let RunEvent::ExitRequested { code, api, .. } = event {
+            if exit_shutdown.should_prevent_exit() {
+                api.prevent_exit();
+                if exit_shutdown.start_once() {
+                    finish_exit_after_shutdown(
+                        app,
+                        code.unwrap_or_default(),
+                        Arc::clone(&exit_shutdown),
+                    );
+                }
+            }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_shutdown_starts_once_and_blocks_exit_until_complete() {
+        let state = ExitShutdownState::default();
+
+        assert!(state.should_prevent_exit());
+        assert!(state.start_once());
+        assert!(!state.start_once());
+
+        state.mark_complete();
+
+        assert!(!state.should_prevent_exit());
+    }
 }

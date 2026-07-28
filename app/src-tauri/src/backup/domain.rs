@@ -108,6 +108,18 @@ pub(crate) enum MediaBackupPhase {
     Unavailable,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub(crate) enum RelationalBackupPhase {
+    Off,
+    WaitingForCredentials,
+    Starting,
+    Running,
+    Degraded,
+    Blocked,
+    Unavailable,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum CheckpointPhase {
     Prepared,
@@ -772,6 +784,17 @@ impl OwnerManifestV1 {
             return Err(BackupDomainError::UnsupportedManifestVersion);
         }
         Ok(manifest)
+    }
+
+    pub(crate) fn matches(
+        &self,
+        backup_set_id: &BackupSetId,
+        installation_id: &InstallationId,
+        replica_epoch_id: &ReplicaEpochId,
+    ) -> bool {
+        &self.backup_set_id == backup_set_id
+            && &self.installation_id == installation_id
+            && &self.replica_epoch_id == replica_epoch_id
     }
 }
 
