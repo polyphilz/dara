@@ -1657,6 +1657,12 @@ mod tests {
         armed: bool,
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+    enum R2CanaryCheckOutcome {
+        Passed,
+    }
+
     impl R2CanaryCleanup {
         fn new(store: R2ObjectStore, keyspace: R2Keyspace) -> Self {
             Self {
@@ -2181,6 +2187,7 @@ mod tests {
             &local_root,
             &target,
             &credentials,
+            &cleanup.store,
             &fixture.manifest,
         );
         let installation_id = InstallationId::new();
@@ -2311,10 +2318,10 @@ mod tests {
                 "formatVersion": 1,
                 "runId": run_id,
                 "checkpointId": manifest.checkpoint_id(),
-                "restoreDrill": "PASSED",
-                "remoteRestore": "PASSED",
-                "interruptedReplicationRetry": "PASSED",
-                "idempotentMediaRetry": "PASSED",
+                "restoreDrill": R2CanaryCheckOutcome::Passed,
+                "remoteRestore": R2CanaryCheckOutcome::Passed,
+                "interruptedReplicationRetry": R2CanaryCheckOutcome::Passed,
+                "idempotentMediaRetry": R2CanaryCheckOutcome::Passed,
                 "removedObjectCount": removed_objects,
                 "cleanupResidueCount": 0,
             }))
@@ -2348,6 +2355,7 @@ mod tests {
         local_root: &Path,
         target: &R2Target,
         credentials: &R2Credentials,
+        store: &R2ObjectStore,
         fixture_manifest: &CheckpointManifestV1,
     ) -> CheckpointManifestV1 {
         let binary_path = PathBuf::from(required_canary_environment("DARA_LITESTREAM_PATH"));
@@ -2375,6 +2383,12 @@ mod tests {
 
         let mut interrupted = spawn_canary_litestream(binary.path(), runtime.config(), credentials);
         wait_for_canary_socket(interrupted.child_mut(), runtime.socket());
+        wait_for_canary_replication_progress(
+            interrupted.child_mut(),
+            store,
+            &target.keyspace(),
+            replica_path.as_str(),
+        );
         interrupted.kill_and_wait();
         remove_file_if_exists(runtime.socket()).expect("remove interrupted canary socket");
 
@@ -2448,6 +2462,34 @@ mod tests {
                 "timed out waiting for canary Litestream socket"
             );
             thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn wait_for_canary_replication_progress(
+        child: &mut Child,
+        store: &R2ObjectStore,
+        keyspace: &R2Keyspace,
+        replica_path: &str,
+    ) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            assert!(
+                child.try_wait().expect("canary daemon status").is_none(),
+                "canary Litestream exited before uploading replication data"
+            );
+            let page = store
+                .list(&keyspace.root_prefix(), None)
+                .expect("list canary replication progress");
+            if page.objects.iter().any(|object| {
+                object.byte_length > 0 && object.key.as_str().starts_with(replica_path)
+            }) {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for canary replication progress"
+            );
+            thread::sleep(Duration::from_millis(500));
         }
     }
 

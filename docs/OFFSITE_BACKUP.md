@@ -12,15 +12,15 @@ write new backups.
 
 Dara backs up:
 
-- cards, reviews, settings, and the rest of the relational database;
+- cards, reviews, settings, derived search vectors, and the rest of the
+  relational database;
 - the media database and every active media blob; and
 - a small checkpoint record that says which database and media versions form a
   complete, restorable backup.
 
 Dara does not back up:
 
-- the downloaded embedding model or its derived search vectors, which Dara can
-  recreate;
+- the downloaded embedding model, which Dara can download again;
 - local logs, caches, or temporary files;
 - R2 credentials stored in the macOS Keychain; or
 - application binaries.
