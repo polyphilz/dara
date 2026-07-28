@@ -618,6 +618,7 @@ fn create_checkpoint(
         };
         let result = finish_checkpoint(
             database,
+            media,
             litestream.as_ref(),
             target.as_ref(),
             &config,
@@ -650,6 +651,7 @@ fn create_checkpoint(
 #[allow(clippy::too_many_arguments)]
 fn finish_checkpoint(
     database: &DatabaseClient,
+    media: &dyn CheckpointMediaWorker,
     litestream: &dyn CheckpointRuntime,
     target: &dyn CheckpointTarget,
     config: &OffsiteBackupConfig,
@@ -690,7 +692,22 @@ fn finish_checkpoint(
         prepared.litestream_txid,
         remaining_checkpoint_time(deadline)?.min(EXACT_RESTORE_TIMEOUT),
     )?;
-    target.validate_media(&prepared.referenced_media, deadline)?;
+    if let Err(failure) = target.validate_media(&prepared.referenced_media, deadline) {
+        let code = failure.code();
+        if let Some(sha256) = failure.repair_sha256() {
+            let now = now_millis().map_err(|_| BackupErrorCode::WorkerUnavailable)?;
+            database
+                .requeue_offsite_media_evidence(
+                    prepared.backup_set_id.clone(),
+                    vec![sha256],
+                    code,
+                    now,
+                )
+                .map_err(map_database_error)?;
+            media.wake();
+        }
+        return Err(code);
+    }
     remaining_checkpoint_time(deadline)?;
     ensure_active_config(database, config)?;
 
@@ -941,6 +958,38 @@ trait CheckpointTargetFactory: Send + Sync {
     ) -> Result<Box<dyn CheckpointTarget>, BackupErrorCode>;
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CheckpointMediaValidationError {
+    Missing(ContentSha256),
+    Corrupt(ContentSha256),
+    Other(BackupErrorCode),
+}
+
+impl CheckpointMediaValidationError {
+    const fn for_reference(code: BackupErrorCode, sha256: ContentSha256) -> Self {
+        match code {
+            BackupErrorCode::RemoteMediaMissing => Self::Missing(sha256),
+            BackupErrorCode::RemoteMediaCorrupt => Self::Corrupt(sha256),
+            _ => Self::Other(code),
+        }
+    }
+
+    const fn code(self) -> BackupErrorCode {
+        match self {
+            Self::Missing(_) => BackupErrorCode::RemoteMediaMissing,
+            Self::Corrupt(_) => BackupErrorCode::RemoteMediaCorrupt,
+            Self::Other(code) => code,
+        }
+    }
+
+    const fn repair_sha256(self) -> Option<ContentSha256> {
+        match self {
+            Self::Missing(sha256) | Self::Corrupt(sha256) => Some(sha256),
+            Self::Other(_) => None,
+        }
+    }
+}
+
 trait CheckpointTarget: Send + Sync {
     fn validate_exact_txid(
         &self,
@@ -951,7 +1000,7 @@ trait CheckpointTarget: Send + Sync {
         &self,
         references: &[CheckpointMediaReference],
         deadline: Instant,
-    ) -> Result<(), BackupErrorCode>;
+    ) -> Result<(), CheckpointMediaValidationError>;
     fn publish_and_verify_manifest(
         &self,
         key: &R2ObjectKey,
@@ -1073,20 +1122,29 @@ impl CheckpointTarget for SystemCheckpointTarget {
         &self,
         references: &[CheckpointMediaReference],
         deadline: Instant,
-    ) -> Result<(), BackupErrorCode> {
+    ) -> Result<(), CheckpointMediaValidationError> {
         for reference in references {
             let key = self.keyspace.media(reference.sha256);
             let metadata = self
                 .store
-                .head_with_timeout(&key, remaining_checkpoint_time(deadline)?)
-                .map_err(|error| map_store_error(error.code))?
-                .ok_or(BackupErrorCode::RemoteMediaMissing)?;
+                .head_with_timeout(
+                    &key,
+                    remaining_checkpoint_time(deadline)
+                        .map_err(CheckpointMediaValidationError::Other)?,
+                )
+                .map_err(|error| {
+                    CheckpointMediaValidationError::for_reference(
+                        map_store_error(error.code),
+                        reference.sha256,
+                    )
+                })?
+                .ok_or(CheckpointMediaValidationError::Missing(reference.sha256))?;
             if metadata.byte_length != reference.byte_length
                 || metadata.content_type != Some(ObjectContentType::Webp)
                 || metadata.dara_sha256 != Some(reference.sha256)
                 || metadata.object_format_version != Some(OBJECT_FORMAT_VERSION)
             {
-                return Err(BackupErrorCode::RemoteMediaCorrupt);
+                return Err(CheckpointMediaValidationError::Corrupt(reference.sha256));
             }
         }
         Ok(())
@@ -1317,7 +1375,7 @@ fn remove_dry_run_output(output_path: &Path) -> Result<(), BackupErrorCode> {
 mod tests {
     use std::{
         path::PathBuf,
-        sync::Mutex,
+        sync::{atomic::AtomicUsize, Mutex},
         time::{Duration, Instant},
     };
 
@@ -1336,7 +1394,8 @@ mod tests {
             ObjectStoreErrorCode,
         },
         database::{
-            initialize, Database, DatabasePaths, InitializationOptions,
+            initialize, CanonicalImage, Database, DatabasePaths, InitializationOptions,
+            OffsiteMediaAttemptOutcome, RecordOffsiteMediaAttemptInput,
             SaveOffsiteBackupConfigInput, SetZoomPercentInput,
         },
     };
@@ -1415,15 +1474,18 @@ mod tests {
 
         fn validate_media(
             &self,
-            _references: &[CheckpointMediaReference],
+            references: &[CheckpointMediaReference],
             _deadline: Instant,
-        ) -> Result<(), BackupErrorCode> {
+        ) -> Result<(), CheckpointMediaValidationError> {
             self.events
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .push(TargetEvent::Media);
             if self.failure == Some(TargetFailureStage::Media) {
-                return Err(BackupErrorCode::RemoteMediaMissing);
+                return Err(references.first().map_or(
+                    CheckpointMediaValidationError::Other(BackupErrorCode::RemoteMediaMissing),
+                    |reference| CheckpointMediaValidationError::Missing(reference.sha256),
+                ));
             }
             Ok(())
         }
@@ -1499,6 +1561,24 @@ mod tests {
 
     impl CheckpointMediaWorker for FakeMediaWorker {
         fn wake(&self) {}
+
+        fn status(&self) -> MediaBackupStatus {
+            MediaBackupStatus {
+                phase: MediaBackupPhase::Idle,
+                ..MediaBackupStatus::default()
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct RecordingMediaWorker {
+        wakes: AtomicUsize,
+    }
+
+    impl CheckpointMediaWorker for RecordingMediaWorker {
+        fn wake(&self) {
+            self.wakes.fetch_add(1, Ordering::AcqRel);
+        }
 
         fn status(&self) -> MediaBackupStatus {
             MediaBackupStatus {
@@ -2078,6 +2158,62 @@ mod tests {
                 .last_published
                 .is_none());
         }
+    }
+
+    #[test]
+    fn missing_checkpoint_media_is_requeued_for_upload_before_retry() {
+        let (_directory, database, config) = enabled_database();
+        let client = database.client();
+        client
+            .ingest_image(
+                CanonicalImage {
+                    bytes: b"checkpoint-media-repair".to_vec(),
+                    natural_width: 10,
+                    natural_height: 10,
+                },
+                "01980c8e-6c00-7000-8000-000000000902".into(),
+            )
+            .expect("image");
+        let now = now_millis().expect("time");
+        let candidate = client
+            .load_next_offsite_media(config.backup_set_id.clone(), now)
+            .expect("load media")
+            .expect("media candidate");
+        client
+            .record_offsite_media_attempt(RecordOffsiteMediaAttemptInput {
+                backup_set_id: config.backup_set_id.clone(),
+                sha256: candidate.sha256,
+                expected_attempt_count: candidate.attempt_count,
+                attempted_at: now,
+                outcome: OffsiteMediaAttemptOutcome::Verified,
+            })
+            .expect("mark media verified");
+
+        let media = RecordingMediaWorker::default();
+        let target = FakeTarget::new(Some(TargetFailureStage::Media));
+        let status = Mutex::new(CheckpointBackupStatus::default());
+        let error = create_checkpoint(
+            &client,
+            &media,
+            Arc::new(FakeRuntime::caught_up()),
+            &FakeTargetFactory {
+                target: target.clone(),
+            },
+            "test",
+            &status,
+            true,
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect_err("missing remote media must fail the checkpoint");
+
+        assert_eq!(error, BackupErrorCode::RemoteMediaMissing);
+        assert!(media.wakes.load(Ordering::Acquire) >= 2);
+        let requeued = client
+            .load_next_offsite_media(config.backup_set_id, now_millis().expect("requeue time"))
+            .expect("load requeued media")
+            .expect("requeued media");
+        assert_eq!(requeued.sha256, candidate.sha256);
+        assert_eq!(requeued.attempt_count, 1);
     }
 
     #[test]
