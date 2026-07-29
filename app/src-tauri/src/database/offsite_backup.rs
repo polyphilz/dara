@@ -157,7 +157,13 @@ pub(super) fn save(
                      bucket = ?7,
                      prefix = ?8,
                      updated_at = ?9,
-                     takeover_available = 0
+                     takeover_available = CASE
+                         WHEN backup_set_id = ?1
+                              AND replica_epoch_id = ?2
+                              AND ?3 = 0
+                         THEN takeover_available
+                         ELSE 0
+                     END
                  WHERE singleton_id = 1 AND revision = ?10",
                 params![
                     input.backup_set_id.as_str(),

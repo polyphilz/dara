@@ -210,16 +210,32 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
     assert!(!client
         .load_offsite_backup_takeover_availability()
         .expect("successful config save clears takeover availability"));
-
-    let changed_target = R2Target {
-        prefix: R2Prefix::parse("dara/other").expect("other prefix"),
-        ..enabled.target.clone()
-    };
-    assert!(matches!(
-        client.save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+    client
+        .set_offsite_backup_takeover_availability(enabled.backup_set_id.clone(), true)
+        .expect("restore takeover availability");
+    let disabled = client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
             expected_revision: enabled.revision,
             backup_set_id: enabled.backup_set_id.clone(),
             replica_epoch_id: enabled.replica_epoch_id.clone(),
+            enabled: false,
+            target: enabled.target.clone(),
+        })
+        .expect("disable config");
+    assert!(!disabled.enabled);
+    assert!(client
+        .load_offsite_backup_takeover_availability()
+        .expect("disabling preserves takeover availability"));
+
+    let changed_target = R2Target {
+        prefix: R2Prefix::parse("dara/other").expect("other prefix"),
+        ..disabled.target.clone()
+    };
+    assert!(matches!(
+        client.save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: disabled.revision,
+            backup_set_id: disabled.backup_set_id.clone(),
+            replica_epoch_id: disabled.replica_epoch_id.clone(),
             enabled: false,
             target: changed_target.clone(),
         }),
@@ -227,14 +243,17 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
     ));
     let changed = client
         .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
-            expected_revision: enabled.revision,
+            expected_revision: disabled.revision,
             backup_set_id: BackupSetId::new(),
             replica_epoch_id: ReplicaEpochId::new(),
             enabled: false,
             target: changed_target,
         })
         .expect("change target");
-    assert_eq!(changed.revision, 3);
+    assert_eq!(changed.revision, 4);
+    assert!(!client
+        .load_offsite_backup_takeover_availability()
+        .expect("changing identity clears takeover availability"));
     drop(database);
 
     let main = open_existing(&paths.main, DatabaseKind::Main);

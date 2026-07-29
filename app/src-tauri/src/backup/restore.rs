@@ -391,10 +391,21 @@ impl RemoteRecoveryEngine {
         let started = Instant::now();
         let mut stages = Vec::new();
         let mut selected: Option<RemoteCheckpoint> = None;
-        let mut discovered_scope = expected_scope;
+        let mut report_scope = expected_scope.clone();
         let attempt = (|| {
             let discovered = self.discover_checkpoints()?;
-            discovered_scope = Some((discovered.backup_set_id.clone(), discovered.epoch.clone()));
+            if let Some((expected_backup_set_id, expected_replica_epoch_id)) =
+                expected_scope.as_ref()
+            {
+                if &discovered.backup_set_id != expected_backup_set_id {
+                    return Err(BackupErrorCode::PrefixIdentityMismatch);
+                }
+                if &discovered.epoch != expected_replica_epoch_id {
+                    return Err(BackupErrorCode::OwnerMismatch);
+                }
+            } else {
+                report_scope = Some((discovered.backup_set_id.clone(), discovered.epoch.clone()));
+            }
             let checkpoint = self.select_checkpoint(task.path(), &discovered, selector)?;
             stages.push(RestoreValidationStage::CheckpointDiscovered);
             selected = Some(checkpoint.clone());
@@ -414,7 +425,7 @@ impl RemoteRecoveryEngine {
             }
             Err(error) => failed_drill_report(
                 selected.as_ref(),
-                discovered_scope.as_ref(),
+                report_scope.as_ref(),
                 stages,
                 duration_ms,
                 error,
@@ -2177,6 +2188,28 @@ mod tests {
             load_restore_drill_report(reports.path()).expect("load failed report"),
             Some(report)
         );
+    }
+
+    #[test]
+    fn scoped_drill_rejects_a_different_remote_epoch() {
+        let fixture = rich_remote_fixture();
+        let expected_epoch = ReplicaEpochId::new();
+        let reports = tempfile::tempdir().expect("reports");
+
+        let report = fixture
+            .engine
+            .run_scoped_restore_drill(
+                reports.path(),
+                &RemoteCheckpointSelector::Latest,
+                fixture.manifest.backup_set_id(),
+                &expected_epoch,
+            )
+            .expect("failed drill report");
+
+        assert_eq!(report.outcome, RestoreDrillOutcome::Failed);
+        assert_eq!(report.error_code, Some(BackupErrorCode::OwnerMismatch));
+        assert!(report.matches_scope(fixture.manifest.backup_set_id(), &expected_epoch));
+        assert!(report.validation_stages.is_empty());
     }
 
     #[test]
