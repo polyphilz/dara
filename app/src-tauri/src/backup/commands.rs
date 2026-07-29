@@ -820,6 +820,9 @@ fn configure_backup(
             credential_store
                 .save(&backup_set_id, &credentials)
                 .map_err(map_credential_error)?;
+            client
+                .set_offsite_backup_takeover_availability(backup_set_id.clone(), true)
+                .map_err(map_database_error)?;
         }
         return Err(error);
     }
@@ -1039,6 +1042,9 @@ async fn run_local_configuration_operation(
             MacOsKeychainCredentialStore
                 .remove(&config.backup_set_id)
                 .map_err(map_credential_error)?;
+            client
+                .set_offsite_backup_takeover_availability(config.backup_set_id, false)
+                .map_err(map_database_error)?;
         }
         Ok(())
     })
@@ -1075,7 +1081,7 @@ fn run_restore_drill(
         .map_err(|error| map_store_error(error.code))?;
     validate_backup_identity(&store, &config)?;
     let report_directory = restore_drill_directory(&report_root, &config);
-    let engine = RemoteRecoveryEngine::system(config.target, credentials, &resource_dir)?;
+    let engine = RemoteRecoveryEngine::system(config.target.clone(), credentials, &resource_dir)?;
     emit_progress(
         app,
         operation_id,
@@ -1083,7 +1089,12 @@ fn run_restore_drill(
         OffsiteBackupProgressPhase::RestoringRelational,
         None,
     );
-    let report = engine.run_restore_drill(&report_directory, &RemoteCheckpointSelector::Latest)?;
+    let report = engine.run_scoped_restore_drill(
+        &report_directory,
+        &RemoteCheckpointSelector::Latest,
+        &config.backup_set_id,
+        &config.replica_epoch_id,
+    )?;
     if report.outcome != super::restore::RestoreDrillOutcome::Success {
         return Err(report
             .error_code
@@ -1118,6 +1129,9 @@ fn load_status(
     let config = client
         .load_offsite_backup_config()
         .map_err(map_database_error)?;
+    let persisted_takeover_available = client
+        .load_offsite_backup_takeover_availability()
+        .map_err(map_database_error)?;
     let credentials = config
         .as_ref()
         .map_or(
@@ -1149,7 +1163,8 @@ fn load_status(
             }
         });
     let takeover_available = config.is_some()
-        && (takeover_hint
+        && (persisted_takeover_available
+            || takeover_hint
             || relational_status.last_error_code == Some(BackupErrorCode::OwnerMismatch));
     let active_operation = active_operation.map(|operation| OffsiteBackupOperation {
         operation_id: operation.operation_id,

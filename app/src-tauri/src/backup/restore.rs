@@ -360,6 +360,29 @@ impl RemoteRecoveryEngine {
         report_directory: &Path,
         selector: &RemoteCheckpointSelector,
     ) -> Result<RestoreDrillReport, BackupErrorCode> {
+        self.run_restore_drill_with_scope(report_directory, selector, None)
+    }
+
+    pub(crate) fn run_scoped_restore_drill(
+        &self,
+        report_directory: &Path,
+        selector: &RemoteCheckpointSelector,
+        backup_set_id: &BackupSetId,
+        replica_epoch_id: &ReplicaEpochId,
+    ) -> Result<RestoreDrillReport, BackupErrorCode> {
+        self.run_restore_drill_with_scope(
+            report_directory,
+            selector,
+            Some((backup_set_id.clone(), replica_epoch_id.clone())),
+        )
+    }
+
+    fn run_restore_drill_with_scope(
+        &self,
+        report_directory: &Path,
+        selector: &RemoteCheckpointSelector,
+        expected_scope: Option<(BackupSetId, ReplicaEpochId)>,
+    ) -> Result<RestoreDrillReport, BackupErrorCode> {
         fs::create_dir_all(report_directory)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         let report_directory = fs::canonicalize(report_directory)
@@ -368,7 +391,7 @@ impl RemoteRecoveryEngine {
         let started = Instant::now();
         let mut stages = Vec::new();
         let mut selected: Option<RemoteCheckpoint> = None;
-        let mut discovered_scope: Option<(BackupSetId, ReplicaEpochId)> = None;
+        let mut discovered_scope = expected_scope;
         let attempt = (|| {
             let discovered = self.discover_checkpoints()?;
             discovered_scope = Some((discovered.backup_set_id.clone(), discovered.epoch.clone()));
@@ -2120,11 +2143,48 @@ mod tests {
     }
 
     #[test]
+    fn failed_scoped_drill_before_discovery_keeps_expected_scope() {
+        let fixture = rich_remote_fixture();
+        let identity_key = fixture.keyspace.identity();
+        fixture
+            .store
+            .delete(&identity_key)
+            .expect("remove remote identity");
+        put_json(
+            fixture.store.as_ref(),
+            identity_key,
+            b"{\"not\":\"an identity manifest\"}".to_vec(),
+        );
+        let reports = tempfile::tempdir().expect("reports");
+
+        let report = fixture
+            .engine
+            .run_scoped_restore_drill(
+                reports.path(),
+                &RemoteCheckpointSelector::Latest,
+                fixture.manifest.backup_set_id(),
+                fixture.manifest.replica_epoch_id(),
+            )
+            .expect("failed drill report");
+
+        assert_eq!(report.outcome, RestoreDrillOutcome::Failed);
+        assert_eq!(report.error_code, Some(BackupErrorCode::MalformedManifest));
+        assert!(report.matches_scope(
+            fixture.manifest.backup_set_id(),
+            fixture.manifest.replica_epoch_id(),
+        ));
+        assert_eq!(
+            load_restore_drill_report(reports.path()).expect("load failed report"),
+            Some(report)
+        );
+    }
+
+    #[test]
     fn latest_selection_falls_back_when_the_newest_exact_txid_expired() {
         let fixture = rich_remote_fixture();
         let newer_id = CheckpointId::new();
         let newer_created_at =
-            UtcTimestamp::parse("2026-07-28T23:59:59Z").expect("newer timestamp");
+            UtcTimestamp::parse("2099-07-28T23:59:59Z").expect("newer timestamp");
         let newer = CheckpointManifestV1::new(CheckpointManifestInput {
             backup_set_id: fixture.manifest.backup_set_id().clone(),
             replica_epoch_id: fixture.epoch.clone(),

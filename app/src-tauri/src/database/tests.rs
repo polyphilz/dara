@@ -131,7 +131,7 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 9);
+    assert_eq!(history_rows, 10);
 }
 
 #[test]
@@ -168,6 +168,15 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
     assert_eq!(saved.replica_epoch_id, replica_epoch_id);
     assert_eq!(saved.target, target);
     assert!(!saved.enabled);
+    assert!(!client
+        .load_offsite_backup_takeover_availability()
+        .expect("load takeover availability"));
+    client
+        .set_offsite_backup_takeover_availability(saved.backup_set_id.clone(), true)
+        .expect("persist takeover availability");
+    assert!(client
+        .load_offsite_backup_takeover_availability()
+        .expect("reload takeover availability"));
     assert_eq!(
         client
             .load_offsite_backup_config()
@@ -198,6 +207,9 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
         .expect("enable config");
     assert_eq!(enabled.revision, 2);
     assert!(enabled.enabled);
+    assert!(!client
+        .load_offsite_backup_takeover_availability()
+        .expect("successful config save clears takeover availability"));
 
     let changed_target = R2Target {
         prefix: R2Prefix::parse("dara/other").expect("other prefix"),
@@ -1630,7 +1642,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 10, 'future', applied_on, '0'
+         SELECT 11, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -1651,17 +1663,17 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V10__grouped_good.sql",
+            "V11__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
-        .expect("V10 migration"),
+        .expect("V11 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V11__grouped_failure.sql",
+            "V12__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
-        .expect("V11 migration"),
+        .expect("V12 migration"),
     );
     let runner = Runner::new(&all).set_grouped(true);
     assert!(runner.run(&mut main).is_err());
@@ -1670,9 +1682,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V9")
+            .expect("V10")
             .version(),
-        9
+        10
     );
 }
 
@@ -1716,7 +1728,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(9));
+    assert_eq!(launch.manifest.main.migration_head, Some(10));
     drop(database);
 
     let base = launch.manifest.created_at;

@@ -66,6 +66,36 @@ pub(super) fn load(connection: &Connection) -> Result<Option<OffsiteBackupConfig
     stored.map(parse_stored).transpose()
 }
 
+pub(super) fn load_takeover_available(connection: &Connection) -> Result<bool> {
+    Ok(connection
+        .query_row(
+            "SELECT takeover_available
+             FROM offsite_backup_config
+             WHERE singleton_id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
+
+pub(super) fn set_takeover_available(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+    available: bool,
+) -> Result<()> {
+    let changed = connection.execute(
+        "UPDATE offsite_backup_config
+         SET takeover_available = ?1
+         WHERE singleton_id = 1 AND backup_set_id = ?2",
+        params![available, backup_set_id.as_str()],
+    )?;
+    if changed != 1 {
+        return Err(DatabaseError::StaleOffsiteBackupConfig);
+    }
+    Ok(())
+}
+
 pub(super) fn save(
     connection: &mut Connection,
     media: &Connection,
@@ -126,7 +156,8 @@ pub(super) fn save(
                      account_id = ?6,
                      bucket = ?7,
                      prefix = ?8,
-                     updated_at = ?9
+                     updated_at = ?9,
+                     takeover_available = 0
                  WHERE singleton_id = 1 AND revision = ?10",
                 params![
                     input.backup_set_id.as_str(),
