@@ -32,7 +32,8 @@ use super::{
     },
 };
 use crate::database::{
-    Database, DatabaseClient, DatabaseError, OffsiteBackupConfig, SaveOffsiteBackupConfigInput,
+    Database, DatabaseClient, DatabaseError, OffsiteBackupConfig, OffsiteBackupTakeoverReason,
+    SaveOffsiteBackupConfigInput,
 };
 
 pub(crate) const OFFSITE_BACKUP_PROGRESS_EVENT: &str = "offsite-backup-progress";
@@ -441,13 +442,14 @@ pub(crate) async fn load_offsite_backup_status(
 }
 
 #[tauri::command]
-pub(crate) fn load_offsite_backup_takeover_required(
+pub(crate) fn load_restored_offsite_backup_takeover_required(
     database: State<'_, Database>,
 ) -> CommandResult<bool> {
     database
         .client()
-        .load_offsite_backup_takeover_availability()
+        .load_offsite_backup_takeover_reason()
         .map_err(map_database_error)
+        .map(|reason| reason == Some(OffsiteBackupTakeoverReason::RestoredBackup))
         .map_err(OffsiteBackupCommandError::from)
 }
 
@@ -851,7 +853,10 @@ fn configure_backup(
                 .save(&backup_set_id, &credentials)
                 .map_err(map_credential_error)?;
             client
-                .set_offsite_backup_takeover_availability(backup_set_id.clone(), true)
+                .set_offsite_backup_takeover_reason(
+                    backup_set_id.clone(),
+                    Some(OffsiteBackupTakeoverReason::OwnerMismatch),
+                )
                 .map_err(map_database_error)?;
         }
         return Err(error);
@@ -1077,7 +1082,7 @@ async fn run_local_configuration_operation(
                 .remove(&config.backup_set_id)
                 .map_err(map_credential_error)?;
             client
-                .set_offsite_backup_takeover_availability(config.backup_set_id, false)
+                .set_offsite_backup_takeover_reason(config.backup_set_id, None)
                 .map_err(map_database_error)?;
             retry_pending_credential_cleanup(&client, &MacOsKeychainCredentialStore)?;
         }

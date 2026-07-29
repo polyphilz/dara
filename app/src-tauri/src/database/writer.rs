@@ -15,14 +15,15 @@ use super::{
     AdoptLegacyZoomInput, CanonicalImage, CardContentDraft, CardContentListItem,
     DatabaseDiagnosticsSnapshot, DatabaseError, DeleteCardContentInput, HomeStats, ImageRecord,
     InstallSchedulerReplayInput, LoadHomeStatsInput, MediaMaintenanceReport, MediaPayload, OcrJob,
-    OcrQueueRecovery, OffsiteBackupConfig, OffsiteCheckpointScheduleState, OffsiteMediaCandidate,
-    OffsiteMediaReconciliationReport, OffsiteMediaSummary, PrepareDesiredRetentionReplayInput,
-    PrepareOffsiteCheckpointInput, PreparedOffsiteCheckpoint, RecordGradeInput,
-    RecordOffsiteMediaAttemptInput, Result, ReviewContext, ReviewMutationResult,
-    ReviewQueueSelection, SaveOffsiteBackupConfigInput, SchedulerReplayInstallReport,
-    SchedulerReplaySnapshot, SearchCardContentInput, SelectNextReviewCardInput, SetAppearanceInput,
-    SetCardContentSuspendedInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
-    UndoLastGradeInput, UpdateCardContentInput,
+    OcrQueueRecovery, OffsiteBackupConfig, OffsiteBackupTakeoverReason,
+    OffsiteCheckpointScheduleState, OffsiteMediaCandidate, OffsiteMediaReconciliationReport,
+    OffsiteMediaSummary, PrepareDesiredRetentionReplayInput, PrepareOffsiteCheckpointInput,
+    PreparedOffsiteCheckpoint, RecordGradeInput, RecordOffsiteMediaAttemptInput, Result,
+    ReviewContext, ReviewMutationResult, ReviewQueueSelection, SaveOffsiteBackupConfigInput,
+    SchedulerReplayInstallReport, SchedulerReplaySnapshot, SearchCardContentInput,
+    SelectNextReviewCardInput, SetAppearanceInput, SetCardContentSuspendedInput,
+    SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings, UndoLastGradeInput,
+    UpdateCardContentInput,
 };
 use crate::backup::domain::{BackupErrorCode, CheckpointId};
 use crate::backup::litestream::LitestreamTxid;
@@ -137,8 +138,8 @@ pub(super) enum WriterMessage {
     LoadOffsiteBackupRuntimeConfig {
         reply: SyncSender<Result<Option<OffsiteBackupConfig>>>,
     },
-    LoadOffsiteBackupTakeoverAvailability {
-        reply: SyncSender<Result<bool>>,
+    LoadOffsiteBackupTakeoverReason {
+        reply: SyncSender<Result<Option<OffsiteBackupTakeoverReason>>>,
     },
     LoadPendingOffsiteCredentialCleanup {
         reply: SyncSender<Result<Vec<BackupSetId>>>,
@@ -147,9 +148,9 @@ pub(super) enum WriterMessage {
         input: SaveOffsiteBackupConfigInput,
         reply: SyncSender<Result<OffsiteBackupConfig>>,
     },
-    SetOffsiteBackupTakeoverAvailability {
+    SetOffsiteBackupTakeoverReason {
         backup_set_id: BackupSetId,
-        available: bool,
+        reason: Option<OffsiteBackupTakeoverReason>,
         reply: SyncSender<Result<()>>,
     },
     CompleteOffsiteCredentialCleanup {
@@ -304,7 +305,7 @@ impl WriterMessage {
             | Self::CompleteImageOcr { .. }
             | Self::RecoverInterruptedOcrJobs { .. } => WriterContentEffect::RecoverableMutation,
             Self::SaveOffsiteBackupConfig { .. }
-            | Self::SetOffsiteBackupTakeoverAvailability { .. }
+            | Self::SetOffsiteBackupTakeoverReason { .. }
             | Self::CompleteOffsiteCredentialCleanup { .. }
             | Self::ReconcileOffsiteMedia { .. }
             | Self::RecordOffsiteMediaAttempt { .. }
@@ -332,7 +333,7 @@ impl WriterMessage {
             | Self::LoadSettings { .. }
             | Self::LoadOffsiteBackupConfig { .. }
             | Self::LoadOffsiteBackupRuntimeConfig { .. }
-            | Self::LoadOffsiteBackupTakeoverAvailability { .. }
+            | Self::LoadOffsiteBackupTakeoverReason { .. }
             | Self::LoadPendingOffsiteCredentialCleanup { .. }
             | Self::LoadNextOffsiteMedia { .. }
             | Self::LoadOffsiteMediaSummary { .. }
@@ -694,14 +695,21 @@ impl DatabaseClient {
             .map_err(|_| DatabaseError::WriterUnavailable)?
     }
 
-    pub(crate) fn load_offsite_backup_takeover_availability(&self) -> Result<bool> {
+    pub(crate) fn load_offsite_backup_takeover_reason(
+        &self,
+    ) -> Result<Option<OffsiteBackupTakeoverReason>> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(WriterMessage::LoadOffsiteBackupTakeoverAvailability { reply })
+            .send(WriterMessage::LoadOffsiteBackupTakeoverReason { reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()
             .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_offsite_backup_takeover_availability(&self) -> Result<bool> {
+        self.load_offsite_backup_takeover_reason()
+            .map(|reason| reason.is_some())
     }
 
     pub(crate) fn load_pending_offsite_credential_cleanup(&self) -> Result<Vec<BackupSetId>> {
@@ -728,16 +736,16 @@ impl DatabaseClient {
             .map_err(|_| DatabaseError::WriterUnavailable)?
     }
 
-    pub(crate) fn set_offsite_backup_takeover_availability(
+    pub(crate) fn set_offsite_backup_takeover_reason(
         &self,
         backup_set_id: BackupSetId,
-        available: bool,
+        reason: Option<OffsiteBackupTakeoverReason>,
     ) -> Result<()> {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
-            .send(WriterMessage::SetOffsiteBackupTakeoverAvailability {
+            .send(WriterMessage::SetOffsiteBackupTakeoverReason {
                 backup_set_id,
-                available,
+                reason,
                 reply,
             })
             .map_err(|_| DatabaseError::WriterUnavailable)?;

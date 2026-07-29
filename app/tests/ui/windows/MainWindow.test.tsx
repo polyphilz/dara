@@ -28,7 +28,7 @@ const mocks = vi.hoisted(() => ({
   listenToOffsiteBackupProgress: vi.fn(),
   loadHomeStats: vi.fn(),
   loadOffsiteBackupStatus: vi.fn(),
-  loadOffsiteBackupTakeoverRequired: vi.fn(),
+  loadRestoredOffsiteBackupTakeoverRequired: vi.fn(),
   loadSettings: vi.fn(),
   listen: vi.fn(),
   notifyCardCreated: vi.fn(),
@@ -71,8 +71,8 @@ vi.mock('../../../src/media/gateway.ts', () => ({
 }))
 
 vi.mock('../../../src/backup/gateway.ts', () => ({
-  loadOffsiteBackupTakeoverRequired:
-    mocks.loadOffsiteBackupTakeoverRequired,
+  loadRestoredOffsiteBackupTakeoverRequired:
+    mocks.loadRestoredOffsiteBackupTakeoverRequired,
   tauriOffsiteBackupGateway: {
     backupNow: vi.fn(),
     changeTarget: vi.fn(),
@@ -151,7 +151,7 @@ beforeEach(() => {
     queue: { new: 2, learning: 3, review: 4 },
     nextLearningDueAt: null,
   })
-  mocks.loadOffsiteBackupTakeoverRequired.mockResolvedValue(false)
+  mocks.loadRestoredOffsiteBackupTakeoverRequired.mockResolvedValue(false)
   mocks.loadOffsiteBackupStatus.mockResolvedValue({
     activeOperation: null,
     checkpoint: {
@@ -215,7 +215,7 @@ afterEach(() => {
 })
 
 test('warns immediately when a restored off-site backup needs takeover', async () => {
-  mocks.loadOffsiteBackupTakeoverRequired.mockResolvedValue(true)
+  mocks.loadRestoredOffsiteBackupTakeoverRequired.mockResolvedValue(true)
   const { findByRole, findByText } = render(<MainWindow />)
 
   expect(

@@ -41,7 +41,7 @@ import { ClozeProjection } from '../../cloze/cloze.ts'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import { DaraButtonVariant } from '../../components/dara-button-types.ts'
 import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
-import { loadOffsiteBackupTakeoverRequired } from '../../backup/index.ts'
+import { loadRestoredOffsiteBackupTakeoverRequired } from '../../backup/index.ts'
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { occlusionLayerId } from '../../occlusion/occlusion.ts'
 import { CardBrowser } from './CardBrowser.tsx'
@@ -374,7 +374,7 @@ function MainWindowContent() {
   const refreshRestoredBackupState = useCallback(async () => {
     try {
       setRestoredBackupTakeoverAvailable(
-        await loadOffsiteBackupTakeoverRequired(),
+        await loadRestoredOffsiteBackupTakeoverRequired(),
       )
     } catch {
       // Backup status errors remain actionable in Settings and must not block
