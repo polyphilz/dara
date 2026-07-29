@@ -391,14 +391,14 @@ fn media_worker(
             missing_local_blobs = 0;
         }
 
-        let config = match client.load_offsite_backup_config() {
+        let config = match client.load_offsite_backup_runtime_config() {
             Ok(config) => config,
             Err(_) => {
                 set_unavailable(&status, BackupErrorCode::WorkerUnavailable);
                 continue;
             }
         };
-        let Some(config) = config.filter(|config| config.enabled) else {
+        let Some(config) = config else {
             active = None;
             attempted_revision = None;
             missing_local_blobs = 0;

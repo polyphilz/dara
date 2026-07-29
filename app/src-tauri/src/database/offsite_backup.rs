@@ -28,6 +28,12 @@ pub(crate) struct SaveOffsiteBackupConfigInput {
     pub(crate) target: R2Target,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OffsiteBackupTakeoverReason {
+    OwnerMismatch,
+    RestoredBackup,
+}
+
 pub(super) fn load(connection: &Connection) -> Result<Option<OffsiteBackupConfig>> {
     let stored = connection
         .query_row(
@@ -66,29 +72,49 @@ pub(super) fn load(connection: &Connection) -> Result<Option<OffsiteBackupConfig
     stored.map(parse_stored).transpose()
 }
 
-pub(super) fn load_takeover_available(connection: &Connection) -> Result<bool> {
-    Ok(connection
+pub(super) fn load_runtime_config(connection: &Connection) -> Result<Option<OffsiteBackupConfig>> {
+    let config = load(connection)?;
+    if load_takeover_reason(connection)?.is_some() {
+        return Ok(None);
+    }
+    Ok(config.filter(|config| config.enabled))
+}
+
+pub(super) fn load_takeover_reason(
+    connection: &Connection,
+) -> Result<Option<OffsiteBackupTakeoverReason>> {
+    let stored = connection
         .query_row(
-            "SELECT takeover_available
+            "SELECT takeover_available, restored_takeover_required
              FROM offsite_backup_config
              WHERE singleton_id = 1",
             [],
-            |row| row.get(0),
+            |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
         )
-        .optional()?
-        .unwrap_or(false))
+        .optional()?;
+    match stored {
+        None | Some((false, false)) => Ok(None),
+        Some((true, false)) => Ok(Some(OffsiteBackupTakeoverReason::OwnerMismatch)),
+        Some((true, true)) => Ok(Some(OffsiteBackupTakeoverReason::RestoredBackup)),
+        Some((false, true)) => Err(DatabaseError::InvalidOffsiteBackupConfig(
+            "a restored takeover requirement must also make takeover available".into(),
+        )),
+    }
 }
 
-pub(super) fn set_takeover_available(
+pub(super) fn set_takeover_reason(
     connection: &mut Connection,
     backup_set_id: &BackupSetId,
-    available: bool,
+    reason: Option<OffsiteBackupTakeoverReason>,
 ) -> Result<()> {
+    let available = reason.is_some();
+    let restored = reason == Some(OffsiteBackupTakeoverReason::RestoredBackup);
     let changed = connection.execute(
         "UPDATE offsite_backup_config
-         SET takeover_available = ?1
-         WHERE singleton_id = 1 AND backup_set_id = ?2",
-        params![available, backup_set_id.as_str()],
+         SET takeover_available = ?1,
+             restored_takeover_required = ?2
+         WHERE singleton_id = 1 AND backup_set_id = ?3",
+        params![available, restored, backup_set_id.as_str()],
     )?;
     if changed != 1 {
         return Err(DatabaseError::StaleOffsiteBackupConfig);
@@ -191,6 +217,13 @@ pub(super) fn save(
                               AND replica_epoch_id = ?2
                               AND ?3 = 0
                          THEN takeover_available
+                         ELSE 0
+                     END,
+                     restored_takeover_required = CASE
+                         WHEN backup_set_id = ?1
+                              AND replica_epoch_id = ?2
+                              AND ?3 = 0
+                         THEN restored_takeover_required
                          ELSE 0
                      END
                  WHERE singleton_id = 1 AND revision = ?10",

@@ -66,6 +66,7 @@ export class FakeDaraBackend {
   readonly #recordedGrades: RecordGradeInput[] = []
   readonly #reviewContext = createReviewContext()
   #offsiteBackupStatus = disabledBackupStatus()
+  #restoredBackupTakeoverRequired = false
   #dismissedQuickAdd = 0
   #remainingCreateFailures = 0
 
@@ -175,6 +176,9 @@ export class FakeDaraBackend {
       case DaraIpcCommand.LoadOffsiteBackupStatus:
         requireEmptyPayload(payload, command)
         return structuredClone(this.#offsiteBackupStatus)
+      case DaraIpcCommand.LoadRestoredOffsiteBackupTakeoverRequired:
+        requireEmptyPayload(payload, command)
+        return this.#restoredBackupTakeoverRequired
       case DaraIpcCommand.TestAndEnableOffsiteBackup:
       case DaraIpcCommand.ChangeOffsiteBackupTarget: {
         const envelope = requireRecord(payload, command)
@@ -239,6 +243,7 @@ export class FakeDaraBackend {
           throw malformed(command, 'input.confirmed must be true')
         }
         this.#offsiteBackupStatus.takeoverAvailable = false
+        this.#restoredBackupTakeoverRequired = false
         return backupOperation(OffsiteBackupOperationKind.TakeOver)
       }
       case DaraIpcCommand.LoadDiagnostics:

@@ -31,6 +31,9 @@ export interface OffsiteBackupGateway {
   ): Promise<OffsiteBackupOperation>
 }
 
+export const loadRestoredOffsiteBackupTakeoverRequired = () =>
+  invoke<boolean>(DaraIpcCommand.LoadRestoredOffsiteBackupTakeoverRequired)
+
 export const tauriOffsiteBackupGateway: OffsiteBackupGateway = {
   backupNow: () =>
     invoke<OffsiteBackupOperation>(DaraIpcCommand.CreateOffsiteBackupNow),

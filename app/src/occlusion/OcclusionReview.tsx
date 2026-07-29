@@ -7,6 +7,8 @@ import {
 } from '../review/contracts.ts'
 import { OcclusionImageFrame } from './OcclusionImageFrame.tsx'
 
+const REVIEW_IMAGE_MAXIMUM_VIEWPORT_RATIO = 0.62
+
 interface OcclusionReviewProps {
   definition: OcclusionDefinition
   revealed: boolean
@@ -19,6 +21,9 @@ export function OcclusionReview({
   targetLayerId,
 }: OcclusionReviewProps) {
   const [peeking, setPeeking] = useState(false)
+  const [maximumImageHeight, setMaximumImageHeight] = useState(() =>
+    reviewImageMaximumHeight(),
+  )
   const target = definition.layers.find((layer) => layer.id === targetLayerId)
   const targetRevealed = revealed || peeking
   const visibleMasks = useMemo(
@@ -28,6 +33,14 @@ export function OcclusionReview({
   useEffect(() => {
     setPeeking(false)
   }, [definition.id, revealed, targetLayerId])
+
+  useEffect(() => {
+    const fitToViewport = () => {
+      setMaximumImageHeight(reviewImageMaximumHeight())
+    }
+    window.addEventListener('resize', fitToViewport)
+    return () => window.removeEventListener('resize', fitToViewport)
+  }, [])
 
   useEffect(() => {
     if (revealed) {
@@ -67,6 +80,7 @@ export function OcclusionReview({
     <OcclusionImageFrame
       className="occlusion-review-image"
       image={definition.sourceImage}
+      maximumHeight={maximumImageHeight}
       overlayLabel={revealed ? 'Image occlusion answer' : 'Image occlusion question'}
       overlayProps={
         revealed
@@ -98,6 +112,13 @@ export function OcclusionReview({
         />
       ))}
     </OcclusionImageFrame>
+  )
+}
+
+function reviewImageMaximumHeight(): number {
+  return Math.max(
+    1,
+    Math.floor(window.innerHeight * REVIEW_IMAGE_MAXIMUM_VIEWPORT_RATIO),
   )
 }
 

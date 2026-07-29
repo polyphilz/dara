@@ -14,6 +14,8 @@ export const DaraIpcCommand = {
   LoadDiagnostics: 'load_diagnostics',
   LoadHomeStats: 'load_home_stats',
   LoadOffsiteBackupStatus: 'load_offsite_backup_status',
+  LoadRestoredOffsiteBackupTakeoverRequired:
+    'load_restored_offsite_backup_takeover_required',
   LoadReviewContext: 'load_review_context',
   LoadSchedulerReplaySnapshot: 'load_scheduler_replay_snapshot',
   LoadSettings: 'load_settings',

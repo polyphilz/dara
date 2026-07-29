@@ -29,6 +29,7 @@ import {
 import { Appearance, DaraCommand } from '../../../src/settings/types.ts'
 import { tauriSettingsGateway } from '../../../src/settings/gateway.ts'
 import {
+  loadRestoredOffsiteBackupTakeoverRequired,
   R2Jurisdiction,
   tauriOffsiteBackupGateway,
 } from '../../../src/backup/index.ts'
@@ -198,6 +199,11 @@ describe('Tauri gateway contracts', () => {
       [
         DaraIpcCommand.LoadOffsiteBackupStatus,
         () => tauriOffsiteBackupGateway.loadStatus(),
+        {},
+      ],
+      [
+        DaraIpcCommand.LoadRestoredOffsiteBackupTakeoverRequired,
+        () => loadRestoredOffsiteBackupTakeoverRequired(),
         {},
       ],
       [

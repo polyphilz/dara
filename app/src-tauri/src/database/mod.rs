@@ -47,7 +47,9 @@ pub use media::{
     CanonicalImage, ImageOcrStatus, ImageRecord, MediaMaintenanceReport, MediaPayload, OcrJob,
     OcrQueueRecovery, MEDIA_ORPHAN_GRACE_MILLIS,
 };
-pub(crate) use offsite_backup::{OffsiteBackupConfig, SaveOffsiteBackupConfigInput};
+pub(crate) use offsite_backup::{
+    OffsiteBackupConfig, OffsiteBackupTakeoverReason, SaveOffsiteBackupConfigInput,
+};
 pub(crate) use offsite_checkpoint::{
     CheckpointMediaReference, LocalCheckpointSync, OffsiteCheckpointScheduleState,
     PrepareOffsiteCheckpointInput, PreparedOffsiteCheckpoint, PublishedOffsiteCheckpoint,
@@ -522,8 +524,11 @@ fn writer_loop(
             WriterMessage::LoadOffsiteBackupConfig { reply } => {
                 let _ = reply.send(offsite_backup::load(&main));
             }
-            WriterMessage::LoadOffsiteBackupTakeoverAvailability { reply } => {
-                let _ = reply.send(offsite_backup::load_takeover_available(&main));
+            WriterMessage::LoadOffsiteBackupRuntimeConfig { reply } => {
+                let _ = reply.send(offsite_backup::load_runtime_config(&main));
+            }
+            WriterMessage::LoadOffsiteBackupTakeoverReason { reply } => {
+                let _ = reply.send(offsite_backup::load_takeover_reason(&main));
             }
             WriterMessage::LoadPendingOffsiteCredentialCleanup { reply } => {
                 let _ = reply.send(offsite_backup::load_pending_credential_cleanup(&main));
@@ -531,15 +536,15 @@ fn writer_loop(
             WriterMessage::SaveOffsiteBackupConfig { input, reply } => {
                 let _ = reply.send(offsite_backup::save(&mut main, &media, input));
             }
-            WriterMessage::SetOffsiteBackupTakeoverAvailability {
+            WriterMessage::SetOffsiteBackupTakeoverReason {
                 backup_set_id,
-                available,
+                reason,
                 reply,
             } => {
-                let _ = reply.send(offsite_backup::set_takeover_available(
+                let _ = reply.send(offsite_backup::set_takeover_reason(
                     &mut main,
                     &backup_set_id,
-                    available,
+                    reason,
                 ));
             }
             WriterMessage::CompleteOffsiteCredentialCleanup {

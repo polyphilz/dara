@@ -445,14 +445,13 @@ fn supervisor_worker(
 
         let now = Instant::now();
         if force_reload || now >= next_config_refresh {
-            match database.load_offsite_backup_config() {
+            match database.load_offsite_backup_runtime_config() {
                 Ok(config) => {
-                    let enabled = config.filter(|config| config.enabled);
                     let previous_revision = current_config.as_ref().map(|config| config.revision);
-                    let next_revision = enabled.as_ref().map(|config| config.revision);
+                    let next_revision = config.as_ref().map(|config| config.revision);
                     if force_reload || previous_revision != next_revision {
                         shutdown_daemon(&mut daemon, &checkpoint_control);
-                        current_config = enabled;
+                        current_config = config;
                         blocked_revision = None;
                         restart_count = 0;
                         next_start = Instant::now();

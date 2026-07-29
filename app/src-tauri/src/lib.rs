@@ -119,6 +119,7 @@ pub fn run() {
             backup::commands::create_offsite_backup_now,
             backup::commands::disable_offsite_backup,
             backup::commands::load_offsite_backup_status,
+            backup::commands::load_restored_offsite_backup_takeover_required,
             backup::commands::remove_offsite_backup_credentials,
             backup::commands::replace_offsite_backup_credentials,
             backup::commands::run_offsite_restore_drill,
@@ -168,6 +169,15 @@ pub fn run() {
                 env!("CARGO_PKG_VERSION"),
                 database::InitializationOptions::default(),
             )?;
+            if recovery::restored_offsite_takeover_required(&database_paths)? {
+                let client = database.client();
+                if let Some(config) = client.load_offsite_backup_config()? {
+                    client.set_offsite_backup_takeover_reason(
+                        config.backup_set_id,
+                        Some(database::OffsiteBackupTakeoverReason::RestoredBackup),
+                    )?;
+                }
+            }
             log::info!("database ready");
             let resource_dir = app.path().resource_dir()?;
             let search = search::SearchService::start(

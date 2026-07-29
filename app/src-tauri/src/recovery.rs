@@ -81,6 +81,8 @@ impl RestoreFile {
 struct RestoreIntent {
     format_version: u32,
     phase: RestorePhase,
+    #[serde(default)]
+    offsite_takeover_required: bool,
     source_manifest: PathBuf,
     expected: snapshot::SnapshotManifest,
     stage_directory: String,
@@ -483,7 +485,7 @@ pub(crate) fn install_offsite_snapshot(
     }
     let paths = DatabasePaths::new(target_root);
     let source = snapshot::load_and_validate_snapshot(&manifest_path)?;
-    prepare_restore(&paths, source, None)?;
+    prepare_restore_with_offsite_takeover(&paths, source, None)?;
     Ok(())
 }
 
@@ -515,6 +517,23 @@ fn acquire_ordered_locks(
 fn prepare_restore(
     paths: &DatabasePaths,
     source: ValidatedSnapshot,
+    failpoint: Option<RestoreFailpoint>,
+) -> Result<RestoreReport, RecoveryError> {
+    prepare_restore_with_takeover_requirement(paths, source, false, failpoint)
+}
+
+fn prepare_restore_with_offsite_takeover(
+    paths: &DatabasePaths,
+    source: ValidatedSnapshot,
+    failpoint: Option<RestoreFailpoint>,
+) -> Result<RestoreReport, RecoveryError> {
+    prepare_restore_with_takeover_requirement(paths, source, true, failpoint)
+}
+
+fn prepare_restore_with_takeover_requirement(
+    paths: &DatabasePaths,
+    source: ValidatedSnapshot,
+    offsite_takeover_required: bool,
     failpoint: Option<RestoreFailpoint>,
 ) -> Result<RestoreReport, RecoveryError> {
     let initial_files = inspect_restore_target(paths)?;
@@ -551,6 +570,7 @@ fn prepare_restore(
         let intent = RestoreIntent {
             format_version: RESTORE_INTENT_FORMAT_VERSION,
             phase: RestorePhase::Staged,
+            offsite_takeover_required,
             source_manifest: source.manifest_path.clone(),
             expected: source.manifest.clone(),
             stage_directory,
@@ -622,6 +642,21 @@ fn try_protect_legacy_restore_safety_snapshot(paths: &DatabasePaths, intent: &mu
             intent.safety_snapshot = None;
         }
     }
+}
+
+pub(crate) fn restored_offsite_takeover_required(
+    paths: &DatabasePaths,
+) -> Result<bool, RecoveryError> {
+    let Some(intent) = load_restore_intent(paths)? else {
+        return Ok(false);
+    };
+    if intent.phase != RestorePhase::InstalledValidated {
+        return Err(RecoveryError::InvalidRestoreJournal(format!(
+            "cannot inspect takeover requirement in phase {:?}",
+            intent.phase
+        )));
+    }
+    Ok(intent.offsite_takeover_required)
 }
 
 pub(crate) fn confirm_restored_launch(paths: &DatabasePaths) -> Result<(), RecoveryError> {
@@ -1797,6 +1832,7 @@ mod tests {
         let intent = RestoreIntent {
             format_version: RESTORE_INTENT_FORMAT_VERSION,
             phase: RestorePhase::Staged,
+            offsite_takeover_required: false,
             source_manifest: source.manifest_path.clone(),
             expected: source.manifest.clone(),
             stage_directory,
@@ -1834,6 +1870,7 @@ mod tests {
         let intent = RestoreIntent {
             format_version: RESTORE_INTENT_FORMAT_VERSION,
             phase: RestorePhase::Staged,
+            offsite_takeover_required: false,
             source_manifest: source.manifest_path,
             expected: source.manifest,
             stage_directory: "../outside".into(),
@@ -1947,6 +1984,8 @@ mod tests {
             },
         )
         .expect("restored database");
+        assert!(!restored_offsite_takeover_required(&paths)
+            .expect("local restore takeover requirement"));
         confirm_restored_launch(&paths).expect("restore confirmation");
         let client = restored.client();
         let cards = client

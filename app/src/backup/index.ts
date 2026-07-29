@@ -1,4 +1,5 @@
 export {
+  loadRestoredOffsiteBackupTakeoverRequired,
   tauriOffsiteBackupGateway,
   type OffsiteBackupGateway,
 } from './gateway.ts'

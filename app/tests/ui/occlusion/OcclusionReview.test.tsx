@@ -103,6 +103,46 @@ test('hide-one renders only the target masks until reveal', () => {
   expect(container.querySelectorAll('.occlusion-review-mask')).toHaveLength(0)
 })
 
+test('fits the complete review image when the window height changes', () => {
+  const originalHeight = window.innerHeight
+  const squareDefinition: OcclusionDefinition = {
+    ...definition,
+    sourceImage: {
+      ...definition.sourceImage,
+      naturalHeight: 1_000,
+    },
+  }
+  Object.defineProperty(window, 'innerHeight', {
+    configurable: true,
+    value: 600,
+  })
+  try {
+    const { container } = render(
+      <OcclusionReview
+        definition={squareDefinition}
+        revealed={false}
+        targetLayerId={squareDefinition.layers[0]!.id}
+      />,
+    )
+    const frame = container.querySelector<HTMLElement>(
+      '.occlusion-review-image',
+    )
+    expect(frame?.style.maxWidth).toBe('372px')
+
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: 400,
+    })
+    fireEvent(window, new Event('resize'))
+    expect(frame?.style.maxWidth).toBe('248px')
+  } finally {
+    Object.defineProperty(window, 'innerHeight', {
+      configurable: true,
+      value: originalHeight,
+    })
+  }
+})
+
 test('click and M toggle a question-side target peek without revealing the answer', () => {
   const { container, getByLabelText } = render(
     <OcclusionReview
