@@ -41,6 +41,13 @@ impl ExitShutdownState {
     fn mark_complete(&self) {
         self.complete.store(true, Ordering::Release);
     }
+
+    fn complete_shutdown_once(&self, shutdown: impl FnOnce()) {
+        if self.start_once() {
+            shutdown();
+            self.mark_complete();
+        }
+    }
 }
 
 fn shutdown_managed_services(app: &tauri::AppHandle) {
@@ -74,6 +81,10 @@ fn finish_exit_after_shutdown(
         state.mark_complete();
         app.exit(exit_code);
     }
+}
+
+fn finish_exit_during_loop_destroyed(app: &tauri::AppHandle, state: &ExitShutdownState) {
+    state.complete_shutdown_once(|| shutdown_managed_services(app));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -215,17 +226,24 @@ pub fn run() {
             app.state::<backup::checkpoint::CheckpointCoordinator>()
                 .wake();
         }
-        if let RunEvent::ExitRequested { code, api, .. } = event {
-            if exit_shutdown.should_prevent_exit() {
-                api.prevent_exit();
-                if exit_shutdown.start_once() {
-                    finish_exit_after_shutdown(
-                        app,
-                        code.unwrap_or_default(),
-                        Arc::clone(&exit_shutdown),
-                    );
+        match event {
+            RunEvent::ExitRequested { code, api, .. } => {
+                if exit_shutdown.should_prevent_exit() {
+                    api.prevent_exit();
+                    if exit_shutdown.start_once() {
+                        finish_exit_after_shutdown(
+                            app,
+                            code.unwrap_or_default(),
+                            Arc::clone(&exit_shutdown),
+                        );
+                    }
                 }
             }
+            // On macOS, choosing Quit can move directly to LoopDestroyed without
+            // first emitting ExitRequested. The event loop cannot be held open at
+            // this point, so synchronously stop owned helpers before it returns.
+            RunEvent::Exit => finish_exit_during_loop_destroyed(app, &exit_shutdown),
+            _ => {}
         }
     });
 }
@@ -244,6 +262,22 @@ mod tests {
 
         state.mark_complete();
 
+        assert!(!state.should_prevent_exit());
+    }
+
+    #[test]
+    fn loop_destroyed_completes_shutdown_exactly_once_without_an_exit_request() {
+        let state = ExitShutdownState::default();
+        let shutdowns = std::sync::atomic::AtomicUsize::new(0);
+
+        state.complete_shutdown_once(|| {
+            shutdowns.fetch_add(1, Ordering::AcqRel);
+        });
+        state.complete_shutdown_once(|| {
+            shutdowns.fetch_add(1, Ordering::AcqRel);
+        });
+
+        assert_eq!(shutdowns.load(Ordering::Acquire), 1);
         assert!(!state.should_prevent_exit());
     }
 }
