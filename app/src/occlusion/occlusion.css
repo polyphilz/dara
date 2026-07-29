@@ -423,7 +423,6 @@
 
 .occlusion-review-image {
   width: min(100%, 760px);
-  max-height: 62vh;
   margin: 0 auto;
   border: 1px solid var(--line);
 }

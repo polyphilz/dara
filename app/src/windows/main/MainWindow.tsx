@@ -41,6 +41,7 @@ import { ClozeProjection } from '../../cloze/cloze.ts'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import { DaraButtonVariant } from '../../components/dara-button-types.ts'
 import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
+import { loadOffsiteBackupTakeoverRequired } from '../../backup/index.ts'
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { occlusionLayerId } from '../../occlusion/occlusion.ts'
 import { CardBrowser } from './CardBrowser.tsx'
@@ -164,6 +165,8 @@ function MainWindowContent() {
   const [homeRefreshToken, setHomeRefreshToken] = useState(0)
   const [settingsNavigationToken, setSettingsNavigationToken] = useState(0)
   const [settingsBusy, setSettingsBusy] = useState(false)
+  const [restoredBackupTakeoverAvailable, setRestoredBackupTakeoverAvailable] =
+    useState(false)
   const [clockScheduleToken, setClockScheduleToken] = useState(0)
   const shouldBlockSettingsNavigation = useCallback(
     () => settingsBusy,
@@ -368,6 +371,27 @@ function MainWindowContent() {
     setSettingsNavigationToken((value) => value + 1)
     void navigate({ to: MainWindowRoutePath.Settings })
   }, [navigate, settingsBusy])
+  const refreshRestoredBackupState = useCallback(async () => {
+    try {
+      setRestoredBackupTakeoverAvailable(
+        await loadOffsiteBackupTakeoverRequired(),
+      )
+    } catch {
+      // Backup status errors remain actionable in Settings and must not block
+      // the rest of Dara from opening.
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshRestoredBackupState()
+    if (!restoredBackupTakeoverAvailable) {
+      return
+    }
+    const interval = window.setInterval(() => {
+      void refreshRestoredBackupState()
+    }, 5_000)
+    return () => window.clearInterval(interval)
+  }, [refreshRestoredBackupState, restoredBackupTakeoverAvailable])
   const cancelCreate = useCallback(() => {
     void navigate({
       ignoreBlocker: true,
@@ -462,6 +486,29 @@ function MainWindowContent() {
           onSettings={showSettings}
         />
       </header>
+
+      {restoredBackupTakeoverAvailable && (
+        <section
+          aria-labelledby="restored-backup-heading"
+          className="restore-takeover-banner"
+          role="alert"
+        >
+          <div>
+            <strong id="restored-backup-heading">
+              This Dara was restored from an off-site backup.
+            </strong>
+            <span>
+              New backups are paused until you confirm that this Mac should
+              take over.
+            </span>
+          </div>
+          {mode !== MainWindowMode.Settings && (
+            <DaraButton onClick={showSettings} type="button">
+              Review backup settings
+            </DaraButton>
+          )}
+        </section>
+      )}
 
       <div hidden={mode !== MainWindowMode.Home}>
         <Home

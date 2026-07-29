@@ -441,6 +441,17 @@ pub(crate) async fn load_offsite_backup_status(
 }
 
 #[tauri::command]
+pub(crate) fn load_offsite_backup_takeover_required(
+    database: State<'_, Database>,
+) -> CommandResult<bool> {
+    database
+        .client()
+        .load_offsite_backup_takeover_availability()
+        .map_err(map_database_error)
+        .map_err(OffsiteBackupCommandError::from)
+}
+
+#[tauri::command]
 pub(crate) async fn test_and_enable_offsite_backup(
     app: AppHandle,
     database: State<'_, Database>,

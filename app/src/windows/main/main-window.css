@@ -77,6 +77,41 @@ body {
   padding-top: 4px;
 }
 
+.restore-takeover-banner {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, #a05d22 28%, var(--line));
+  border-radius: 9px;
+  color: #a05d22;
+  background: color-mix(in srgb, #a05d22 7%, var(--surface));
+  font-size: 10px;
+}
+
+.restore-takeover-banner > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.restore-takeover-banner strong {
+  color: var(--ink);
+  font-size: 11px;
+}
+
+.restore-takeover-banner span {
+  line-height: 1.45;
+}
+
+.restore-takeover-banner button {
+  flex: 0 0 auto;
+}
+
 .main-window .main-navigation button {
   padding: 8px 14px;
   border-color: transparent;
@@ -1460,6 +1495,15 @@ body {
 @media (max-width: 640px) {
   .main-window {
     padding-inline: 20px;
+  }
+
+  .restore-takeover-banner {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .restore-takeover-banner button {
+    align-self: start;
   }
 
   .review-card {

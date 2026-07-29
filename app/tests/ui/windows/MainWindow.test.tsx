@@ -16,10 +16,19 @@ import {
 } from '../../../src/review/controller.ts'
 import { nextStudyDayBoundary } from '../../../src/scheduling/index.ts'
 import { invalidateHomeStats } from '../../../src/windows/main/home-stats-cache.ts'
+import {
+  CheckpointBackupPhase,
+  CredentialAvailability,
+  MediaBackupPhase,
+  RelationalBackupPhase,
+} from '../../../src/backup/index.ts'
 
 const mocks = vi.hoisted(() => ({
   createCardContent: vi.fn(),
+  listenToOffsiteBackupProgress: vi.fn(),
   loadHomeStats: vi.fn(),
+  loadOffsiteBackupStatus: vi.fn(),
+  loadOffsiteBackupTakeoverRequired: vi.fn(),
   loadSettings: vi.fn(),
   listen: vi.fn(),
   notifyCardCreated: vi.fn(),
@@ -59,6 +68,23 @@ vi.mock('../../../src/media/gateway.ts', () => ({
   ingestClipboardImage: vi.fn(),
   ingestImageFile: vi.fn(),
   renewMediaLease: mocks.renewMediaLease,
+}))
+
+vi.mock('../../../src/backup/gateway.ts', () => ({
+  loadOffsiteBackupTakeoverRequired:
+    mocks.loadOffsiteBackupTakeoverRequired,
+  tauriOffsiteBackupGateway: {
+    backupNow: vi.fn(),
+    changeTarget: vi.fn(),
+    disable: vi.fn(),
+    listenToProgress: mocks.listenToOffsiteBackupProgress,
+    loadStatus: mocks.loadOffsiteBackupStatus,
+    removeCredentials: vi.fn(),
+    replaceCredentials: vi.fn(),
+    runRestoreDrill: vi.fn(),
+    takeOverRestoredBackup: vi.fn(),
+    testAndEnable: vi.fn(),
+  },
 }))
 
 vi.mock('../../../src/settings/gateway.ts', () => ({
@@ -125,6 +151,45 @@ beforeEach(() => {
     queue: { new: 2, learning: 3, review: 4 },
     nextLearningDueAt: null,
   })
+  mocks.loadOffsiteBackupTakeoverRequired.mockResolvedValue(false)
+  mocks.loadOffsiteBackupStatus.mockResolvedValue({
+    activeOperation: null,
+    checkpoint: {
+      inProgressCheckpointId: null,
+      lastCompleteAt: null,
+      lastCompleteCheckpointId: null,
+      lastErrorCode: null,
+      phase: CheckpointBackupPhase.Off,
+    },
+    configured: false,
+    credentialCleanupPending: false,
+    credentials: CredentialAvailability.Missing,
+    enabled: false,
+    lastRestoreDrill: null,
+    lastRestoreDrillAt: null,
+    lastRestoreDrillError: null,
+    media: {
+      blockedCount: 0,
+      lastErrorCode: null,
+      pendingBytes: 0,
+      pendingCount: 0,
+      phase: MediaBackupPhase.Off,
+      retryWaitCount: 0,
+      verifiedBytes: 0,
+      verifiedCount: 0,
+    },
+    relational: {
+      lastErrorCode: null,
+      lastRemoteConfirmedAt: null,
+      latestLocalTxid: null,
+      latestRemoteTxid: null,
+      phase: RelationalBackupPhase.Off,
+      restartCount: 0,
+    },
+    revision: null,
+    takeoverAvailable: false,
+    target: null,
+  })
   mocks.loadSettings.mockResolvedValue({
     appearance: 'SYSTEM',
     desiredRetention: 0.9,
@@ -140,12 +205,28 @@ beforeEach(() => {
     zoomPercent: 100,
   })
   mocks.listen.mockResolvedValue(() => undefined)
+  mocks.listenToOffsiteBackupProgress.mockResolvedValue(() => undefined)
   mocks.renewMediaLease.mockResolvedValue(0)
   mocks.start.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
   vi.useRealTimers()
+})
+
+test('warns immediately when a restored off-site backup needs takeover', async () => {
+  mocks.loadOffsiteBackupTakeoverRequired.mockResolvedValue(true)
+  const { findByRole, findByText } = render(<MainWindow />)
+
+  expect(
+    await findByRole('alert', {
+      name: /this Dara was restored from an off-site backup/i,
+    }),
+  ).toBeTruthy()
+  fireEvent.click(
+    await findByRole('button', { name: 'Review backup settings' }),
+  )
+  expect(await findByText('Off-site backup')).toBeTruthy()
 })
 
 test('Add card opens a persistent main-window editor rather than Quick Add', async () => {

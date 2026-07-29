@@ -2575,6 +2575,8 @@ mod tests {
         );
         drop(main);
         drop(media);
+        assert!(recovery::restored_offsite_takeover_required(&paths)
+            .expect("off-site takeover requirement"));
         recovery::confirm_restored_launch(&paths).expect("launch confirmation");
     }
 

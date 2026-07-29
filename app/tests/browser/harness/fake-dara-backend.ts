@@ -175,6 +175,9 @@ export class FakeDaraBackend {
       case DaraIpcCommand.LoadOffsiteBackupStatus:
         requireEmptyPayload(payload, command)
         return structuredClone(this.#offsiteBackupStatus)
+      case DaraIpcCommand.LoadOffsiteBackupTakeoverRequired:
+        requireEmptyPayload(payload, command)
+        return this.#offsiteBackupStatus.takeoverAvailable
       case DaraIpcCommand.TestAndEnableOffsiteBackup:
       case DaraIpcCommand.ChangeOffsiteBackupTarget: {
         const envelope = requireRecord(payload, command)
