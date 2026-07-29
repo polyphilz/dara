@@ -16,6 +16,14 @@ const sidecar = resolve(resources, 'bin/llama-server')
 const litestream = resolve(resources, 'bin/litestream')
 const releaseManifestPath = resolve(resources, 'release/llama-server.json')
 const releaseManifest = JSON.parse(readFileSync(releaseManifestPath, 'utf8'))
+const applicationIdentities = JSON.parse(
+  readFileSync('src-tauri/app-identities.json', 'utf8'),
+)
+const ApplicationIdentityKey = Object.freeze({
+  Production: 'production',
+})
+const productionIdentity =
+  applicationIdentities[ApplicationIdentityKey.Production]
 const pin = JSON.parse(
   readFileSync(
     'src-tauri/resources/sidecars/llama-server-v1.json',
@@ -143,8 +151,21 @@ run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath])
 run('codesign', ['--verify', '--strict', '--verbose=2', sidecar])
 run('codesign', ['--verify', '--strict', '--verbose=2', litestream])
 const signature = run('codesign', ['-dv', '--verbose=4', appPath])
-assert(signature.includes('Identifier=com.rohan.dara'), 'unexpected app identifier')
-assert(signature.includes('Signature=adhoc'), 'app is not ad-hoc signed')
+assertEqual(
+  signatureField(signature, 'Identifier'),
+  productionIdentity.identifier,
+  'signed application identifier',
+)
+assertEqual(signatureField(signature, 'Signature'), 'adhoc', 'app signature')
+assertEqual(
+  run('/usr/libexec/PlistBuddy', [
+    '-c',
+    'Print :CFBundleIdentifier',
+    resolve(appPath, 'Contents/Info.plist'),
+  ]),
+  productionIdentity.identifier,
+  'packaged application identifier',
+)
 
 assertEqual(
   run('/usr/libexec/PlistBuddy', [
@@ -232,6 +253,16 @@ function listFiles(directory) {
     const path = resolve(directory, entry.name)
     return entry.isDirectory() ? listFiles(path) : [path]
   })
+}
+
+function signatureField(signature, field) {
+  const prefix = `${field}=`
+  const values = signature
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith(prefix))
+    .map((line) => line.slice(prefix.length))
+  assertEqual(values.length, 1, `${field} signature field count`)
+  return values[0]
 }
 
 function assertEqual(actual, expected, label) {
