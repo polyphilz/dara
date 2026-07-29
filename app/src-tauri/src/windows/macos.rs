@@ -408,7 +408,6 @@ fn install_tray(app: &App, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
     TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .title("d")
         .tooltip(app.package_info().name.clone())
         .icon(load_tray_icon()?)
         .icon_as_template(true)
