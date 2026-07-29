@@ -62,29 +62,26 @@ pub(crate) struct CheckpointBackupStatus {
     pub(crate) last_complete_checkpoint_id: Option<CheckpointId>,
     pub(crate) last_complete_at: Option<i64>,
     pub(crate) last_error_code: Option<BackupErrorCode>,
-    last_complete_scope: Option<CheckpointConfigScope>,
+    last_complete_scope: Option<CheckpointLineageScope>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct CheckpointConfigScope {
+struct CheckpointLineageScope {
     backup_set_id: super::domain::BackupSetId,
     replica_epoch_id: ReplicaEpochId,
-    config_revision: i64,
 }
 
-impl CheckpointConfigScope {
+impl CheckpointLineageScope {
     fn from_config(config: &OffsiteBackupConfig) -> Self {
         Self {
             backup_set_id: config.backup_set_id.clone(),
             replica_epoch_id: config.replica_epoch_id.clone(),
-            config_revision: config.revision,
         }
     }
 
     fn matches(&self, config: &OffsiteBackupConfig) -> bool {
         self.backup_set_id == config.backup_set_id
             && self.replica_epoch_id == config.replica_epoch_id
-            && self.config_revision == config.revision
     }
 }
 
@@ -929,7 +926,7 @@ fn refresh_last_complete(
 ) {
     let mut current = lock_status(status);
     if let Some(published) =
-        published.filter(|published| published_belongs_to_config(published, config))
+        published.filter(|published| published_belongs_to_lineage(published, config))
     {
         set_last_complete(
             &mut current,
@@ -950,7 +947,7 @@ fn set_last_complete(
 ) {
     status.last_complete_checkpoint_id = Some(checkpoint_id);
     status.last_complete_at = Some(created_at);
-    status.last_complete_scope = Some(CheckpointConfigScope::from_config(config));
+    status.last_complete_scope = Some(CheckpointLineageScope::from_config(config));
 }
 
 fn clear_last_complete(status: &mut CheckpointBackupStatus) {
@@ -959,13 +956,12 @@ fn clear_last_complete(status: &mut CheckpointBackupStatus) {
     status.last_complete_scope = None;
 }
 
-fn published_belongs_to_config(
+fn published_belongs_to_lineage(
     published: &PublishedOffsiteCheckpoint,
     config: &OffsiteBackupConfig,
 ) -> bool {
     published.backup_set_id == config.backup_set_id
         && published.replica_epoch_id == config.replica_epoch_id
-        && published.config_revision == config.revision
 }
 
 fn published_covers_config(
@@ -973,7 +969,9 @@ fn published_covers_config(
     config: &OffsiteBackupConfig,
     content_revision: u64,
 ) -> bool {
-    published_belongs_to_config(published, config) && published.content_revision == content_revision
+    published_belongs_to_lineage(published, config)
+        && published.config_revision == config.revision
+        && published.content_revision == content_revision
 }
 
 fn set_phase(
@@ -1795,7 +1793,7 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_status_hides_completion_from_another_configuration() {
+    fn checkpoint_status_tracks_lineage_not_enable_state_revision() {
         let (_directory, _database, config) = enabled_database();
         let mut status = CheckpointBackupStatus::default();
         set_last_complete(&mut status, CheckpointId::new(), 100, &config);
@@ -1803,6 +1801,16 @@ mod tests {
         assert!(status
             .clone()
             .scoped_to(Some(&config))
+            .last_complete_checkpoint_id
+            .is_some());
+
+        let revision_only_changed = OffsiteBackupConfig {
+            revision: config.revision + 1,
+            ..config.clone()
+        };
+        assert!(status
+            .clone()
+            .scoped_to(Some(&revision_only_changed))
             .last_complete_checkpoint_id
             .is_some());
 
