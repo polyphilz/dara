@@ -14,6 +14,9 @@ pub enum AppDataLockError {
 
     #[error("could not lock Dara data directory: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Dara Local requires an explicit DARA_DATA_DIR")]
+    MissingDevelopmentDataDirectory,
 }
 
 pub struct AppDataLock {
@@ -49,14 +52,19 @@ impl AppDataLock {
 pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
     tauri::plugin::Builder::new("app-data-lock")
         .setup(|app, _api| {
-            let data_root = std::env::var_os("DARA_DATA_DIR")
-                .map(PathBuf::from)
-                .map(Ok)
-                .unwrap_or_else(|| app.path().data_dir().map(|path| path.join("dara")))?;
+            let data_root = match std::env::var_os("DARA_DATA_DIR") {
+                Some(path) => PathBuf::from(path),
+                None if is_production_build() => app.path().data_dir()?.join("dara"),
+                None => return Err(AppDataLockError::MissingDevelopmentDataDirectory.into()),
+            };
             app.manage(AppDataLock::acquire(&data_root)?);
             Ok(())
         })
         .build()
+}
+
+fn is_production_build() -> bool {
+    env!("DARA_PRODUCTION_BUILD") == "true"
 }
 
 #[cfg(test)]
@@ -75,5 +83,13 @@ mod tests {
 
         drop(first);
         AppDataLock::acquire(directory.path()).expect("lock after release");
+    }
+
+    #[test]
+    fn packaged_identifier_and_production_boundary_agree() {
+        assert_eq!(
+            is_production_build(),
+            env!("DARA_APP_IDENTIFIER") == "com.rohan.dara"
+        );
     }
 }

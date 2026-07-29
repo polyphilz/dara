@@ -5,7 +5,7 @@ use zeroize::{Zeroize, Zeroizing};
 
 use super::domain::BackupSetId;
 
-const KEYCHAIN_SERVICE: &str = "com.rohan.dara.offsite-backup.r2";
+const KEYCHAIN_SERVICE_SUFFIX: &str = ".offsite-backup.r2";
 const CREDENTIAL_FORMAT_VERSION: u32 = 1;
 const MAX_CREDENTIAL_PAYLOAD_BYTES: usize = 4 * 1024;
 
@@ -127,9 +127,13 @@ pub(crate) struct MacOsKeychainCredentialStore;
 #[cfg(target_os = "macos")]
 impl MacOsKeychainCredentialStore {
     fn entry(backup_set_id: &BackupSetId) -> Result<keyring::Entry, CredentialError> {
-        keyring::Entry::new(KEYCHAIN_SERVICE, backup_set_id.as_str())
+        keyring::Entry::new(&keychain_service(), backup_set_id.as_str())
             .map_err(|_| CredentialError::Unavailable)
     }
+}
+
+fn keychain_service() -> String {
+    format!("{}{KEYCHAIN_SERVICE_SUFFIX}", env!("DARA_APP_IDENTIFIER"))
 }
 
 #[cfg(target_os = "macos")]
@@ -221,6 +225,14 @@ mod tests {
         assert!(!debug.contains(ACCESS_KEY));
         assert!(!debug.contains(SECRET_KEY));
         assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn keychain_service_is_scoped_to_the_packaged_application_identity() {
+        assert_eq!(
+            keychain_service(),
+            format!("{}{KEYCHAIN_SERVICE_SUFFIX}", env!("DARA_APP_IDENTIFIER"))
+        );
     }
 
     #[test]
