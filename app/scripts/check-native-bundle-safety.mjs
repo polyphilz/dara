@@ -13,19 +13,27 @@ const releaseConfig = JSON.parse(
 const e2eConfig = JSON.parse(
   readFileSync('src-tauri/tauri.e2e.conf.json', 'utf8'),
 )
-
-const localIdentity = Object.freeze({
-  productName: 'Dara Local',
-  identifier: 'com.rohan.dara.local',
+const applicationIdentities = Object.freeze(
+  JSON.parse(readFileSync('src-tauri/app-identities.json', 'utf8')),
+)
+const ApplicationIdentityKey = Object.freeze({
+  Local: 'local',
+  Production: 'production',
+  E2e: 'e2e',
 })
-const productionIdentity = Object.freeze({
-  productName: 'Dara',
-  identifier: 'com.rohan.dara',
-})
-const e2eIdentity = Object.freeze({
-  productName: 'Dara E2E',
-  identifier: 'com.rohan.dara.e2e',
-})
+const expectedIdentityKeys = Object.values(ApplicationIdentityKey).sort()
+const observedIdentityKeys = Object.keys(applicationIdentities).sort()
+if (
+  JSON.stringify(observedIdentityKeys) !== JSON.stringify(expectedIdentityKeys)
+) {
+  throw new Error(
+    `Unexpected application identity keys: ${JSON.stringify(observedIdentityKeys)}`,
+  )
+}
+const localIdentity = applicationIdentities[ApplicationIdentityKey.Local]
+const productionIdentity =
+  applicationIdentities[ApplicationIdentityKey.Production]
+const e2eIdentity = applicationIdentities[ApplicationIdentityKey.E2e]
 
 for (const marker of ['tauri-plugin-wdio', 'wdio-webdriver']) {
   if (productionTree.includes(marker)) {

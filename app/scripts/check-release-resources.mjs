@@ -9,6 +9,11 @@ import { spawnSync } from 'node:child_process'
 
 const localTauriConfig = readJson('src-tauri/tauri.conf.json')
 const tauriConfig = readJson('src-tauri/tauri.release.conf.json')
+const applicationIdentities = readJson('src-tauri/app-identities.json')
+const ApplicationIdentityKey = Object.freeze({
+  Local: 'local',
+  Production: 'production',
+})
 const llamaPin = readJson(
   'src-tauri/resources/sidecars/llama-server-v1.json',
 )
@@ -30,10 +35,7 @@ assertEqual(
     productName: localTauriConfig.productName,
     identifier: localTauriConfig.identifier,
   },
-  {
-    productName: 'Dara Local',
-    identifier: 'com.rohan.dara.local',
-  },
+  applicationIdentities[ApplicationIdentityKey.Local],
   'local application identity',
 )
 assertEqual(
@@ -41,10 +43,7 @@ assertEqual(
     productName: tauriConfig.productName,
     identifier: tauriConfig.identifier,
   },
-  {
-    productName: 'Dara',
-    identifier: 'com.rohan.dara',
-  },
+  applicationIdentities[ApplicationIdentityKey.Production],
   'release application identity',
 )
 
