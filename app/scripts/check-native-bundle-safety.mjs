@@ -5,17 +5,44 @@ import process from 'node:process'
 const manifest = 'src-tauri/Cargo.toml'
 const productionTree = cargoTree([])
 const e2eTree = cargoTree(['--features', 'e2e'])
-const productionConfig = readFileSync('src-tauri/tauri.conf.json', 'utf8')
-const parsedProductionConfig = JSON.parse(productionConfig)
+const ordinaryConfigText = readFileSync('src-tauri/tauri.conf.json', 'utf8')
+const ordinaryConfig = JSON.parse(ordinaryConfigText)
 const releaseConfig = JSON.parse(
   readFileSync('src-tauri/tauri.release.conf.json', 'utf8'),
 )
+const e2eConfig = JSON.parse(
+  readFileSync('src-tauri/tauri.e2e.conf.json', 'utf8'),
+)
+const applicationIdentities = Object.freeze(
+  JSON.parse(readFileSync('src-tauri/app-identities.json', 'utf8')),
+)
+const ApplicationIdentityKey = Object.freeze({
+  Local: 'local',
+  Production: 'production',
+  E2e: 'e2e',
+})
+const expectedIdentityKeys = Object.values(ApplicationIdentityKey).sort()
+const observedIdentityKeys = Object.keys(applicationIdentities).sort()
+if (
+  JSON.stringify(observedIdentityKeys) !== JSON.stringify(expectedIdentityKeys)
+) {
+  throw new Error(
+    `Unexpected application identity keys: ${JSON.stringify(observedIdentityKeys)}`,
+  )
+}
+const localIdentity = applicationIdentities[ApplicationIdentityKey.Local]
+const productionIdentity =
+  applicationIdentities[ApplicationIdentityKey.Production]
+const e2eIdentity = applicationIdentities[ApplicationIdentityKey.E2e]
 
 for (const marker of ['tauri-plugin-wdio', 'wdio-webdriver']) {
   if (productionTree.includes(marker)) {
     throw new Error(`Ordinary Cargo graph contains ${marker}`)
   }
-  if (productionConfig.includes(marker) || productionConfig.includes('withGlobalTauri')) {
+  if (
+    ordinaryConfigText.includes(marker) ||
+    ordinaryConfigText.includes('withGlobalTauri')
+  ) {
     throw new Error(`Ordinary Tauri config contains E2E marker ${marker}`)
   }
 }
@@ -23,6 +50,13 @@ for (const required of ['tauri-plugin-wdio v', 'tauri-plugin-wdio-webdriver v'])
   if (!e2eTree.includes(required)) {
     throw new Error(`E2E Cargo graph is missing ${required}`)
   }
+}
+
+assertIdentity(ordinaryConfig, localIdentity, 'ordinary development config')
+assertIdentity(releaseConfig, productionIdentity, 'release config')
+assertIdentity(e2eConfig, e2eIdentity, 'native E2E config')
+if (ordinaryConfig.app.windows[0]?.title !== localIdentity.productName) {
+  throw new Error('Ordinary development window must identify itself as Dara Local')
 }
 
 const requiredResources = {
@@ -66,7 +100,7 @@ for (const [source, destination] of Object.entries(requiredResources)) {
   }
 }
 for (const [source, destination] of Object.entries(
-  parsedProductionConfig.bundle.resources,
+  ordinaryConfig.bundle.resources,
 )) {
   if (
     !Object.hasOwn(requiredResources, source) ||
@@ -86,8 +120,22 @@ if (
 }
 
 console.info(
-  'Native bundle safety passed: WDIO plugins are feature-gated out of the ordinary Cargo graph, release resources are explicit, and model/test artifacts are excluded.',
+  'Native bundle safety passed: development, release, and E2E identities are separate; WDIO plugins are feature-gated; release resources are explicit; and model/test artifacts are excluded.',
 )
+
+function assertIdentity(config, expected, label) {
+  if (
+    config.productName !== expected.productName ||
+    config.identifier !== expected.identifier
+  ) {
+    throw new Error(
+      `Unexpected ${label} identity: ${JSON.stringify({
+        productName: config.productName,
+        identifier: config.identifier,
+      })}`,
+    )
+  }
+}
 
 function cargoTree(extraArguments) {
   const result = spawnSync(

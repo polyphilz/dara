@@ -13,6 +13,7 @@ use objc2_foundation::{
 use objc2_web_kit::WKWebView;
 use serde::{Deserialize, Serialize};
 use tauri::{
+    image::Image,
     menu::{Menu, MenuBuilder, MenuItemBuilder, MenuItemKind, PredefinedMenuItem},
     tray::TrayIconBuilder,
     utils::config::BackgroundThrottlingPolicy,
@@ -32,6 +33,7 @@ use crate::database::{
 const MAIN_LABEL: &str = "main";
 const QUICK_ADD_LABEL: &str = "quick-add";
 const TRAY_ID: &str = "dara-tray";
+const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../icons/tray-icon.png");
 const EDIT_MENU_TEXT: &str = "Edit";
 const VIEW_MENU_TEXT: &str = "View";
 const SETTINGS_MENU_ID: &str = "open-settings";
@@ -191,6 +193,9 @@ enum DismissFocus {
 
 pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    app.get_webview_window(MAIN_LABEL)
+        .ok_or(tauri::Error::WebviewNotFound)?
+        .set_title(&app.package_info().name)?;
     enable_main_navigation_gestures(app)?;
     let state = SpikeState::default();
     update_shortcut_status(&state, &settings.keyboard_bindings, Vec::new());
@@ -381,29 +386,30 @@ fn create_quick_add_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn tray_menu(app: &AppHandle, bindings: &[KeyboardBinding]) -> tauri::Result<Menu<tauri::Wry>> {
+    let app_name = &app.package_info().name;
     let quick_add_label = binding_for(bindings, DaraCommand::QuickAdd)
         .map(|binding| shortcut_label(&binding.accelerator))
         .unwrap_or_else(|| shortcut_label(DEFAULT_QUICK_ADD_ACCELERATOR));
     MenuBuilder::new(app)
-        .text(TrayMenuAction::ShowMain.id(), "Open Dara")
+        .text(TrayMenuAction::ShowMain.id(), format!("Open {app_name}"))
         .text(TrayMenuAction::ShowSettings.id(), "Settings…")
         .text(
             TrayMenuAction::ShowQuickAdd.id(),
             format!("Quick Add  {quick_add_label}"),
         )
         .separator()
-        .text(TrayMenuAction::Quit.id(), "Quit Dara")
+        .text(TrayMenuAction::Quit.id(), format!("Quit {app_name}"))
         .build()
 }
 
 fn install_tray(app: &App, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
     let menu = tray_menu(app.handle(), bindings)?;
 
-    let mut tray = TrayIconBuilder::with_id(TRAY_ID)
+    TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .show_menu_on_left_click(true)
-        .title("d")
-        .tooltip("Dara")
+        .tooltip(app.package_info().name.clone())
+        .icon(load_tray_icon()?)
         .icon_as_template(true)
         .on_menu_event(
             |app, event| match TrayMenuAction::from_id(event.id().as_ref()) {
@@ -431,14 +437,18 @@ fn install_tray(app: &App, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
                 Some(TrayMenuAction::Quit) => app.exit(0),
                 None => {}
             },
-        );
-
-    if let Some(icon) = app.default_window_icon() {
-        tray = tray.icon(icon.clone());
-    }
-
-    tray.build(app)?;
+        )
+        .build(app)?;
     Ok(())
+}
+
+fn load_tray_icon() -> tauri::Result<Image<'static>> {
+    let icon = image::load_from_memory(TRAY_ICON_BYTES)
+        .map_err(|error| tauri::Error::InvalidIcon(std::io::Error::other(error)))?
+        .into_rgba8();
+    let width = icon.width();
+    let height = icon.height();
+    Ok(Image::new_owned(icon.into_raw(), width, height))
 }
 
 fn register_shortcuts(app: &AppHandle, bindings: &[KeyboardBinding]) {
@@ -1087,7 +1097,15 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
 
 #[cfg(test)]
 mod focus_tests {
-    use super::FocusContext;
+    use super::{load_tray_icon, FocusContext};
+
+    #[test]
+    fn tray_icon_is_a_transparent_template_image() {
+        let icon = load_tray_icon().expect("tray icon should decode");
+        assert_eq!((icon.width(), icon.height()), (32, 32));
+        assert!(icon.rgba().chunks_exact(4).any(|pixel| pixel[3] == 0));
+        assert!(icon.rgba().chunks_exact(4).any(|pixel| pixel[3] == 255));
+    }
 
     #[test]
     fn quick_add_stays_open_while_its_file_dialog_has_focus() {

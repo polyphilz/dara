@@ -89,12 +89,18 @@ DARA_LLAMA_SERVER_PATH=/opt/homebrew/bin/llama-server \
   pnpm tauri dev
 ```
 
-The development command keeps its databases under `app/.data/local/`. The model override changes
-only where model bytes are read from. Dara runs the manifest checksum and golden compatibility
-checks before first use and whenever the model, sidecar, inference settings, or verification
-contract changes. A successful check writes an atomic, machine-local derived receipt beneath the
-Dara data directory. An exact receipt match keeps the model unloaded until a hybrid query or stale
-document embedding actually needs inference; a runtime failure invalidates the receipt.
+The development command runs as **Dara Local** with bundle identifier `com.rohan.dara.local` and
+keeps its databases under `app/.data/local/`. Its macOS application identity, single-instance
+boundary, autostart entry, logs, and R2 Keychain service are separate from the packaged **Dara**
+application. A non-production build refuses to start without an explicit `DARA_DATA_DIR`; the
+repository command supplies the safe local path.
+
+The model override changes only where model bytes are read from. Dara runs the manifest checksum
+and golden compatibility checks before first use and whenever the model, sidecar, inference
+settings, or verification contract changes. A successful check writes an atomic, machine-local
+derived receipt beneath the Dara data directory. An exact receipt match keeps the model unloaded
+until a hybrid query or stale document embedding actually needs inference; a runtime failure
+invalidates the receipt.
 
 ### Reproducing the sidecar
 

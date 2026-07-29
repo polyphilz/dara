@@ -40,6 +40,11 @@ The installed app uses:
 app/.data/local
 ```
 
+That command runs **Dara Local** with bundle identifier
+`com.rohan.dara.local`. Development and production use separate macOS
+application, single-instance, autostart, logging, and R2 Keychain identities.
+Non-production builds refuse to start without an explicit `DARA_DATA_DIR`.
+
 Replacing `/Applications/Dara.app` does not replace or reset the production
 data directory. Never copy, delete, or overwrite production data as part of a
 normal app release.

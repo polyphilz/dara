@@ -7,7 +7,13 @@ import {
 import { extname, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+const localTauriConfig = readJson('src-tauri/tauri.conf.json')
 const tauriConfig = readJson('src-tauri/tauri.release.conf.json')
+const applicationIdentities = readJson('src-tauri/app-identities.json')
+const ApplicationIdentityKey = Object.freeze({
+  Local: 'local',
+  Production: 'production',
+})
 const llamaPin = readJson(
   'src-tauri/resources/sidecars/llama-server-v1.json',
 )
@@ -23,6 +29,23 @@ const releaseManifest = JSON.parse(readFileSync(releaseManifestPath, 'utf8'))
 const binaryPath = resolve(stage, llamaPin.stagingPaths.binary)
 const license = releaseManifest.licenseNotices[0]
 const licensePath = resolve(stage, llamaPin.stagingPaths.license)
+
+assertEqual(
+  {
+    productName: localTauriConfig.productName,
+    identifier: localTauriConfig.identifier,
+  },
+  applicationIdentities[ApplicationIdentityKey.Local],
+  'local application identity',
+)
+assertEqual(
+  {
+    productName: tauriConfig.productName,
+    identifier: tauriConfig.identifier,
+  },
+  applicationIdentities[ApplicationIdentityKey.Production],
+  'release application identity',
+)
 
 assertEqual(
   stripGeneratedFields(releaseManifest),
