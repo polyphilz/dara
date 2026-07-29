@@ -1350,10 +1350,9 @@ fn sweep_stale_sidecar(data_root: &Path, sidecar_path: &Path, model_path: &Path)
     {
         return;
     }
-    if !process_matches_sidecar(pid, recorded_sidecar, recorded_model) {
-        return;
+    if process_matches_sidecar(pid, recorded_sidecar, recorded_model) {
+        terminate_stale_process_group(pid, recorded_sidecar, recorded_model);
     }
-    terminate_stale_process_group(pid, recorded_sidecar, recorded_model);
     remove_pidfile_if_owned(data_root, pid);
 }
 
@@ -1899,6 +1898,20 @@ mod tests {
         assert!(pidfile_path(directory.path()).exists());
 
         remove_pidfile_if_owned(directory.path(), 101);
+        assert!(!pidfile_path(directory.path()).exists());
+    }
+
+    #[test]
+    fn stale_pidfile_is_removed_when_its_process_is_gone() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let sidecar_path = directory.path().join("llama-server");
+        let model_path = directory.path().join("model.gguf");
+        let missing_pid = u32::MAX;
+        write_pidfile(directory.path(), missing_pid, &sidecar_path, &model_path)
+            .expect("pidfile write");
+
+        sweep_stale_sidecar(directory.path(), &sidecar_path, &model_path);
+
         assert!(!pidfile_path(directory.path()).exists());
     }
 
