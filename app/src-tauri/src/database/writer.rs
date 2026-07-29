@@ -134,6 +134,9 @@ pub(super) enum WriterMessage {
     LoadOffsiteBackupConfig {
         reply: SyncSender<Result<Option<OffsiteBackupConfig>>>,
     },
+    LoadOffsiteBackupRuntimeConfig {
+        reply: SyncSender<Result<Option<OffsiteBackupConfig>>>,
+    },
     LoadOffsiteBackupTakeoverAvailability {
         reply: SyncSender<Result<bool>>,
     },
@@ -328,6 +331,7 @@ impl WriterMessage {
             | Self::PrepareDesiredRetentionReplay { .. }
             | Self::LoadSettings { .. }
             | Self::LoadOffsiteBackupConfig { .. }
+            | Self::LoadOffsiteBackupRuntimeConfig { .. }
             | Self::LoadOffsiteBackupTakeoverAvailability { .. }
             | Self::LoadPendingOffsiteCredentialCleanup { .. }
             | Self::LoadNextOffsiteMedia { .. }
@@ -674,6 +678,16 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::LoadOffsiteBackupConfig { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_offsite_backup_runtime_config(&self) -> Result<Option<OffsiteBackupConfig>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadOffsiteBackupRuntimeConfig { reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

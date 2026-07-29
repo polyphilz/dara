@@ -66,6 +66,14 @@ pub(super) fn load(connection: &Connection) -> Result<Option<OffsiteBackupConfig
     stored.map(parse_stored).transpose()
 }
 
+pub(super) fn load_runtime_config(connection: &Connection) -> Result<Option<OffsiteBackupConfig>> {
+    let config = load(connection)?;
+    if load_takeover_available(connection)? {
+        return Ok(None);
+    }
+    Ok(config.filter(|config| config.enabled))
+}
+
 pub(super) fn load_takeover_available(connection: &Connection) -> Result<bool> {
     Ok(connection
         .query_row(

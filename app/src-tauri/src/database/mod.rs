@@ -522,6 +522,9 @@ fn writer_loop(
             WriterMessage::LoadOffsiteBackupConfig { reply } => {
                 let _ = reply.send(offsite_backup::load(&main));
             }
+            WriterMessage::LoadOffsiteBackupRuntimeConfig { reply } => {
+                let _ = reply.send(offsite_backup::load_runtime_config(&main));
+            }
             WriterMessage::LoadOffsiteBackupTakeoverAvailability { reply } => {
                 let _ = reply.send(offsite_backup::load_takeover_available(&main));
             }

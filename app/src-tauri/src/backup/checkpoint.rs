@@ -471,14 +471,14 @@ fn checkpoint_worker(
             continue;
         }
 
-        let config = match database.load_offsite_backup_config() {
+        let config = match database.load_offsite_backup_runtime_config() {
             Ok(config) => config,
             Err(_) => {
                 set_failure_status(&status, BackupErrorCode::WorkerUnavailable);
                 continue;
             }
         };
-        let Some(config) = config.filter(|config| config.enabled) else {
+        let Some(config) = config else {
             dirty = None;
             remote_evidence = RemoteEvidenceState::Valid;
             *lock_status(&status) = CheckpointBackupStatus::default();
@@ -569,8 +569,8 @@ fn attempt_final_checkpoint(
         Ok(state) => state,
         Err(_) => return,
     };
-    let config = match database.load_offsite_backup_config() {
-        Ok(Some(config)) if config.enabled => config,
+    let config = match database.load_offsite_backup_runtime_config() {
+        Ok(Some(config)) => config,
         _ => return,
     };
     if remote_evidence == RemoteEvidenceState::Valid
@@ -607,9 +607,8 @@ fn create_checkpoint(
     deadline: Instant,
 ) -> Result<CheckpointId, BackupErrorCode> {
     let config = database
-        .load_offsite_backup_config()
+        .load_offsite_backup_runtime_config()
         .map_err(map_database_error)?
-        .filter(|config| config.enabled)
         .ok_or(BackupErrorCode::InvalidTarget)?;
     ensure_litestream_healthy(&litestream.status())?;
     let target = factory.open(&config, deadline)?;
@@ -851,9 +850,9 @@ fn ensure_active_config(
     expected: &OffsiteBackupConfig,
 ) -> Result<(), BackupErrorCode> {
     let current = database
-        .load_offsite_backup_config()
+        .load_offsite_backup_runtime_config()
         .map_err(map_database_error)?;
-    if current.as_ref() != Some(expected) || !expected.enabled {
+    if current.as_ref() != Some(expected) {
         return Err(BackupErrorCode::InvalidTarget);
     }
     Ok(())

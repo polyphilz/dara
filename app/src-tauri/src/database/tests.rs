@@ -171,12 +171,24 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
     assert!(!client
         .load_offsite_backup_takeover_availability()
         .expect("load takeover availability"));
+    assert_eq!(
+        client
+            .load_offsite_backup_runtime_config()
+            .expect("load empty runtime config"),
+        None
+    );
     client
         .set_offsite_backup_takeover_availability(saved.backup_set_id.clone(), true)
         .expect("persist takeover availability");
     assert!(client
         .load_offsite_backup_takeover_availability()
         .expect("reload takeover availability"));
+    assert_eq!(
+        client
+            .load_offsite_backup_runtime_config()
+            .expect("load takeover-blocked runtime config"),
+        None
+    );
     assert_eq!(
         client
             .load_offsite_backup_config()
@@ -210,9 +222,21 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
     assert!(!client
         .load_offsite_backup_takeover_availability()
         .expect("successful config save clears takeover availability"));
+    assert_eq!(
+        client
+            .load_offsite_backup_runtime_config()
+            .expect("load enabled runtime config"),
+        Some(enabled.clone())
+    );
     client
         .set_offsite_backup_takeover_availability(enabled.backup_set_id.clone(), true)
         .expect("restore takeover availability");
+    assert_eq!(
+        client
+            .load_offsite_backup_runtime_config()
+            .expect("load blocked enabled runtime config"),
+        None
+    );
     let disabled = client
         .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
             expected_revision: enabled.revision,
