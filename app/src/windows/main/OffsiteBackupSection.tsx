@@ -145,8 +145,10 @@ export function OffsiteBackupSection({
   const reload = useCallback(async () => {
     try {
       applyStatus(await gateway.loadStatus())
+      return true
     } catch (error) {
       setLoadingError(errorMessage(error))
+      return false
     }
   }, [applyStatus, gateway])
 
@@ -219,7 +221,10 @@ export function OffsiteBackupSection({
     onBusyChange(true)
     try {
       const accepted = await invoke()
-      await reload()
+      const refreshed = await reload()
+      if (!refreshed) {
+        return
+      }
       if (accepted.reused) {
         setNotice('That backup task is already running.')
       } else {
@@ -304,6 +309,14 @@ export function OffsiteBackupSection({
           <p className="offsite-backup-loading">Loading backup status…</p>
         ) : (
           <>
+            {loadingError && (
+              <div className="offsite-backup-load-error" role="alert">
+                <span>{loadingError}</span>
+                <DaraButton onClick={() => void reload()} type="button">
+                  Try again
+                </DaraButton>
+              </div>
+            )}
             <div className="offsite-backup-intro">
               <div>
                 <strong>{enabled ? 'Backup is on' : 'Backup is off'}</strong>
@@ -486,7 +499,8 @@ export function OffsiteBackupSection({
             {!enabled &&
               status.configured &&
               formMode === BackupFormMode.Configure &&
-              status.credentials !== CredentialAvailability.Missing && (
+              (status.credentials !== CredentialAvailability.Missing ||
+                status.credentialCleanupPending) && (
                 <div className="offsite-backup-actions">
                   <div className="offsite-backup-secondary-actions">
                     {status.takeoverAvailable && (
@@ -527,6 +541,13 @@ export function OffsiteBackupSection({
                     : 'macOS Keychain is currently unavailable.'}
                 </p>
               )}
+            {status.credentialCleanupPending && (
+              <p className="offsite-backup-warning" role="status">
+                Dara still needs to remove credentials for a previous R2 target
+                from macOS Keychain. Quit and reopen Dara to retry, or choose
+                Remove saved credentials.
+              </p>
+            )}
             <p className="offsite-backup-privacy">
               Backup contents are not encrypted by Dara before upload. Your R2
               credentials and Cloudflare’s private-bucket controls protect

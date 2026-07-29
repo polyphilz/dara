@@ -96,6 +96,30 @@ pub(super) fn set_takeover_available(
     Ok(())
 }
 
+pub(super) fn load_pending_credential_cleanup(connection: &Connection) -> Result<Vec<BackupSetId>> {
+    let mut statement = connection.prepare(
+        "SELECT backup_set_id
+         FROM offsite_credential_cleanup
+         ORDER BY created_at, backup_set_id",
+    )?;
+    let cleanup = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .map(|value| BackupSetId::parse(value?).map_err(invalid_stored))
+        .collect();
+    cleanup
+}
+
+pub(super) fn complete_credential_cleanup(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+) -> Result<()> {
+    connection.execute(
+        "DELETE FROM offsite_credential_cleanup WHERE backup_set_id = ?1",
+        [backup_set_id.as_str()],
+    )?;
+    Ok(())
+}
+
 pub(super) fn save(
     connection: &mut Connection,
     media: &Connection,
@@ -110,6 +134,11 @@ pub(super) fn save(
     let current = load(&transaction)?;
     validate_change(current.as_ref(), &input)?;
     let now = now_millis()?;
+
+    let retired_backup_set_id = current
+        .as_ref()
+        .filter(|config| config.backup_set_id != input.backup_set_id)
+        .map(|config| config.backup_set_id.clone());
 
     match current {
         None => {
@@ -187,6 +216,13 @@ pub(super) fn save(
     let saved = load(&transaction)?.ok_or_else(|| {
         DatabaseError::InvalidOffsiteBackupConfig("saved configuration is unavailable".into())
     })?;
+    if let Some(retired_backup_set_id) = retired_backup_set_id {
+        transaction.execute(
+            "INSERT OR IGNORE INTO offsite_credential_cleanup (backup_set_id, created_at)
+             VALUES (?1, ?2)",
+            params![retired_backup_set_id.as_str(), now],
+        )?;
+    }
     offsite_media::seed_for_backup_set(&transaction, media, &saved.backup_set_id, now)?;
     transaction.commit()?;
     Ok(saved)

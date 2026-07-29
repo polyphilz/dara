@@ -226,6 +226,7 @@ export interface OffsiteBackupStatus {
   lastRestoreDrillAt: number | null
   lastRestoreDrillError: BackupErrorCode | null
   takeoverAvailable: boolean
+  credentialCleanupPending: boolean
   activeOperation: OffsiteBackupOperation | null
 }
 

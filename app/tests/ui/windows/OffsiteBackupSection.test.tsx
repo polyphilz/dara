@@ -163,6 +163,48 @@ test('announces typed progress and reloads after completion', async () => {
   expect(fixture.gateway.loadStatus).toHaveBeenCalledTimes(2)
 })
 
+test('does not announce operation success until status refresh succeeds', async () => {
+  const disabled = disabledStatus()
+  const enabled = enabledStatus({ complete: false })
+  const fixture = backupFixture(disabled)
+  fixture.gateway.loadStatus
+    .mockResolvedValueOnce(structuredClone(disabled))
+    .mockRejectedValueOnce(new Error('Backup status refresh failed.'))
+    .mockResolvedValue(structuredClone(enabled))
+  const {
+    findByLabelText,
+    findByRole,
+    findByText,
+    queryByText,
+  } = renderSection(fixture.gateway)
+
+  fireEvent.change(await findByLabelText('Account ID'), {
+    target: { value: '0123456789abcdef0123456789abcdef' },
+  })
+  fireEvent.change(await findByLabelText('Bucket'), {
+    target: { value: 'dara-local' },
+  })
+  fireEvent.change(await findByLabelText('Access Key ID'), {
+    target: { value: ACCESS_KEY_ID },
+  })
+  fireEvent.change(await findByLabelText('Secret Access Key'), {
+    target: { value: SECRET_ACCESS_KEY },
+  })
+  fireEvent.click(
+    await findByRole('button', { name: 'Test and enable backup' }),
+  )
+
+  expect(await findByText('Backup status refresh failed.')).toBeTruthy()
+  expect(
+    queryByText(
+      'Off-site backup is enabled. Dara is building its first complete backup.',
+    ),
+  ).toBeNull()
+
+  fireEvent.click(await findByRole('button', { name: 'Try again' }))
+  expect(await findByText('Backup is on')).toBeTruthy()
+})
+
 test('confirms credential removal, keeps remote data, and restores focus', async () => {
   const fixture = backupFixture(enabledStatus({ complete: true }))
   const { findByRole, findByText, getByRole, queryByRole } = renderSection(
@@ -196,6 +238,21 @@ test('keeps credential removal available after backup is disabled', async () => 
   )
   expect(
     getByRole('alertdialog', { name: 'Remove saved R2 credentials?' }),
+  ).toBeTruthy()
+})
+
+test('surfaces pending cleanup and keeps its retry path available', async () => {
+  const status = configuredDisabledStatus()
+  status.credentials = CredentialAvailability.Missing
+  status.credentialCleanupPending = true
+  const fixture = backupFixture(status)
+  const { findByRole, findByText } = renderSection(fixture.gateway)
+
+  expect(
+    await findByText(/credentials for a previous R2 target/i),
+  ).toBeTruthy()
+  expect(
+    await findByRole('button', { name: 'Remove saved credentials' }),
   ).toBeTruthy()
 })
 
@@ -387,6 +444,7 @@ function disabledStatus(): OffsiteBackupStatus {
     lastRestoreDrillAt: null,
     lastRestoreDrillError: null,
     takeoverAvailable: false,
+    credentialCleanupPending: false,
     activeOperation: null,
   }
 }

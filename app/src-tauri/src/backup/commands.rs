@@ -47,6 +47,7 @@ pub(crate) struct OffsiteBackupOperationRegistry {
 struct OperationRegistryState {
     active: Option<ActiveOperation>,
     takeover_available: bool,
+    credential_cleanup_attempted: bool,
 }
 
 impl OffsiteBackupOperationRegistry {
@@ -116,6 +117,19 @@ impl OffsiteBackupOperationRegistry {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .takeover_available
+    }
+
+    fn begin_credential_cleanup_attempt(&self) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.credential_cleanup_attempted {
+            false
+        } else {
+            state.credential_cleanup_attempted = true;
+            true
+        }
     }
 }
 
@@ -388,6 +402,7 @@ pub(crate) struct OffsiteBackupStatus {
     last_restore_drill_at: Option<i64>,
     last_restore_drill_error: Option<BackupErrorCode>,
     takeover_available: bool,
+    credential_cleanup_pending: bool,
     active_operation: Option<OffsiteBackupOperation>,
 }
 
@@ -406,7 +421,11 @@ pub(crate) async fn load_offsite_backup_status(
     let checkpoint_status = checkpoint.status();
     let active_operation = operations.active();
     let takeover_available = operations.takeover_available();
+    let retry_credential_cleanup = operations.begin_credential_cleanup_attempt();
     tauri::async_runtime::spawn_blocking(move || {
+        if retry_credential_cleanup {
+            let _ = retry_pending_credential_cleanup(&client, &MacOsKeychainCredentialStore);
+        }
         load_status(
             client,
             report_directory,
@@ -853,10 +872,14 @@ fn configure_backup(
         }
         return Err(map_database_error(error));
     }
-    if let Some(previous) = current {
-        if previous.backup_set_id != backup_set_id {
-            let _ = credential_store.remove(&previous.backup_set_id);
-        }
+    if current
+        .as_ref()
+        .is_some_and(|previous| previous.backup_set_id != backup_set_id)
+    {
+        // The configuration transaction durably queued the previous Keychain
+        // item. A failed best-effort removal remains visible in status and can
+        // be retried after restart or by removing saved credentials.
+        let _ = retry_pending_credential_cleanup(&client, &credential_store);
     }
     emit_progress(
         app,
@@ -1045,6 +1068,7 @@ async fn run_local_configuration_operation(
             client
                 .set_offsite_backup_takeover_availability(config.backup_set_id, false)
                 .map_err(map_database_error)?;
+            retry_pending_credential_cleanup(&client, &MacOsKeychainCredentialStore)?;
         }
         Ok(())
     })
@@ -1132,6 +1156,10 @@ fn load_status(
     let persisted_takeover_available = client
         .load_offsite_backup_takeover_availability()
         .map_err(map_database_error)?;
+    let credential_cleanup_pending = !client
+        .load_pending_offsite_credential_cleanup()
+        .map_err(map_database_error)?
+        .is_empty();
     let credentials = config
         .as_ref()
         .map_or(
@@ -1186,8 +1214,27 @@ fn load_status(
         last_restore_drill_at,
         last_restore_drill_error,
         takeover_available,
+        credential_cleanup_pending,
         active_operation,
     })
+}
+
+fn retry_pending_credential_cleanup(
+    client: &DatabaseClient,
+    credential_store: &impl CredentialStore,
+) -> Result<(), BackupErrorCode> {
+    for backup_set_id in client
+        .load_pending_offsite_credential_cleanup()
+        .map_err(map_database_error)?
+    {
+        credential_store
+            .remove(&backup_set_id)
+            .map_err(map_credential_error)?;
+        client
+            .complete_offsite_credential_cleanup(backup_set_id)
+            .map_err(map_database_error)?;
+    }
+    Ok(())
 }
 
 fn restore_drill_directory(
