@@ -1223,10 +1223,20 @@ fn retry_pending_credential_cleanup(
     client: &DatabaseClient,
     credential_store: &impl CredentialStore,
 ) -> Result<(), BackupErrorCode> {
+    let current_backup_set_id = client
+        .load_offsite_backup_config()
+        .map_err(map_database_error)?
+        .map(|config| config.backup_set_id);
     for backup_set_id in client
         .load_pending_offsite_credential_cleanup()
         .map_err(map_database_error)?
     {
+        if current_backup_set_id.as_ref() == Some(&backup_set_id) {
+            client
+                .complete_offsite_credential_cleanup(backup_set_id)
+                .map_err(map_database_error)?;
+            continue;
+        }
         credential_store
             .remove(&backup_set_id)
             .map_err(map_credential_error)?;

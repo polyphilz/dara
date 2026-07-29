@@ -260,8 +260,32 @@ fn offsite_backup_config_is_non_secret_typed_and_revision_guarded() {
             .expect("load retired credential cleanup"),
         vec![disabled.backup_set_id.clone()]
     );
+    let returned = client
+        .save_offsite_backup_config(super::SaveOffsiteBackupConfigInput {
+            expected_revision: changed.revision,
+            backup_set_id: disabled.backup_set_id.clone(),
+            replica_epoch_id: disabled.replica_epoch_id,
+            enabled: false,
+            target: disabled.target,
+        })
+        .expect("return to previous target");
+    assert_eq!(
+        client
+            .load_pending_offsite_credential_cleanup()
+            .expect("load cleanup after returning to previous target"),
+        vec![changed.backup_set_id.clone()]
+    );
     client
-        .complete_offsite_credential_cleanup(disabled.backup_set_id)
+        .complete_offsite_credential_cleanup(returned.backup_set_id)
+        .expect("completing the active backup set is harmless");
+    assert_eq!(
+        client
+            .load_pending_offsite_credential_cleanup()
+            .expect("active backup set was never queued"),
+        vec![changed.backup_set_id.clone()]
+    );
+    client
+        .complete_offsite_credential_cleanup(changed.backup_set_id)
         .expect("complete retired credential cleanup");
     assert!(client
         .load_pending_offsite_credential_cleanup()

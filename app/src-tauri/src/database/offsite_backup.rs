@@ -216,6 +216,13 @@ pub(super) fn save(
     let saved = load(&transaction)?.ok_or_else(|| {
         DatabaseError::InvalidOffsiteBackupConfig("saved configuration is unavailable".into())
     })?;
+    // A backup set can become current again when a target change adopts its
+    // existing remote authority. Never retain a cleanup request for the
+    // Keychain item that now belongs to the active configuration.
+    transaction.execute(
+        "DELETE FROM offsite_credential_cleanup WHERE backup_set_id = ?1",
+        [saved.backup_set_id.as_str()],
+    )?;
     if let Some(retired_backup_set_id) = retired_backup_set_id {
         transaction.execute(
             "INSERT OR IGNORE INTO offsite_credential_cleanup (backup_set_id, created_at)
