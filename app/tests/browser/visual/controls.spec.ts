@@ -20,6 +20,9 @@ test('shared controls open listbox state', async ({ page }) => {
   await page.goto(
     `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}&surface=${BrowserHarnessSurface.VisualCatalog}`,
   )
+  await page.evaluate(async () => {
+    await document.fonts.ready
+  })
   await page.getByRole('button', { name: 'Catalog choice: Second option' }).press('Enter')
   await expect(page.getByRole('listbox', { name: 'Catalog choice' })).toBeVisible()
   await expect(page.locator('body')).toHaveScreenshot('controls-open-listbox.png')
