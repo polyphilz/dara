@@ -132,6 +132,16 @@ trait KeychainBackend {
     fn remove(&self, service: &str, account: &str) -> Result<(), CredentialError>;
 }
 
+#[cfg(target_os = "macos")]
+static KEYCHAIN_OPERATION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(target_os = "macos")]
+fn keychain_operation_guard() -> std::sync::MutexGuard<'static, ()> {
+    KEYCHAIN_OPERATION_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 fn keychain_service() -> String {
     keychain_service_for_identifier(env!("DARA_APP_IDENTIFIER"))
 }
@@ -218,14 +228,18 @@ fn migrate_legacy_credentials(
         backend.save(current_service, account, &payload)?;
         let mut verified = Zeroizing::new(backend.load(current_service, account)?);
         if verified.as_slice() != payload.as_slice() {
+            let cleanup_result = backend.remove(current_service, account);
             payload.zeroize();
             verified.zeroize();
+            cleanup_result?;
             return Err(CredentialError::Unavailable);
         }
         let _ = backend.remove(&legacy_service, account);
         return Ok(credentials);
     }
-    Err(CredentialError::Missing)
+    backend
+        .load(current_service, account)
+        .and_then(decode_keychain_payload)
 }
 
 #[cfg(target_os = "macos")]
@@ -269,6 +283,7 @@ impl CredentialStore for MacOsKeychainCredentialStore {
         backup_set_id: &BackupSetId,
         credentials: &R2Credentials,
     ) -> Result<(), CredentialError> {
+        let _operation_guard = keychain_operation_guard();
         let payload = credentials.encode()?;
         let backend = SystemKeychainBackend;
         backend.save(
@@ -281,10 +296,12 @@ impl CredentialStore for MacOsKeychainCredentialStore {
     }
 
     fn load(&self, backup_set_id: &BackupSetId) -> Result<R2Credentials, CredentialError> {
+        let _operation_guard = keychain_operation_guard();
         load_credentials(&SystemKeychainBackend, backup_set_id)
     }
 
     fn remove(&self, backup_set_id: &BackupSetId) -> Result<(), CredentialError> {
+        let _operation_guard = keychain_operation_guard();
         remove_all_credentials(&SystemKeychainBackend, backup_set_id)
     }
 }
@@ -419,6 +436,31 @@ mod tests {
             Err(CredentialError::Unavailable)
         ));
         assert!(backend.contains(&legacy_service, backup_set_id.as_str()));
+        assert!(!backend.contains(&current_service, backup_set_id.as_str()));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn lost_keychain_migration_race_rechecks_current_credentials() {
+        let backup_set_id = BackupSetId::new();
+        let current_service = keychain_service();
+        let legacy_service = legacy_keychain_services()
+            .into_iter()
+            .next()
+            .expect("legacy service");
+        let credentials = R2Credentials::new(ACCESS_KEY, SECRET_KEY).expect("credentials");
+        let backend = MigrationRaceBackend {
+            current_service,
+            legacy_service,
+            account: backup_set_id.as_str().to_owned(),
+            payload: credentials.encode().expect("payload").to_vec(),
+            migration_completed: Mutex::new(false),
+        };
+
+        let loaded = load_credentials(&backend, &backup_set_id).expect("current credentials");
+
+        assert_eq!(loaded.access_key_id(), ACCESS_KEY);
+        assert_eq!(loaded.secret_access_key(), SECRET_KEY);
     }
 
     #[cfg(target_os = "macos")]
@@ -534,6 +576,52 @@ mod tests {
         fn remove(&self, service: &str, account: &str) -> Result<(), CredentialError> {
             self.entries()
                 .remove(&(service.to_owned(), account.to_owned()));
+            Ok(())
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    struct MigrationRaceBackend {
+        current_service: String,
+        legacy_service: String,
+        account: String,
+        payload: Vec<u8>,
+        migration_completed: Mutex<bool>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl KeychainBackend for MigrationRaceBackend {
+        fn load(&self, service: &str, account: &str) -> Result<Vec<u8>, CredentialError> {
+            if account != self.account {
+                return Err(CredentialError::Missing);
+            }
+            let mut migration_completed = self
+                .migration_completed
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if service == self.current_service {
+                return if *migration_completed {
+                    Ok(self.payload.clone())
+                } else {
+                    Err(CredentialError::Missing)
+                };
+            }
+            if service == self.legacy_service {
+                *migration_completed = true;
+            }
+            Err(CredentialError::Missing)
+        }
+
+        fn save(
+            &self,
+            _service: &str,
+            _account: &str,
+            _payload: &[u8],
+        ) -> Result<(), CredentialError> {
+            Err(CredentialError::Unavailable)
+        }
+
+        fn remove(&self, _service: &str, _account: &str) -> Result<(), CredentialError> {
             Ok(())
         }
     }
