@@ -132,7 +132,7 @@ assert(
   'real-R2 canary uploads its full local restore instead of bounded reports',
 )
 
-const tracked = execFileSync('git', ['ls-files', '-z'], {
+const tracked = execFileSync('git', ['ls-files', '--full-name', '-z'], {
   encoding: 'utf8',
 })
   .split('\0')
