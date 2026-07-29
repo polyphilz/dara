@@ -131,14 +131,27 @@ pub(super) enum WriterMessage {
         input: SetKeyboardBindingsInput,
         reply: SyncSender<Result<StoredSettings>>,
     },
-    #[allow(dead_code)] // Wired into the backup service in the next implementation slice.
     LoadOffsiteBackupConfig {
         reply: SyncSender<Result<Option<OffsiteBackupConfig>>>,
     },
-    #[allow(dead_code)] // Wired into Settings when the backup service is exposed.
+    LoadOffsiteBackupTakeoverAvailability {
+        reply: SyncSender<Result<bool>>,
+    },
+    LoadPendingOffsiteCredentialCleanup {
+        reply: SyncSender<Result<Vec<BackupSetId>>>,
+    },
     SaveOffsiteBackupConfig {
         input: SaveOffsiteBackupConfigInput,
         reply: SyncSender<Result<OffsiteBackupConfig>>,
+    },
+    SetOffsiteBackupTakeoverAvailability {
+        backup_set_id: BackupSetId,
+        available: bool,
+        reply: SyncSender<Result<()>>,
+    },
+    CompleteOffsiteCredentialCleanup {
+        backup_set_id: BackupSetId,
+        reply: SyncSender<Result<()>>,
     },
     ReconcileOffsiteMedia {
         now: i64,
@@ -288,6 +301,8 @@ impl WriterMessage {
             | Self::CompleteImageOcr { .. }
             | Self::RecoverInterruptedOcrJobs { .. } => WriterContentEffect::RecoverableMutation,
             Self::SaveOffsiteBackupConfig { .. }
+            | Self::SetOffsiteBackupTakeoverAvailability { .. }
+            | Self::CompleteOffsiteCredentialCleanup { .. }
             | Self::ReconcileOffsiteMedia { .. }
             | Self::RecordOffsiteMediaAttempt { .. }
             | Self::ReleaseOffsiteMediaRetries { .. }
@@ -313,6 +328,8 @@ impl WriterMessage {
             | Self::PrepareDesiredRetentionReplay { .. }
             | Self::LoadSettings { .. }
             | Self::LoadOffsiteBackupConfig { .. }
+            | Self::LoadOffsiteBackupTakeoverAvailability { .. }
+            | Self::LoadPendingOffsiteCredentialCleanup { .. }
             | Self::LoadNextOffsiteMedia { .. }
             | Self::LoadOffsiteMediaSummary { .. }
             | Self::LoadReferencedOffsiteMediaSummary { .. }
@@ -663,6 +680,26 @@ impl DatabaseClient {
             .map_err(|_| DatabaseError::WriterUnavailable)?
     }
 
+    pub(crate) fn load_offsite_backup_takeover_availability(&self) -> Result<bool> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadOffsiteBackupTakeoverAvailability { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn load_pending_offsite_credential_cleanup(&self) -> Result<Vec<BackupSetId>> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::LoadPendingOffsiteCredentialCleanup { reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
     #[allow(dead_code)] // This is the persistence seam for the upcoming Settings commands.
     pub(crate) fn save_offsite_backup_config(
         &self,
@@ -671,6 +708,40 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::SaveOffsiteBackupConfig { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn set_offsite_backup_takeover_availability(
+        &self,
+        backup_set_id: BackupSetId,
+        available: bool,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SetOffsiteBackupTakeoverAvailability {
+                backup_set_id,
+                available,
+                reply,
+            })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub(crate) fn complete_offsite_credential_cleanup(
+        &self,
+        backup_set_id: BackupSetId,
+    ) -> Result<()> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::CompleteOffsiteCredentialCleanup {
+                backup_set_id,
+                reply,
+            })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

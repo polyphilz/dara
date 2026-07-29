@@ -1,0 +1,28 @@
+export {
+  tauriOffsiteBackupGateway,
+  type OffsiteBackupGateway,
+} from './gateway.ts'
+export {
+  BackupErrorCode,
+  CheckpointBackupPhase,
+  CredentialAvailability,
+  MediaBackupPhase,
+  OffsiteBackupOperationKind,
+  OffsiteBackupProgressPhase,
+  R2Jurisdiction,
+  RelationalBackupPhase,
+  RestoreDrillOutcome,
+  RestoreValidationStage,
+  type ChangeOffsiteBackupTargetInput,
+  type CheckpointBackupStatus,
+  type MediaBackupStatus,
+  type OffsiteBackupCredentials,
+  type OffsiteBackupOperation,
+  type OffsiteBackupProgress,
+  type OffsiteBackupStatus,
+  type OffsiteBackupTarget,
+  type RelationalBackupStatus,
+  type ReplaceOffsiteBackupCredentialsInput,
+  type RestoreDrillReport,
+  type TestAndEnableOffsiteBackupInput,
+} from './types.ts'

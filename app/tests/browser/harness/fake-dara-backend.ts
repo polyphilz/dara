@@ -26,6 +26,16 @@ import {
   Appearance,
   DEFAULT_KEYBOARD_BINDINGS,
 } from '../../../src/settings/types.ts'
+import {
+  CheckpointBackupPhase,
+  CredentialAvailability,
+  MediaBackupPhase,
+  OffsiteBackupOperationKind,
+  R2Jurisdiction,
+  RelationalBackupPhase,
+  RestoreDrillOutcome,
+  type OffsiteBackupStatus,
+} from '../../../src/backup/index.ts'
 import type { BrowserScenario } from './scenarios.ts'
 import { BrowserScenarioId } from './scenarios.ts'
 
@@ -55,6 +65,7 @@ export class FakeDaraBackend {
   readonly #commands: FakeCommandRecord[] = []
   readonly #recordedGrades: RecordGradeInput[] = []
   readonly #reviewContext = createReviewContext()
+  #offsiteBackupStatus = disabledBackupStatus()
   #dismissedQuickAdd = 0
   #remainingCreateFailures = 0
 
@@ -95,7 +106,10 @@ export class FakeDaraBackend {
       throw new Error(`Unknown Dara IPC command: ${commandValue}`)
     }
     const command = commandValue as DaraIpcCommandType
-    this.#commands.push({ command, payload: structuredClone(payload) })
+    this.#commands.push({
+      command,
+      payload: recordedPayload(command, payload),
+    })
     switch (command) {
       case DaraIpcCommand.CreateCardContent: {
         const envelope = requireRecord(payload, command)
@@ -158,6 +172,75 @@ export class FakeDaraBackend {
           shortcutErrors: [],
           zoomPercent: 100,
         }
+      case DaraIpcCommand.LoadOffsiteBackupStatus:
+        requireEmptyPayload(payload, command)
+        return structuredClone(this.#offsiteBackupStatus)
+      case DaraIpcCommand.TestAndEnableOffsiteBackup:
+      case DaraIpcCommand.ChangeOffsiteBackupTarget: {
+        const envelope = requireRecord(payload, command)
+        const input = requireRecord(envelope.input, command)
+        const target = requireRecord(input.target, command)
+        requireRecord(input.credentials, command)
+        this.#offsiteBackupStatus = enabledBackupStatus({
+          accountId: requireString(
+            target.accountId,
+            'input.target.accountId',
+            command,
+          ),
+          jurisdiction: requireJurisdiction(
+            target.jurisdiction,
+            command,
+          ),
+          bucket: requireString(target.bucket, 'input.target.bucket', command),
+          prefix: requireString(target.prefix, 'input.target.prefix', command),
+        })
+        return backupOperation(
+          command === DaraIpcCommand.ChangeOffsiteBackupTarget
+            ? OffsiteBackupOperationKind.ChangeTarget
+            : OffsiteBackupOperationKind.TestAndEnable,
+        )
+      }
+      case DaraIpcCommand.ReplaceOffsiteBackupCredentials: {
+        const envelope = requireRecord(payload, command)
+        const input = requireRecord(envelope.input, command)
+        requireRecord(input.credentials, command)
+        this.#offsiteBackupStatus.credentials =
+          CredentialAvailability.Present
+        return backupOperation(OffsiteBackupOperationKind.ReplaceCredentials)
+      }
+      case DaraIpcCommand.CreateOffsiteBackupNow:
+        requireEmptyPayload(payload, command)
+        this.#offsiteBackupStatus.checkpoint = completeCheckpointStatus()
+        return backupOperation(OffsiteBackupOperationKind.BackupNow)
+      case DaraIpcCommand.RunOffsiteRestoreDrill:
+        requireEmptyPayload(payload, command)
+        this.#offsiteBackupStatus.lastRestoreDrill = successfulDrillReport()
+        this.#offsiteBackupStatus.lastRestoreDrillAt = 1_788_512_500_000
+        return backupOperation(OffsiteBackupOperationKind.RestoreDrill)
+      case DaraIpcCommand.DisableOffsiteBackup:
+        requireEmptyPayload(payload, command)
+        this.#offsiteBackupStatus.enabled = false
+        this.#offsiteBackupStatus.relational.phase =
+          RelationalBackupPhase.Off
+        this.#offsiteBackupStatus.media.phase = MediaBackupPhase.Off
+        this.#offsiteBackupStatus.checkpoint.phase =
+          CheckpointBackupPhase.Off
+        return backupOperation(OffsiteBackupOperationKind.Disable)
+      case DaraIpcCommand.RemoveOffsiteBackupCredentials:
+        requireEmptyPayload(payload, command)
+        this.#offsiteBackupStatus.enabled = false
+        this.#offsiteBackupStatus.credentials =
+          CredentialAvailability.Missing
+        return backupOperation(OffsiteBackupOperationKind.RemoveCredentials)
+      case DaraIpcCommand.TakeOverRestoredOffsiteBackup: {
+        const envelope = requireRecord(payload, command)
+        const input = requireRecord(envelope.input, command)
+        if (input.confirmed !== true) {
+          throw malformed(command, 'input.confirmed must be true')
+        }
+        this.#offsiteBackupStatus.takeoverAvailable = false
+        return backupOperation(OffsiteBackupOperationKind.TakeOver)
+      }
       case DaraIpcCommand.LoadDiagnostics:
         requireEmptyPayload(payload, command)
         return diagnosticsSnapshot(this.#items.length)
@@ -493,6 +576,160 @@ function diagnosticsSnapshot(totalDocuments: number) {
       },
     },
   }
+}
+
+function disabledBackupStatus(): OffsiteBackupStatus {
+  return {
+    configured: false,
+    enabled: false,
+    revision: null,
+    target: null,
+    credentials: CredentialAvailability.Missing,
+    relational: {
+      phase: RelationalBackupPhase.Off,
+      latestLocalTxid: null,
+      latestRemoteTxid: null,
+      lastRemoteConfirmedAt: null,
+      restartCount: 0,
+      lastErrorCode: null,
+    },
+    media: {
+      phase: MediaBackupPhase.Off,
+      pendingCount: 0,
+      pendingBytes: 0,
+      retryWaitCount: 0,
+      verifiedCount: 0,
+      verifiedBytes: 0,
+      blockedCount: 0,
+      lastErrorCode: null,
+    },
+    checkpoint: {
+      phase: CheckpointBackupPhase.Off,
+      inProgressCheckpointId: null,
+      lastCompleteCheckpointId: null,
+      lastCompleteAt: null,
+      lastErrorCode: null,
+    },
+    lastRestoreDrill: null,
+    lastRestoreDrillAt: null,
+    lastRestoreDrillError: null,
+    takeoverAvailable: false,
+    credentialCleanupPending: false,
+    activeOperation: null,
+  }
+}
+
+function enabledBackupStatus(
+  target: NonNullable<OffsiteBackupStatus['target']>,
+): OffsiteBackupStatus {
+  return {
+    ...disabledBackupStatus(),
+    configured: true,
+    enabled: true,
+    revision: 1,
+    target,
+    credentials: CredentialAvailability.Present,
+    relational: {
+      phase: RelationalBackupPhase.Running,
+      latestLocalTxid: '000000000000000a',
+      latestRemoteTxid: '000000000000000a',
+      lastRemoteConfirmedAt: 1_788_512_400_000,
+      restartCount: 0,
+      lastErrorCode: null,
+    },
+    media: {
+      phase: MediaBackupPhase.Idle,
+      pendingCount: 0,
+      pendingBytes: 0,
+      retryWaitCount: 0,
+      verifiedCount: 3,
+      verifiedBytes: 2048,
+      blockedCount: 0,
+      lastErrorCode: null,
+    },
+    checkpoint: {
+      phase: CheckpointBackupPhase.WaitingForMedia,
+      inProgressCheckpointId: null,
+      lastCompleteCheckpointId: null,
+      lastCompleteAt: null,
+      lastErrorCode: null,
+    },
+  }
+}
+
+function completeCheckpointStatus(): OffsiteBackupStatus['checkpoint'] {
+  return {
+    phase: CheckpointBackupPhase.Idle,
+    inProgressCheckpointId: null,
+    lastCompleteCheckpointId:
+      '019f547b-6200-7000-8000-000000000001',
+    lastCompleteAt: 1_788_512_400_000,
+    lastErrorCode: null,
+  }
+}
+
+function successfulDrillReport(): NonNullable<
+  OffsiteBackupStatus['lastRestoreDrill']
+> {
+  return {
+    formatVersion: 2,
+    backupSetId: '019f547b-6200-7000-8000-000000000010',
+    replicaEpochId: '019f547b-6200-7000-8000-000000000011',
+    outcome: RestoreDrillOutcome.Success,
+    checkpointId: '019f547b-6200-7000-8000-000000000001',
+    checkpointCreatedAt: '2026-09-03T12:00:00Z',
+    restoredTxid: '000000000000000a',
+    mainMigrationHead: 9,
+    mediaMigrationHead: 4,
+    referencedMediaCount: 3,
+    referencedMediaBytes: 2048,
+    validationStages: [],
+    durationMs: 4321,
+    daraVersion: '0.1.0',
+    errorCode: null,
+  }
+}
+
+function backupOperation(operation: OffsiteBackupOperationKind) {
+  return {
+    operationId: '019f547b-6200-7000-8000-000000000099',
+    operation,
+    reused: false,
+  }
+}
+
+function requireJurisdiction(
+  value: unknown,
+  command: DaraIpcCommandType,
+): R2Jurisdiction {
+  if (
+    value !== R2Jurisdiction.Default &&
+    value !== R2Jurisdiction.Eu &&
+    value !== R2Jurisdiction.Fedramp
+  ) {
+    throw malformed(command, 'input.target.jurisdiction is invalid')
+  }
+  return value
+}
+
+function recordedPayload(
+  command: DaraIpcCommandType,
+  payload: unknown,
+): unknown {
+  if (
+    command !== DaraIpcCommand.TestAndEnableOffsiteBackup &&
+    command !== DaraIpcCommand.ChangeOffsiteBackupTarget &&
+    command !== DaraIpcCommand.ReplaceOffsiteBackupCredentials
+  ) {
+    return structuredClone(payload)
+  }
+  const clone = structuredClone(payload)
+  const envelope = requireRecord(clone, command)
+  const input = requireRecord(envelope.input, command)
+  if ('credentials' in input) {
+    input.credentials = '[REDACTED]'
+  }
+  return clone
 }
 
 function requireCardContentDraft(

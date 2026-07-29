@@ -1,9 +1,20 @@
-import { fireEvent, render, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import type {
   DiagnosticsGateway,
   DiagnosticsSnapshot,
 } from '../../../src/diagnostics/index.ts'
+import {
+  CheckpointBackupPhase,
+  CredentialAvailability,
+  MediaBackupPhase,
+  OffsiteBackupOperationKind,
+  R2Jurisdiction,
+  RelationalBackupPhase,
+  type OffsiteBackupGateway,
+  type OffsiteBackupOperation,
+  type OffsiteBackupStatus,
+} from '../../../src/backup/index.ts'
 import { SemanticSearchPhase } from '../../../src/review/index.ts'
 import { DEFAULT_SCHEDULER_CONFIG } from '../../../src/scheduling/config.ts'
 import type {
@@ -69,6 +80,7 @@ test('confirmed retention invokes the atomic replay workflow and refreshes the s
   const onSchedulingChanged = vi.fn()
   const { findByRole, findByText, getByRole } = render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       navigationToken={1}
       onBusyChange={onBusyChange}
       onSchedulingChanged={onSchedulingChanged}
@@ -92,7 +104,9 @@ test('confirmed retention invokes the atomic replay workflow and refreshes the s
   expect(schedulerGateway.installSchedulerReplay).toHaveBeenCalledTimes(1)
   expect(onSchedulingChanged).toHaveBeenCalledTimes(1)
   expect(onBusyChange).toHaveBeenCalledWith(true)
-  expect(onBusyChange).toHaveBeenLastCalledWith(false)
+  await waitFor(() => {
+    expect(onBusyChange).toHaveBeenLastCalledWith(false)
+  })
   expect((getByRole('slider', { name: 'Desired retention' }) as HTMLInputElement).value).toBe('85')
 })
 
@@ -130,11 +144,57 @@ test('launch-at-login applies through the system-backed settings command', async
   })
 })
 
+test('disables sibling settings for the full backup operation', async () => {
+  const fixture = settingsFixture()
+  const schedulerGateway = schedulerFixture(fixture)
+  const backupGateway = backupGatewayFixture(enabledBackupStatus())
+  const onBusyChange = vi.fn()
+  let resolveBackup!: (operation: OffsiteBackupOperation) => void
+  backupGateway.backupNow.mockImplementationOnce(
+    () =>
+      new Promise<OffsiteBackupOperation>((resolve) => {
+        resolveBackup = resolve
+      }),
+  )
+  const { findByRole, getByRole } = render(
+    <Settings
+      backupGateway={backupGateway}
+      diagnosticsGateway={diagnosticsFixture()}
+      navigationToken={1}
+      onBusyChange={onBusyChange}
+      onSchedulingChanged={vi.fn()}
+      reviewSaveInFlight={false}
+      schedulerGateway={schedulerGateway}
+      settingsGateway={fixture.gateway}
+    />,
+  )
+
+  fireEvent.click(await findByRole('button', { name: 'Back up now' }))
+
+  await waitFor(() => {
+    expect(onBusyChange).toHaveBeenLastCalledWith(true)
+  })
+  const schedulingCheck = getByRole('button', { name: 'Check' })
+  expect((schedulingCheck as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.click(schedulingCheck)
+  expect(schedulerGateway.loadSchedulerReplaySnapshot).not.toHaveBeenCalled()
+
+  await act(async () => {
+    resolveBackup(backupOperation())
+  })
+
+  await waitFor(() => {
+    expect(onBusyChange).toHaveBeenLastCalledWith(false)
+    expect((schedulingCheck as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
 test('shows the cheap diagnostics snapshot without blocking settings', async () => {
   const fixture = settingsFixture()
   const diagnosticsGateway = diagnosticsFixture()
   const { findByText, getByText } = render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       diagnosticsGateway={diagnosticsGateway}
       navigationToken={1}
       onBusyChange={vi.fn()}
@@ -161,6 +221,7 @@ test('keeps settings usable when diagnostics fail and retries independently', as
   )
   const { findByRole, findByText, getByRole } = render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       diagnosticsGateway={diagnosticsGateway}
       navigationToken={1}
       onBusyChange={vi.fn()}
@@ -188,6 +249,7 @@ function renderSettings(
 ) {
   return render(
     <Settings
+      backupGateway={backupGatewayFixture()}
       navigationToken={1}
       onBusyChange={vi.fn()}
       onSchedulingChanged={vi.fn()}
@@ -216,6 +278,10 @@ type MockSchedulerGateway = SchedulerMaintenanceGateway & {
 
 type MockDiagnosticsGateway = DiagnosticsGateway & {
   loadDiagnostics: ReturnType<typeof vi.fn>
+}
+
+type MockBackupGateway = OffsiteBackupGateway & {
+  [Key in keyof OffsiteBackupGateway]: ReturnType<typeof vi.fn>
 }
 
 function settingsFixture(): SettingsFixture {
@@ -342,6 +408,113 @@ function diagnosticsFixture(): MockDiagnosticsGateway {
   }
   return {
     loadDiagnostics: vi.fn(async () => structuredClone(snapshot)),
+  }
+}
+
+function backupGatewayFixture(
+  status: OffsiteBackupStatus = disabledBackupStatus(),
+): MockBackupGateway {
+  return {
+    backupNow: vi.fn(async () => backupOperation()),
+    changeTarget: vi.fn(async () => backupOperation()),
+    disable: vi.fn(async () => backupOperation()),
+    listenToProgress: vi.fn(async () => () => undefined),
+    loadStatus: vi.fn(async () => structuredClone(status)),
+    removeCredentials: vi.fn(async () => backupOperation()),
+    replaceCredentials: vi.fn(async () => backupOperation()),
+    runRestoreDrill: vi.fn(async () => backupOperation()),
+    takeOverRestoredBackup: vi.fn(async () => backupOperation()),
+    testAndEnable: vi.fn(async () => backupOperation()),
+  } as unknown as MockBackupGateway
+}
+
+function backupOperation(): OffsiteBackupOperation {
+  return {
+    operationId: '019f547b-6200-7000-8000-000000000099',
+    operation: OffsiteBackupOperationKind.BackupNow,
+    reused: false,
+  }
+}
+
+function disabledBackupStatus(): OffsiteBackupStatus {
+  return {
+    configured: false,
+    enabled: false,
+    revision: null,
+    target: null,
+    credentials: CredentialAvailability.Missing,
+    relational: {
+      phase: RelationalBackupPhase.Off,
+      latestLocalTxid: null,
+      latestRemoteTxid: null,
+      lastRemoteConfirmedAt: null,
+      restartCount: 0,
+      lastErrorCode: null,
+    },
+    media: {
+      phase: MediaBackupPhase.Off,
+      pendingCount: 0,
+      pendingBytes: 0,
+      retryWaitCount: 0,
+      verifiedCount: 0,
+      verifiedBytes: 0,
+      blockedCount: 0,
+      lastErrorCode: null,
+    },
+    checkpoint: {
+      phase: CheckpointBackupPhase.Off,
+      inProgressCheckpointId: null,
+      lastCompleteCheckpointId: null,
+      lastCompleteAt: null,
+      lastErrorCode: null,
+    },
+    lastRestoreDrill: null,
+    lastRestoreDrillAt: null,
+    lastRestoreDrillError: null,
+    takeoverAvailable: false,
+    credentialCleanupPending: false,
+    activeOperation: null,
+  }
+}
+
+function enabledBackupStatus(): OffsiteBackupStatus {
+  return {
+    ...disabledBackupStatus(),
+    configured: true,
+    enabled: true,
+    revision: 3,
+    target: {
+      accountId: '0123456789abcdef0123456789abcdef',
+      jurisdiction: R2Jurisdiction.Default,
+      bucket: 'dara-local',
+      prefix: 'dara/primary',
+    },
+    credentials: CredentialAvailability.Present,
+    relational: {
+      phase: RelationalBackupPhase.Running,
+      latestLocalTxid: '000000000000000a',
+      latestRemoteTxid: '000000000000000a',
+      lastRemoteConfirmedAt: 1_788_512_400_000,
+      restartCount: 0,
+      lastErrorCode: null,
+    },
+    media: {
+      phase: MediaBackupPhase.Idle,
+      pendingCount: 0,
+      pendingBytes: 0,
+      retryWaitCount: 0,
+      verifiedCount: 12,
+      verifiedBytes: 2_048,
+      blockedCount: 0,
+      lastErrorCode: null,
+    },
+    checkpoint: {
+      phase: CheckpointBackupPhase.Idle,
+      inProgressCheckpointId: null,
+      lastCompleteCheckpointId: null,
+      lastCompleteAt: null,
+      lastErrorCode: null,
+    },
   }
 }
 

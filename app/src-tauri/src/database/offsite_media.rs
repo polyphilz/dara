@@ -46,6 +46,7 @@ pub(crate) struct OffsiteMediaSummary {
     pub(crate) pending_bytes: u64,
     pub(crate) retry_wait_count: u64,
     pub(crate) verified_count: u64,
+    pub(crate) verified_bytes: u64,
     pub(crate) blocked_count: u64,
     pub(crate) next_attempt_at: Option<i64>,
     pub(crate) last_error_code: Option<BackupErrorCode>,
@@ -429,6 +430,7 @@ fn summary_for_scope(
             coalesce(sum(CASE WHEN state IN (?2, ?3) THEN byte_length ELSE 0 END), 0),
             coalesce(sum(CASE WHEN state = ?3 THEN 1 ELSE 0 END), 0),
             coalesce(sum(CASE WHEN state = ?4 THEN 1 ELSE 0 END), 0),
+            coalesce(sum(CASE WHEN state = ?4 THEN byte_length ELSE 0 END), 0),
             coalesce(sum(CASE WHEN state = ?5 THEN 1 ELSE 0 END), 0),
             min(CASE WHEN state = ?3 THEN next_attempt_at END)
          FROM offsite_media_object AS object
@@ -456,7 +458,8 @@ fn summary_for_scope(
                 row.get::<_, i64>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
-                row.get::<_, Option<i64>>(5)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, Option<i64>>(6)?,
             ))
         },
     )?;
@@ -487,8 +490,9 @@ fn summary_for_scope(
         pending_bytes: non_negative_u64(counts.1, "pending media bytes")?,
         retry_wait_count: non_negative_u64(counts.2, "retrying media count")?,
         verified_count: non_negative_u64(counts.3, "verified media count")?,
-        blocked_count: non_negative_u64(counts.4, "blocked media count")?,
-        next_attempt_at: counts.5,
+        verified_bytes: non_negative_u64(counts.4, "verified media bytes")?,
+        blocked_count: non_negative_u64(counts.5, "blocked media count")?,
+        next_attempt_at: counts.6,
         last_error_code: last_error,
     })
 }

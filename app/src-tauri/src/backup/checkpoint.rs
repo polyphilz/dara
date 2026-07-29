@@ -18,7 +18,7 @@ use super::{
     domain::{
         BackupErrorCode, CheckpointBackupPhase, CheckpointId, CheckpointManifestInput,
         CheckpointManifestV1, ContentSha256, MediaBackupPhase, PublishedCheckpointEvidence,
-        R2Keyspace, R2ObjectKey, UtcTimestamp, OBJECT_FORMAT_VERSION,
+        R2Keyspace, R2ObjectKey, ReplicaEpochId, UtcTimestamp, OBJECT_FORMAT_VERSION,
     },
     installation::InstallationIdentityStore,
     litestream::{
@@ -62,6 +62,41 @@ pub(crate) struct CheckpointBackupStatus {
     pub(crate) last_complete_checkpoint_id: Option<CheckpointId>,
     pub(crate) last_complete_at: Option<i64>,
     pub(crate) last_error_code: Option<BackupErrorCode>,
+    last_complete_scope: Option<CheckpointLineageScope>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CheckpointLineageScope {
+    backup_set_id: super::domain::BackupSetId,
+    replica_epoch_id: ReplicaEpochId,
+}
+
+impl CheckpointLineageScope {
+    fn from_config(config: &OffsiteBackupConfig) -> Self {
+        Self {
+            backup_set_id: config.backup_set_id.clone(),
+            replica_epoch_id: config.replica_epoch_id.clone(),
+        }
+    }
+
+    fn matches(&self, config: &OffsiteBackupConfig) -> bool {
+        self.backup_set_id == config.backup_set_id
+            && self.replica_epoch_id == config.replica_epoch_id
+    }
+}
+
+impl CheckpointBackupStatus {
+    pub(crate) fn scoped_to(mut self, config: Option<&OffsiteBackupConfig>) -> Self {
+        let matches = self
+            .last_complete_scope
+            .as_ref()
+            .zip(config)
+            .is_some_and(|(scope, config)| scope.matches(config));
+        if !matches {
+            clear_last_complete(&mut self);
+        }
+        self
+    }
 }
 
 impl Default for CheckpointBackupStatus {
@@ -72,6 +107,7 @@ impl Default for CheckpointBackupStatus {
             last_complete_checkpoint_id: None,
             last_complete_at: None,
             last_error_code: None,
+            last_complete_scope: None,
         }
     }
 }
@@ -455,7 +491,7 @@ fn checkpoint_worker(
                 continue;
             }
         };
-        refresh_last_complete(&status, state.last_published.as_ref());
+        refresh_last_complete(&status, state.last_published.as_ref(), &config);
 
         let current_checkpoint = state.last_published.as_ref().is_some_and(|published| {
             published_covers_config(published, &config, state.content_revision)
@@ -632,8 +668,12 @@ fn create_checkpoint(
                 let mut current = lock_status(status);
                 current.phase = CheckpointBackupPhase::Idle;
                 current.in_progress_checkpoint_id = None;
-                current.last_complete_checkpoint_id = Some(checkpoint_id.clone());
-                current.last_complete_at = Some(created_at_millis);
+                set_last_complete(
+                    &mut current,
+                    checkpoint_id.clone(),
+                    created_at_millis,
+                    &config,
+                );
                 current.last_error_code = None;
                 return Ok(checkpoint_id);
             }
@@ -882,12 +922,46 @@ fn rotating_media_evidence_sample(
 fn refresh_last_complete(
     status: &Mutex<CheckpointBackupStatus>,
     published: Option<&PublishedOffsiteCheckpoint>,
+    config: &OffsiteBackupConfig,
 ) {
     let mut current = lock_status(status);
-    if let Some(published) = published {
-        current.last_complete_checkpoint_id = Some(published.checkpoint_id.clone());
-        current.last_complete_at = Some(published.created_at);
+    if let Some(published) =
+        published.filter(|published| published_belongs_to_lineage(published, config))
+    {
+        set_last_complete(
+            &mut current,
+            published.checkpoint_id.clone(),
+            published.created_at,
+            config,
+        );
+    } else {
+        clear_last_complete(&mut current);
     }
+}
+
+fn set_last_complete(
+    status: &mut CheckpointBackupStatus,
+    checkpoint_id: CheckpointId,
+    created_at: i64,
+    config: &OffsiteBackupConfig,
+) {
+    status.last_complete_checkpoint_id = Some(checkpoint_id);
+    status.last_complete_at = Some(created_at);
+    status.last_complete_scope = Some(CheckpointLineageScope::from_config(config));
+}
+
+fn clear_last_complete(status: &mut CheckpointBackupStatus) {
+    status.last_complete_checkpoint_id = None;
+    status.last_complete_at = None;
+    status.last_complete_scope = None;
+}
+
+fn published_belongs_to_lineage(
+    published: &PublishedOffsiteCheckpoint,
+    config: &OffsiteBackupConfig,
+) -> bool {
+    published.backup_set_id == config.backup_set_id
+        && published.replica_epoch_id == config.replica_epoch_id
 }
 
 fn published_covers_config(
@@ -895,8 +969,7 @@ fn published_covers_config(
     config: &OffsiteBackupConfig,
     content_revision: u64,
 ) -> bool {
-    published.backup_set_id == config.backup_set_id
-        && published.replica_epoch_id == config.replica_epoch_id
+    published_belongs_to_lineage(published, config)
         && published.config_revision == config.revision
         && published.content_revision == content_revision
 }
@@ -1717,6 +1790,39 @@ mod tests {
             )
             .expect("checkpoint phase");
         CheckpointPhase::from_db(&value).expect("valid phase")
+    }
+
+    #[test]
+    fn checkpoint_status_tracks_lineage_not_enable_state_revision() {
+        let (_directory, _database, config) = enabled_database();
+        let mut status = CheckpointBackupStatus::default();
+        set_last_complete(&mut status, CheckpointId::new(), 100, &config);
+
+        assert!(status
+            .clone()
+            .scoped_to(Some(&config))
+            .last_complete_checkpoint_id
+            .is_some());
+
+        let revision_only_changed = OffsiteBackupConfig {
+            revision: config.revision + 1,
+            ..config.clone()
+        };
+        assert!(status
+            .clone()
+            .scoped_to(Some(&revision_only_changed))
+            .last_complete_checkpoint_id
+            .is_some());
+
+        let changed = OffsiteBackupConfig {
+            revision: config.revision + 1,
+            backup_set_id: super::super::domain::BackupSetId::new(),
+            replica_epoch_id: ReplicaEpochId::new(),
+            ..config
+        };
+        let scoped = status.scoped_to(Some(&changed));
+        assert_eq!(scoped.last_complete_checkpoint_id, None);
+        assert_eq!(scoped.last_complete_at, None);
     }
 
     fn test_schedule() -> CoordinatorSchedule {

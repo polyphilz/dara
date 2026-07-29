@@ -522,8 +522,34 @@ fn writer_loop(
             WriterMessage::LoadOffsiteBackupConfig { reply } => {
                 let _ = reply.send(offsite_backup::load(&main));
             }
+            WriterMessage::LoadOffsiteBackupTakeoverAvailability { reply } => {
+                let _ = reply.send(offsite_backup::load_takeover_available(&main));
+            }
+            WriterMessage::LoadPendingOffsiteCredentialCleanup { reply } => {
+                let _ = reply.send(offsite_backup::load_pending_credential_cleanup(&main));
+            }
             WriterMessage::SaveOffsiteBackupConfig { input, reply } => {
                 let _ = reply.send(offsite_backup::save(&mut main, &media, input));
+            }
+            WriterMessage::SetOffsiteBackupTakeoverAvailability {
+                backup_set_id,
+                available,
+                reply,
+            } => {
+                let _ = reply.send(offsite_backup::set_takeover_available(
+                    &mut main,
+                    &backup_set_id,
+                    available,
+                ));
+            }
+            WriterMessage::CompleteOffsiteCredentialCleanup {
+                backup_set_id,
+                reply,
+            } => {
+                let _ = reply.send(offsite_backup::complete_credential_cleanup(
+                    &mut main,
+                    &backup_set_id,
+                ));
             }
             WriterMessage::ReconcileOffsiteMedia { now, reply } => {
                 let _ = reply.send(offsite_media::reconcile(&mut main, &media, now));

@@ -52,8 +52,8 @@ const MAX_RESTORE_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const RESTORE_DRY_RUN_TIMEOUT: Duration = Duration::from_secs(35);
 const RESTORE_EXECUTION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const RESTORE_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
-const DRILL_REPORT_FILE_NAME: &str = "restore-drill-report-v1.json";
-const DRILL_REPORT_FORMAT_VERSION: u32 = 1;
+const DRILL_REPORT_FILE_NAME: &str = "restore-drill-report-v2.json";
+const DRILL_REPORT_FORMAT_VERSION: u32 = 2;
 const MAX_DRILL_REPORT_BYTES: u64 = 64 * 1024;
 const ACCOUNT_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCOUNT_ID";
 const JURISDICTION_ENV: &str = "DARA_LITESTREAM_R2_JURISDICTION";
@@ -131,6 +131,8 @@ pub(crate) enum RestoreValidationStage {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct RestoreDrillReport {
     pub(crate) format_version: u32,
+    pub(crate) backup_set_id: Option<BackupSetId>,
+    pub(crate) replica_epoch_id: Option<ReplicaEpochId>,
     pub(crate) outcome: RestoreDrillOutcome,
     pub(crate) checkpoint_id: Option<CheckpointId>,
     pub(crate) checkpoint_created_at: Option<String>,
@@ -146,6 +148,15 @@ pub(crate) struct RestoreDrillReport {
 }
 
 impl RestoreDrillReport {
+    pub(crate) fn matches_scope(
+        &self,
+        backup_set_id: &BackupSetId,
+        replica_epoch_id: &ReplicaEpochId,
+    ) -> bool {
+        self.backup_set_id.as_ref() == Some(backup_set_id)
+            && self.replica_epoch_id.as_ref() == Some(replica_epoch_id)
+    }
+
     fn validate(&self) -> Result<(), BackupErrorCode> {
         const ALL_STAGES: &[RestoreValidationStage] = &[
             RestoreValidationStage::CheckpointDiscovered,
@@ -161,6 +172,8 @@ impl RestoreDrillReport {
                 .zip(ALL_STAGES)
                 .all(|(actual, expected)| actual == expected);
         let metadata_complete = self.checkpoint_id.is_some()
+            && self.backup_set_id.is_some()
+            && self.replica_epoch_id.is_some()
             && self.checkpoint_created_at.is_some()
             && self.restored_txid.is_some()
             && self.main_migration_head.is_some()
@@ -225,6 +238,7 @@ impl RemoteCheckpoint {
 struct DiscoveredCheckpoints {
     checkpoints: Vec<RemoteCheckpoint>,
     malformed_objects_ignored: u64,
+    backup_set_id: BackupSetId,
     epoch: ReplicaEpochId,
 }
 
@@ -346,6 +360,29 @@ impl RemoteRecoveryEngine {
         report_directory: &Path,
         selector: &RemoteCheckpointSelector,
     ) -> Result<RestoreDrillReport, BackupErrorCode> {
+        self.run_restore_drill_with_scope(report_directory, selector, None)
+    }
+
+    pub(crate) fn run_scoped_restore_drill(
+        &self,
+        report_directory: &Path,
+        selector: &RemoteCheckpointSelector,
+        backup_set_id: &BackupSetId,
+        replica_epoch_id: &ReplicaEpochId,
+    ) -> Result<RestoreDrillReport, BackupErrorCode> {
+        self.run_restore_drill_with_scope(
+            report_directory,
+            selector,
+            Some((backup_set_id.clone(), replica_epoch_id.clone())),
+        )
+    }
+
+    fn run_restore_drill_with_scope(
+        &self,
+        report_directory: &Path,
+        selector: &RemoteCheckpointSelector,
+        expected_scope: Option<(BackupSetId, ReplicaEpochId)>,
+    ) -> Result<RestoreDrillReport, BackupErrorCode> {
         fs::create_dir_all(report_directory)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         let report_directory = fs::canonicalize(report_directory)
@@ -354,8 +391,21 @@ impl RemoteRecoveryEngine {
         let started = Instant::now();
         let mut stages = Vec::new();
         let mut selected: Option<RemoteCheckpoint> = None;
+        let mut report_scope = expected_scope.clone();
         let attempt = (|| {
             let discovered = self.discover_checkpoints()?;
+            if let Some((expected_backup_set_id, expected_replica_epoch_id)) =
+                expected_scope.as_ref()
+            {
+                if &discovered.backup_set_id != expected_backup_set_id {
+                    return Err(BackupErrorCode::PrefixIdentityMismatch);
+                }
+                if &discovered.epoch != expected_replica_epoch_id {
+                    return Err(BackupErrorCode::OwnerMismatch);
+                }
+            } else {
+                report_scope = Some((discovered.backup_set_id.clone(), discovered.epoch.clone()));
+            }
             let checkpoint = self.select_checkpoint(task.path(), &discovered, selector)?;
             stages.push(RestoreValidationStage::CheckpointDiscovered);
             selected = Some(checkpoint.clone());
@@ -373,7 +423,13 @@ impl RemoteRecoveryEngine {
                     .expect("successful drill selected a checkpoint");
                 successful_drill_report(checkpoint, stages, duration_ms)
             }
-            Err(error) => failed_drill_report(selected.as_ref(), stages, duration_ms, error),
+            Err(error) => failed_drill_report(
+                selected.as_ref(),
+                report_scope.as_ref(),
+                stages,
+                duration_ms,
+                error,
+            ),
         };
         write_drill_report(&report_directory, &report)?;
         Ok(report)
@@ -499,6 +555,7 @@ impl RemoteRecoveryEngine {
                     return Ok(DiscoveredCheckpoints {
                         checkpoints,
                         malformed_objects_ignored,
+                        backup_set_id: identity.backup_set_id().clone(),
                         epoch: owner.replica_epoch_id().clone(),
                     });
                 }
@@ -1250,6 +1307,8 @@ fn successful_drill_report(
 ) -> RestoreDrillReport {
     RestoreDrillReport {
         format_version: DRILL_REPORT_FORMAT_VERSION,
+        backup_set_id: Some(checkpoint.manifest.backup_set_id().clone()),
+        replica_epoch_id: Some(checkpoint.manifest.replica_epoch_id().clone()),
         outcome: RestoreDrillOutcome::Success,
         checkpoint_id: Some(checkpoint.manifest.checkpoint_id().clone()),
         checkpoint_created_at: Some(checkpoint.manifest.created_at().as_str().to_owned()),
@@ -1267,12 +1326,19 @@ fn successful_drill_report(
 
 fn failed_drill_report(
     checkpoint: Option<&RemoteCheckpoint>,
+    discovered_scope: Option<&(BackupSetId, ReplicaEpochId)>,
     stages: Vec<RestoreValidationStage>,
     duration_ms: u64,
     error: BackupErrorCode,
 ) -> RestoreDrillReport {
     RestoreDrillReport {
         format_version: DRILL_REPORT_FORMAT_VERSION,
+        backup_set_id: checkpoint
+            .map(|value| value.manifest.backup_set_id().clone())
+            .or_else(|| discovered_scope.map(|(backup_set_id, _)| backup_set_id.clone())),
+        replica_epoch_id: checkpoint
+            .map(|value| value.manifest.replica_epoch_id().clone())
+            .or_else(|| discovered_scope.map(|(_, replica_epoch_id)| replica_epoch_id.clone())),
         outcome: RestoreDrillOutcome::Failed,
         checkpoint_id: checkpoint.map(|value| value.manifest.checkpoint_id().clone()),
         checkpoint_created_at: checkpoint
@@ -1348,6 +1414,30 @@ pub(crate) fn load_restore_drill_report(
         serde_json::from_slice(&bytes).map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
     report.validate()?;
     Ok(Some(report))
+}
+
+pub(crate) fn restore_drill_report_updated_at(
+    directory: &Path,
+) -> Result<Option<i64>, BackupErrorCode> {
+    let path = directory.join(DRILL_REPORT_FILE_NAME);
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+    };
+    if !metadata.file_type().is_file() || metadata.len() > MAX_DRILL_REPORT_BYTES {
+        return Err(BackupErrorCode::RestoreValidationFailed);
+    }
+    let modified = metadata
+        .modified()
+        .and_then(|time| {
+            time.duration_since(std::time::UNIX_EPOCH)
+                .map_err(std::io::Error::other)
+        })
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+    i64::try_from(modified.as_millis())
+        .map(Some)
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)
 }
 
 struct RestoreTask {
@@ -2018,6 +2108,11 @@ mod tests {
             .expect("drill");
 
         assert_eq!(report.outcome, RestoreDrillOutcome::Success);
+        assert!(report.matches_scope(
+            fixture.manifest.backup_set_id(),
+            fixture.manifest.replica_epoch_id(),
+        ));
+        assert!(!report.matches_scope(&BackupSetId::new(), fixture.manifest.replica_epoch_id(),));
         assert!(reports.path().join(DRILL_REPORT_FILE_NAME).is_file());
         assert_eq!(
             load_restore_drill_report(reports.path()).expect("loaded report"),
@@ -2059,11 +2154,70 @@ mod tests {
     }
 
     #[test]
+    fn failed_scoped_drill_before_discovery_keeps_expected_scope() {
+        let fixture = rich_remote_fixture();
+        let identity_key = fixture.keyspace.identity();
+        fixture
+            .store
+            .delete(&identity_key)
+            .expect("remove remote identity");
+        put_json(
+            fixture.store.as_ref(),
+            identity_key,
+            b"{\"not\":\"an identity manifest\"}".to_vec(),
+        );
+        let reports = tempfile::tempdir().expect("reports");
+
+        let report = fixture
+            .engine
+            .run_scoped_restore_drill(
+                reports.path(),
+                &RemoteCheckpointSelector::Latest,
+                fixture.manifest.backup_set_id(),
+                fixture.manifest.replica_epoch_id(),
+            )
+            .expect("failed drill report");
+
+        assert_eq!(report.outcome, RestoreDrillOutcome::Failed);
+        assert_eq!(report.error_code, Some(BackupErrorCode::MalformedManifest));
+        assert!(report.matches_scope(
+            fixture.manifest.backup_set_id(),
+            fixture.manifest.replica_epoch_id(),
+        ));
+        assert_eq!(
+            load_restore_drill_report(reports.path()).expect("load failed report"),
+            Some(report)
+        );
+    }
+
+    #[test]
+    fn scoped_drill_rejects_a_different_remote_epoch() {
+        let fixture = rich_remote_fixture();
+        let expected_epoch = ReplicaEpochId::new();
+        let reports = tempfile::tempdir().expect("reports");
+
+        let report = fixture
+            .engine
+            .run_scoped_restore_drill(
+                reports.path(),
+                &RemoteCheckpointSelector::Latest,
+                fixture.manifest.backup_set_id(),
+                &expected_epoch,
+            )
+            .expect("failed drill report");
+
+        assert_eq!(report.outcome, RestoreDrillOutcome::Failed);
+        assert_eq!(report.error_code, Some(BackupErrorCode::OwnerMismatch));
+        assert!(report.matches_scope(fixture.manifest.backup_set_id(), &expected_epoch));
+        assert!(report.validation_stages.is_empty());
+    }
+
+    #[test]
     fn latest_selection_falls_back_when_the_newest_exact_txid_expired() {
         let fixture = rich_remote_fixture();
         let newer_id = CheckpointId::new();
         let newer_created_at =
-            UtcTimestamp::parse("2026-07-28T23:59:59Z").expect("newer timestamp");
+            UtcTimestamp::parse("2099-07-28T23:59:59Z").expect("newer timestamp");
         let newer = CheckpointManifestV1::new(CheckpointManifestInput {
             backup_set_id: fixture.manifest.backup_set_id().clone(),
             replica_epoch_id: fixture.epoch.clone(),

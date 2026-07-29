@@ -42,6 +42,11 @@ import {
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
 import { ConfirmationDialog } from './ConfirmationDialog.tsx'
 import { DiagnosticsPanel } from './DiagnosticsPanel.tsx'
+import { OffsiteBackupSection } from './OffsiteBackupSection.tsx'
+import {
+  tauriOffsiteBackupGateway,
+  type OffsiteBackupGateway,
+} from '../../backup/index.ts'
 
 const MIN_RETENTION_PERCENT = 70
 const MAX_RETENTION_PERCENT = 99
@@ -80,6 +85,7 @@ const appearanceOptions = [
 ] as const
 
 interface SettingsProps {
+  backupGateway?: OffsiteBackupGateway
   diagnosticsGateway?: DiagnosticsGateway
   navigationToken: number
   onBusyChange: (busy: boolean) => void
@@ -96,6 +102,7 @@ interface RecalculationProgress {
 }
 
 export function Settings({
+  backupGateway = tauriOffsiteBackupGateway,
   diagnosticsGateway = tauriDiagnosticsGateway,
   navigationToken,
   onBusyChange,
@@ -115,6 +122,7 @@ export function Settings({
   const [retentionDirty, setRetentionDirty] = useState(false)
   const [confirmation, setConfirmation] = useState<ConfirmationKind | null>(null)
   const [schedulingTask, setSchedulingTask] = useState<SchedulingTask | null>(null)
+  const [backupBusy, setBackupBusy] = useState(false)
   const [recalculationProgress, setRecalculationProgress] =
     useState<RecalculationProgress | null>(null)
   const [schedulingNotice, setSchedulingNotice] = useState<string | null>(null)
@@ -181,6 +189,13 @@ export function Settings({
     [onBusyChange],
   )
 
+  const schedulingBusy = schedulingTask !== null
+  const settingsBusy = backupBusy || schedulingBusy
+
+  useEffect(() => {
+    onBusyChange(settingsBusy)
+  }, [onBusyChange, settingsBusy])
+
   const updateSetting = async (
     kind: SettingsMutation,
     operation: (current: SettingsSnapshot) => Promise<SettingsSnapshot>,
@@ -226,7 +241,6 @@ export function Settings({
     setSchedulingTask(SchedulingTask.Check)
     setSchedulingNotice(null)
     setSchedulingError(null)
-    onBusyChange(true)
     try {
       const report = await checkSchedulingData(schedulerGateway)
       setSchedulingNotice(
@@ -238,7 +252,6 @@ export function Settings({
       setSchedulingError(errorMessage(error))
     } finally {
       setSchedulingTask(null)
-      onBusyChange(false)
     }
   }
 
@@ -247,7 +260,6 @@ export function Settings({
     setSchedulingTask(SchedulingTask.Repair)
     setSchedulingNotice(null)
     setSchedulingError(null)
-    onBusyChange(true)
     try {
       const report = await repairSchedulingData(schedulerGateway)
       onSchedulingChanged()
@@ -260,7 +272,6 @@ export function Settings({
       setSchedulingError(errorMessage(error))
     } finally {
       setSchedulingTask(null)
-      onBusyChange(false)
     }
   }
 
@@ -276,7 +287,6 @@ export function Settings({
       finalizing: false,
       totalCards: 0,
     })
-    onBusyChange(true)
     const abortController = new AbortController()
     abortControllerRef.current = abortController
     try {
@@ -317,7 +327,6 @@ export function Settings({
       abortControllerRef.current = null
       setRecalculationProgress(null)
       setSchedulingTask(null)
-      onBusyChange(false)
     }
   }
 
@@ -339,7 +348,7 @@ export function Settings({
     )
   }
 
-  const controlsDisabled = mutation !== null || schedulingTask !== null
+  const controlsDisabled = mutation !== null || schedulingBusy || backupBusy
   const activeRetentionPercent = Math.round(snapshot.desiredRetention * 100)
   const retentionChanged = retentionPercent !== activeRetentionPercent
 
@@ -549,6 +558,12 @@ export function Settings({
           label="Zoom"
         />
       </SettingSection>
+
+      <OffsiteBackupSection
+        disabled={controlsDisabled}
+        gateway={backupGateway}
+        onBusyChange={setBackupBusy}
+      />
 
       <SettingSection
         className="diagnostics-section"

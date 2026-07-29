@@ -104,6 +104,15 @@ pub fn run() {
             None,
         ))
         .invoke_handler(tauri::generate_handler![
+            backup::commands::change_offsite_backup_target,
+            backup::commands::create_offsite_backup_now,
+            backup::commands::disable_offsite_backup,
+            backup::commands::load_offsite_backup_status,
+            backup::commands::remove_offsite_backup_credentials,
+            backup::commands::replace_offsite_backup_credentials,
+            backup::commands::run_offsite_restore_drill,
+            backup::commands::take_over_restored_offsite_backup,
+            backup::commands::test_and_enable_offsite_backup,
             database::commands::create_card_content,
             database::commands::delete_card_content,
             database::commands::load_card_content,
@@ -182,6 +191,7 @@ pub fn run() {
             app.manage(offsite_media);
             app.manage(litestream);
             app.manage(offsite_checkpoint);
+            app.manage(backup::commands::OffsiteBackupOperationRegistry::default());
 
             windows::setup(app, startup_settings)?;
             recovery::confirm_restored_launch(&database_paths)?;

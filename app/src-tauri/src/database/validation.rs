@@ -157,6 +157,7 @@ fn validate_main_schema(connection: &Connection) -> Result<()> {
         "offsite_backup_checkpoint",
         "offsite_backup_config",
         "offsite_backup_content_clock",
+        "offsite_credential_cleanup",
         "offsite_media_object",
         "review_card",
         "review_event",

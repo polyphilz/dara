@@ -66,6 +66,60 @@ pub(super) fn load(connection: &Connection) -> Result<Option<OffsiteBackupConfig
     stored.map(parse_stored).transpose()
 }
 
+pub(super) fn load_takeover_available(connection: &Connection) -> Result<bool> {
+    Ok(connection
+        .query_row(
+            "SELECT takeover_available
+             FROM offsite_backup_config
+             WHERE singleton_id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or(false))
+}
+
+pub(super) fn set_takeover_available(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+    available: bool,
+) -> Result<()> {
+    let changed = connection.execute(
+        "UPDATE offsite_backup_config
+         SET takeover_available = ?1
+         WHERE singleton_id = 1 AND backup_set_id = ?2",
+        params![available, backup_set_id.as_str()],
+    )?;
+    if changed != 1 {
+        return Err(DatabaseError::StaleOffsiteBackupConfig);
+    }
+    Ok(())
+}
+
+pub(super) fn load_pending_credential_cleanup(connection: &Connection) -> Result<Vec<BackupSetId>> {
+    let mut statement = connection.prepare(
+        "SELECT backup_set_id
+         FROM offsite_credential_cleanup
+         ORDER BY created_at, backup_set_id",
+    )?;
+    let cleanup = statement
+        .query_map([], |row| row.get::<_, String>(0))?
+        .map(|value| BackupSetId::parse(value?).map_err(invalid_stored))
+        .collect();
+    cleanup
+}
+
+pub(super) fn complete_credential_cleanup(
+    connection: &mut Connection,
+    backup_set_id: &BackupSetId,
+) -> Result<()> {
+    connection.execute(
+        "DELETE FROM offsite_credential_cleanup WHERE backup_set_id = ?1",
+        [backup_set_id.as_str()],
+    )?;
+    Ok(())
+}
+
 pub(super) fn save(
     connection: &mut Connection,
     media: &Connection,
@@ -80,6 +134,11 @@ pub(super) fn save(
     let current = load(&transaction)?;
     validate_change(current.as_ref(), &input)?;
     let now = now_millis()?;
+
+    let retired_backup_set_id = current
+        .as_ref()
+        .filter(|config| config.backup_set_id != input.backup_set_id)
+        .map(|config| config.backup_set_id.clone());
 
     match current {
         None => {
@@ -126,7 +185,14 @@ pub(super) fn save(
                      account_id = ?6,
                      bucket = ?7,
                      prefix = ?8,
-                     updated_at = ?9
+                     updated_at = ?9,
+                     takeover_available = CASE
+                         WHEN backup_set_id = ?1
+                              AND replica_epoch_id = ?2
+                              AND ?3 = 0
+                         THEN takeover_available
+                         ELSE 0
+                     END
                  WHERE singleton_id = 1 AND revision = ?10",
                 params![
                     input.backup_set_id.as_str(),
@@ -150,6 +216,20 @@ pub(super) fn save(
     let saved = load(&transaction)?.ok_or_else(|| {
         DatabaseError::InvalidOffsiteBackupConfig("saved configuration is unavailable".into())
     })?;
+    // A backup set can become current again when a target change adopts its
+    // existing remote authority. Never retain a cleanup request for the
+    // Keychain item that now belongs to the active configuration.
+    transaction.execute(
+        "DELETE FROM offsite_credential_cleanup WHERE backup_set_id = ?1",
+        [saved.backup_set_id.as_str()],
+    )?;
+    if let Some(retired_backup_set_id) = retired_backup_set_id {
+        transaction.execute(
+            "INSERT OR IGNORE INTO offsite_credential_cleanup (backup_set_id, created_at)
+             VALUES (?1, ?2)",
+            params![retired_backup_set_id.as_str(), now],
+        )?;
+    }
     offsite_media::seed_for_backup_set(&transaction, media, &saved.backup_set_id, now)?;
     transaction.commit()?;
     Ok(saved)
