@@ -35,7 +35,7 @@ assertEqual(
     productName: localTauriConfig.productName,
     identifier: localTauriConfig.identifier,
   },
-  applicationIdentities[ApplicationIdentityKey.Local],
+  currentIdentity(applicationIdentities[ApplicationIdentityKey.Local]),
   'local application identity',
 )
 assertEqual(
@@ -43,7 +43,7 @@ assertEqual(
     productName: tauriConfig.productName,
     identifier: tauriConfig.identifier,
   },
-  applicationIdentities[ApplicationIdentityKey.Production],
+  currentIdentity(applicationIdentities[ApplicationIdentityKey.Production]),
   'release application identity',
 )
 
@@ -267,6 +267,13 @@ function stripGeneratedFields(manifest) {
     licenseNotices: inputs.licenseNotices.map(
       ({ sha256: _sha256, ...notice }) => notice,
     ),
+  }
+}
+
+function currentIdentity(identity) {
+  return {
+    productName: identity.productName,
+    identifier: identity.identifier,
   }
 }
 

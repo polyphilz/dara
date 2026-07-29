@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Dara",
-  "identifier": "com.rohan.dara",
+  "identifier": "com.silo77.dara",
   "bundle": {
     "active": true,
     "targets": ["app"],

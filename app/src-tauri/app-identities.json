@@ -1,14 +1,17 @@
 {
   "local": {
     "productName": "Dara Local",
-    "identifier": "com.rohan.dara.local"
+    "identifier": "com.silo77.dara.local",
+    "legacyIdentifiers": ["com.rohan.dara.local"]
   },
   "production": {
     "productName": "Dara",
-    "identifier": "com.rohan.dara"
+    "identifier": "com.silo77.dara",
+    "legacyIdentifiers": ["com.rohan.dara"]
   },
   "e2e": {
     "productName": "Dara E2E",
-    "identifier": "com.rohan.dara.e2e"
+    "identifier": "com.silo77.dara.e2e",
+    "legacyIdentifiers": ["com.rohan.dara.e2e"]
   }
 }

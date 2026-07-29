@@ -2,7 +2,7 @@
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Dara Local",
   "version": "0.1.0",
-  "identifier": "com.rohan.dara.local",
+  "identifier": "com.silo77.dara.local",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173",
