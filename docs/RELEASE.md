@@ -4,6 +4,9 @@ This is the authoritative runbook for building and installing a personal Dara
 release. Follow it from a clean checkout of `main`; do not infer Dara's release
 process from another Tauri repository.
 
+For user-facing setup, privacy, restore, and decommissioning guidance, see
+[`OFFSITE_BACKUP.md`](OFFSITE_BACKUP.md).
+
 ## Current release policy
 
 - Dara releases are built locally on the release Mac.
@@ -90,6 +93,7 @@ not create an unnecessary version-only change.
    cargo test --locked --manifest-path src-tauri/Cargo.toml --lib
    cargo clippy --locked --manifest-path src-tauri/Cargo.toml \
      --all-targets --all-features -- -D warnings
+   pnpm release:verify-contracts
    pnpm test:native-bundle-safety
    ```
 
@@ -145,16 +149,18 @@ pnpm release:build:app
 
 The command:
 
-1. fetches the pinned llama.cpp revision into a temporary directory;
-2. builds arm64 `llama-server` with embedded Metal shaders;
-3. checks the pinned model and golden fixtures through CPU and Metal;
-4. downloads the exact Litestream v0.5.15 arm64 release asset and verifies its
+1. checks the pinned Litestream, packaging, retention, license, and canary
+   contracts;
+2. fetches the pinned llama.cpp revision into a temporary directory;
+3. builds arm64 `llama-server` with embedded Metal shaders;
+4. checks the pinned model and golden fixtures through CPU and Metal;
+5. downloads the exact Litestream v0.5.15 arm64 release asset and verifies its
    official archive digest plus the pinned extracted-binary digest;
-5. rejects non-system dynamic sidecar dependencies;
-6. stages both sidecars, manifests, fixtures, licenses, and notice;
-7. builds Dara with `src-tauri/tauri.release.conf.json`;
-8. ad-hoc signs the app and nested sidecars; and
-9. verifies architecture, minimum macOS version, hashes, executable bits,
+6. rejects non-system dynamic sidecar dependencies;
+7. stages both sidecars, manifests, fixtures, licenses, and notice;
+8. builds Dara with `src-tauri/tauri.release.conf.json`;
+9. ad-hoc signs the app and nested sidecars; and
+10. verifies architecture, minimum macOS version, hashes, executable bits,
    bundled resources, and production/test isolation.
 
 The verified artifact is:
@@ -224,7 +230,28 @@ archived app while leaving the production data directory untouched. If the
 failure involved a database migration, investigate the pre-migration snapshot
 before reopening repeatedly.
 
-## 8. Tag the successful release
+## 8. Run packaged recovery acceptance
+
+Follow [`app/tests/native/release-acceptance.md`](../app/tests/native/release-acceptance.md)
+against the exact candidate. In addition to clean-install and migration checks,
+the release record requires one dedicated R2 backup set to prove:
+
+- the packaged app publishes a complete database-and-media checkpoint;
+- a packaged restore drill can read that checkpoint;
+- the packaged recovery command restores it into a new directory; and
+- the restored installation can explicitly take over ownership and publish a
+  checkpoint in a new ownership era.
+
+The acceptance driver confines data to direct children of `app/.data/`.
+Supply the six `DARA_LITESTREAM_R2_*` variables only to the terminal running
+the recovery proof; normal packaged launches deliberately remove them and must
+read credentials from the macOS Keychain.
+
+Do not point acceptance at a production backup prefix. Preserve its local
+evidence and manually delete the dedicated acceptance prefix only after the
+release record has been reviewed.
+
+## 9. Tag the successful release
 
 Only tag after the installed artifact passes the smoke check:
 
@@ -256,11 +283,14 @@ The packaged binary exposes:
 dara recovery list <data-directory>
 dara recovery verify <manifest>
 dara recovery restore <manifest> <data-directory>
+dara recovery remote-inspect <latest|checkpoint-id>
+dara recovery remote-restore <latest|checkpoint-id> <data-directory>
 ```
 
-These commands can overwrite production database state. An LLM or automation
-must not run them against `~/Library/Application Support/dara` without the
-user's explicit approval for that exact recovery.
+The local `restore` and remote `remote-restore` commands can overwrite database
+state at their target. An LLM or automation must not run them against
+`~/Library/Application Support/dara` without the user's explicit approval for
+that exact recovery.
 
 ## Public distribution is a separate milestone
 

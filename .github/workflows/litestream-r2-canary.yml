@@ -1,0 +1,48 @@
+name: Litestream real-R2 canary
+
+on:
+  schedule:
+    - cron: '29 8 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: litestream-r2-canary
+  cancel-in-progress: false
+
+jobs:
+  real-r2-canary:
+    runs-on: macos-15
+    environment: r2-canary
+    timeout-minutes: 20
+    env:
+      DARA_LITESTREAM_R2_ACCOUNT_ID: ${{ secrets.DARA_LITESTREAM_R2_ACCOUNT_ID }}
+      DARA_LITESTREAM_R2_JURISDICTION: DEFAULT
+      DARA_LITESTREAM_R2_BUCKET: ${{ secrets.DARA_LITESTREAM_R2_BUCKET }}
+      DARA_LITESTREAM_R2_PREFIX: dara/github-canary
+      DARA_LITESTREAM_R2_ACCESS_KEY_ID: ${{ secrets.DARA_LITESTREAM_R2_ACCESS_KEY_ID }}
+      DARA_LITESTREAM_R2_SECRET_ACCESS_KEY: ${{ secrets.DARA_LITESTREAM_R2_SECRET_ACCESS_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: app/src-tauri
+      - name: Run isolated complete-checkpoint restore canary
+        run: ./scripts/run-litestream-r2-canary.sh
+      - name: Upload redacted canary evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: litestream-r2-canary-evidence
+          path: |
+            app/.data/r2-canary/*/canary-report-v1.json
+            app/.data/r2-canary/*/checkpoint-manifest-v1.json
+            app/.data/r2-canary/*/drill/restore-drill-report-v2.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14

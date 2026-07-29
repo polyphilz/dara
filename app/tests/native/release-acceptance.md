@@ -2,13 +2,15 @@
 
 Status: **not yet run for the current release artifact**.
 
-This procedure owns two release-level claims that unit, browser, and e2e builds cannot make:
+This procedure owns three release-level claims that unit, browser, and e2e builds cannot make:
 
 1. a packaged Dara starts from an empty repository-local data directory, resumes and verifies its
    managed model, indexes without blocking the core loop, reuses its verification receipt, and
    cleans up the bundled sidecar; and
 2. the same packaged app upgrades a rich previous-head database pair only after preserving a
-   valid, restorable pre-migration snapshot.
+   valid, restorable pre-migration snapshot; and
+3. the packaged app can publish a complete checkpoint to a private R2 backup set, prove that it
+   restores, restore it into a separate installation, and safely take over future backups.
 
 The driver inspects durable files and database state after Dara has quit. UI observations remain
 explicit below; a file check does not claim that a user interaction worked.
@@ -168,6 +170,91 @@ The restore proof never replaces the upgraded run. It asks the packaged recovery
 restore the V6/V1 manifest into the new target and then checks the old heads, authored cards,
 variants, media digest, review history, search projections, settings, and legacy shortcut.
 
+## C. Off-site backup and new-Mac recovery
+
+Use a dedicated private Standard-class R2 bucket or prefix containing no production backup.
+Configure a bucket-scoped Object Read & Write token as described in
+[`docs/OFFSITE_BACKUP.md`](../../../docs/OFFSITE_BACKUP.md). Export the six exact values in the
+terminal that will run the command-line proofs:
+
+```sh
+export DARA_LITESTREAM_R2_ACCOUNT_ID='...'
+export DARA_LITESTREAM_R2_JURISDICTION='DEFAULT'
+export DARA_LITESTREAM_R2_BUCKET='...'
+export DARA_LITESTREAM_R2_PREFIX='dara/release-acceptance-20260728'
+export DARA_LITESTREAM_R2_ACCESS_KEY_ID='...'
+export DARA_LITESTREAM_R2_SECRET_ACCESS_KEY='...'
+```
+
+Never paste these values into the release record or commit them. The prefix must be unique for
+this run.
+
+### C1. Publish and drill a packaged checkpoint
+
+Prepare a fresh directory and launch the packaged app:
+
+```sh
+pnpm release:acceptance prepare-clean release-offsite-20260728
+pnpm release:acceptance launch release-offsite-20260728
+```
+
+In Dara:
+
+- create Basic, Cloze, and image-occlusion cards, including at least one real image;
+- open Settings → Off-site backup and save the same R2 target and prefix;
+- confirm the connection, then enable backup;
+- wait for database and media progress to reach a complete checkpoint;
+- run a restore drill and wait for it to succeed; and
+- quit with Cmd+Q.
+
+The packaged launch deliberately removes `DARA_LITESTREAM_R2_*` variables. That proves the running
+app uses the credentials it saved in the macOS Keychain instead of inheriting developer secrets.
+After quitting, run:
+
+```sh
+pnpm release:acceptance check-offsite-backup release-offsite-20260728
+```
+
+This verifies the persisted target, latest published checkpoint, scoped successful drill report,
+remote checkpoint through the packaged recovery command, complete database state, bundled
+Litestream path, and clean Litestream shutdown. It writes only non-secret evidence beneath the
+source data directory.
+
+### C2. Restore into a replacement installation
+
+Restore the published checkpoint into a new repository-local directory:
+
+```sh
+pnpm release:acceptance prove-offsite-restore \
+  release-offsite-20260728 \
+  release-offsite-restored-20260728
+pnpm release:acceptance launch release-offsite-restored-20260728
+```
+
+In the restored app:
+
+- confirm the recovery warning appears;
+- inspect the cards, reviews, settings, image, and occlusion mask;
+- explicitly take over backup ownership;
+- wait for a new complete checkpoint in the new ownership era; and
+- quit with Cmd+Q.
+
+Then run:
+
+```sh
+pnpm release:acceptance check-offsite-takeover \
+  release-offsite-20260728 \
+  release-offsite-restored-20260728
+```
+
+The check requires a new installation identity and ownership era, unchanged restored application
+data, a new published checkpoint, a successful remote inspection, and no surviving Litestream
+process.
+
+Preserve both local directories and the generated evidence until the release record is reviewed.
+Then disable backup for both test installations, remove their test credentials if they are no
+longer useful, and delete only the dedicated acceptance prefix in Cloudflare.
+
 ## Release record
 
 Record the final run here or in a dated successor before calling the artifact ready:
@@ -184,6 +271,9 @@ Record the final run here or in a dated successor before calling the artifact re
 | Receipt reuse and clean sidecar shutdown | pending |
 | V6/V1 snapshot-before-migration upgrade | pending |
 | Reopen and offline restore proof | pending |
+| Packaged R2 checkpoint and restore drill | pending |
+| New-directory remote restore and data inspection | pending |
+| Explicit takeover and new-era checkpoint | pending |
 
 Do not mark a row passed solely because a lower-level test is green. Preserve the task-specific
 directories until the release record and any failure evidence have been reviewed.

@@ -22,6 +22,9 @@ const AcceptanceCommand = Object.freeze({
   PrepareUpgrade: 'prepare-upgrade',
   CheckUpgrade: 'check-upgrade',
   ProveUpgradeRestore: 'prove-upgrade-restore',
+  CheckOffsiteBackup: 'check-offsite-backup',
+  ProveOffsiteRestore: 'prove-offsite-restore',
+  CheckOffsiteTakeover: 'check-offsite-takeover',
   Help: 'help',
 })
 
@@ -37,6 +40,14 @@ const ReviewEventType = Object.freeze({
 
 const ReviewCardStatus = Object.freeze({
   Suspended: 'SUSPENDED',
+})
+
+const CheckpointPhase = Object.freeze({
+  Published: 'PUBLISHED',
+})
+
+const RestoreDrillOutcome = Object.freeze({
+  Success: 'SUCCESS',
 })
 
 const KeyboardCommand = Object.freeze({
@@ -56,7 +67,11 @@ const restartCheckpointFile = '.release-acceptance-restart.json'
 const launchRecordFile = '.release-acceptance-launch.json'
 const receiptFile = 'semantic-search-verification.json'
 const sidecarPidFile = 'llama-server.pid'
+const litestreamPidFile = join('run', 'backup', 'ls.pid.json')
+const litestreamConfigFile = join('run', 'backup', 'ls.yml')
 const sidecarLogFile = join('logs', 'llama-server.log')
+const offsiteEvidenceFile = '.release-acceptance-offsite.json'
+const installationIdentityFile = 'installation-id-v1.json'
 const modelManifestRelativePath = join(
   'Contents',
   'Resources',
@@ -80,6 +95,12 @@ const sidecarRelativePath = join(
   'Resources',
   'bin',
   'llama-server',
+)
+const litestreamRelativePath = join(
+  'Contents',
+  'Resources',
+  'bin',
+  'litestream',
 )
 const appExecutableRelativePath = join('Contents', 'MacOS', 'dara')
 
@@ -118,6 +139,15 @@ async function main() {
     case AcceptanceCommand.ProveUpgradeRestore:
       proveUpgradeRestore(arguments_)
       break
+    case AcceptanceCommand.CheckOffsiteBackup:
+      checkOffsiteBackup(arguments_)
+      break
+    case AcceptanceCommand.ProveOffsiteRestore:
+      proveOffsiteRestore(arguments_)
+      break
+    case AcceptanceCommand.CheckOffsiteTakeover:
+      checkOffsiteTakeover(arguments_)
+      break
     case AcceptanceCommand.Help:
       printUsage()
       break
@@ -147,6 +177,13 @@ function launch(arguments_) {
     'DARA_EMBEDDING_MODEL_PATH',
     'DARA_LLAMA_DEVICE',
     'DARA_LLAMA_GPU_LAYERS',
+    'DARA_LITESTREAM_PATH',
+    'DARA_LITESTREAM_R2_ACCOUNT_ID',
+    'DARA_LITESTREAM_R2_JURISDICTION',
+    'DARA_LITESTREAM_R2_BUCKET',
+    'DARA_LITESTREAM_R2_PREFIX',
+    'DARA_LITESTREAM_R2_ACCESS_KEY_ID',
+    'DARA_LITESTREAM_R2_SECRET_ACCESS_KEY',
   ]) {
     delete environment[name]
   }
@@ -354,6 +391,272 @@ function proveUpgradeRestore(arguments_) {
   console.info(
     `Pre-migration snapshot restored successfully into ${restoreDirectory}; the source fixture was not modified.`,
   )
+}
+
+function checkOffsiteBackup(arguments_) {
+  const dataDirectory = resolveExistingDataDirectory(requiredArgument(arguments_, 0))
+  const app = resolvePackagedApp(arguments_[1])
+  assert(
+    arguments_.length <= 2,
+    'check-offsite-backup accepts a data directory and optional Dara.app path',
+  )
+  const evidence = inspectOffsiteBackup(dataDirectory, app)
+  writeJsonReplacing(join(dataDirectory, offsiteEvidenceFile), evidence)
+  console.info(
+    `Packaged off-site backup passed: checkpoint ${evidence.checkpoint.checkpointId}, restore drill ${evidence.restoreDrill.outcome}, Litestream stopped.`,
+  )
+}
+
+function proveOffsiteRestore(arguments_) {
+  const sourceDirectory = resolveExistingDataDirectory(
+    requiredArgument(arguments_, 0),
+  )
+  const restoreDirectory = resolveNewDataDirectory(requiredArgument(arguments_, 1))
+  const app = resolvePackagedApp(arguments_[2])
+  assert(
+    arguments_.length <= 3,
+    'prove-offsite-restore accepts source data, restore target, and optional Dara.app path',
+  )
+  const evidence = inspectOffsiteBackup(sourceDirectory, app)
+  const output = run(
+    app.executable,
+    [
+      'recovery',
+      'remote-restore',
+      evidence.checkpoint.checkpointId,
+      restoreDirectory,
+    ],
+    { env: offsiteRecoveryEnvironment() },
+  )
+  const report = JSON.parse(output)
+  assertEqual(
+    report.checkpointId,
+    evidence.checkpoint.checkpointId,
+    'off-site restored checkpoint',
+  )
+  assertEqual(
+    report.awaitingApplicationValidation,
+    true,
+    'off-site restore launch validation',
+  )
+  assertEqual(
+    readLiveDatabaseState(restoreDirectory),
+    evidence.dataState,
+    'off-site restored data state',
+  )
+  writeJsonReplacing(join(sourceDirectory, offsiteEvidenceFile), {
+    ...evidence,
+    restore: {
+      targetDirectory: restoreDirectory,
+      report,
+    },
+  })
+  console.info(
+    `Off-site checkpoint restored into ${restoreDirectory}. Launch it, confirm the new-Mac warning, perform the explicit takeover, wait for a new complete checkpoint, quit, then run check-offsite-takeover.`,
+  )
+}
+
+function checkOffsiteTakeover(arguments_) {
+  const sourceDirectory = resolveExistingDataDirectory(
+    requiredArgument(arguments_, 0),
+  )
+  const restoredDirectory = resolveExistingDataDirectory(
+    requiredArgument(arguments_, 1),
+  )
+  const app = resolvePackagedApp(arguments_[2])
+  assert(
+    arguments_.length <= 3,
+    'check-offsite-takeover accepts source data, restored data, and optional Dara.app path',
+  )
+  assertStopped(sourceDirectory, app)
+  assertStopped(restoredDirectory, app)
+  const evidence = readJson(join(sourceDirectory, offsiteEvidenceFile))
+  assert(evidence.restore, 'run prove-offsite-restore before checking takeover')
+  assertEqual(
+    realpathSync(evidence.restore.targetDirectory),
+    realpathSync(restoredDirectory),
+    'recorded restore target',
+  )
+  assertEqual(
+    readLiveDatabaseState(restoredDirectory),
+    evidence.dataState,
+    'launched restored data state',
+  )
+  const sourceInstallation = readJson(
+    join(sourceDirectory, installationIdentityFile),
+  )
+  const restoredInstallation = readJson(
+    join(restoredDirectory, installationIdentityFile),
+  )
+  assert(
+    sourceInstallation.installationId !== restoredInstallation.installationId,
+    'restored app reused the old installation identity',
+  )
+  const restoredOffsite = readOffsiteState(restoredDirectory)
+  assertEqual(
+    restoredOffsite.config.backupSetId,
+    evidence.config.backupSetId,
+    'takeover backup set',
+  )
+  assert(
+    restoredOffsite.config.replicaEpochId !== evidence.config.replicaEpochId,
+    'takeover did not create a new replica epoch',
+  )
+  assert(
+    restoredOffsite.checkpoint,
+    'takeover did not publish a complete checkpoint',
+  )
+  assertEqual(
+    restoredOffsite.checkpoint.replicaEpochId,
+    restoredOffsite.config.replicaEpochId,
+    'takeover checkpoint epoch',
+  )
+  const remote = JSON.parse(
+    run(
+      app.executable,
+      ['recovery', 'remote-inspect', restoredOffsite.checkpoint.checkpointId],
+      { env: offsiteRecoveryEnvironment() },
+    ),
+  )
+  assertEqual(
+    remote.checkpointId,
+    restoredOffsite.checkpoint.checkpointId,
+    'remote takeover checkpoint',
+  )
+  writeJsonReplacing(join(sourceDirectory, offsiteEvidenceFile), {
+    ...evidence,
+    takeover: {
+      restoredInstallationId: restoredInstallation.installationId,
+      replicaEpochId: restoredOffsite.config.replicaEpochId,
+      checkpointId: restoredOffsite.checkpoint.checkpointId,
+      remoteVerified: true,
+    },
+  })
+  console.info(
+    `Packaged off-site takeover passed: new epoch ${restoredOffsite.config.replicaEpochId}, checkpoint ${restoredOffsite.checkpoint.checkpointId}, no competing Litestream process.`,
+  )
+}
+
+function inspectOffsiteBackup(dataDirectory, app) {
+  assertStopped(dataDirectory, app)
+  const offsite = readOffsiteState(dataDirectory)
+  assertEqual(offsite.config.enabled, 1, 'off-site backup enabled state')
+  assert(offsite.checkpoint, 'no published off-site checkpoint exists')
+  assertEqual(
+    offsite.checkpoint.backupSetId,
+    offsite.config.backupSetId,
+    'published checkpoint backup set',
+  )
+  assertEqual(
+    offsite.checkpoint.replicaEpochId,
+    offsite.config.replicaEpochId,
+    'published checkpoint epoch',
+  )
+  const reportPath = join(
+    dataDirectory,
+    'backups',
+    'offsite-restore-drills',
+    offsite.config.backupSetId,
+    offsite.config.replicaEpochId,
+    'restore-drill-report-v2.json',
+  )
+  const restoreDrill = readJson(reportPath)
+  assertEqual(
+    restoreDrill.outcome,
+    RestoreDrillOutcome.Success,
+    'packaged restore-drill outcome',
+  )
+  assertEqual(
+    restoreDrill.backupSetId,
+    offsite.config.backupSetId,
+    'restore-drill backup set',
+  )
+  assertEqual(
+    restoreDrill.replicaEpochId,
+    offsite.config.replicaEpochId,
+    'restore-drill epoch',
+  )
+  assertEqual(
+    restoreDrill.checkpointId,
+    offsite.checkpoint.checkpointId,
+    'restore-drill checkpoint',
+  )
+  const remote = JSON.parse(
+    run(
+      app.executable,
+      ['recovery', 'remote-inspect', offsite.checkpoint.checkpointId],
+      { env: offsiteRecoveryEnvironment() },
+    ),
+  )
+  assertEqual(
+    remote.checkpointId,
+    offsite.checkpoint.checkpointId,
+    'remote checkpoint inspection',
+  )
+  return {
+    formatVersion: 1,
+    recordedAt: new Date().toISOString(),
+    appPath: app.path,
+    dataDirectory,
+    dataState: readLiveDatabaseState(dataDirectory),
+    config: offsite.config,
+    checkpoint: offsite.checkpoint,
+    restoreDrill,
+    remoteCheckpoint: remote,
+    litestreamStopped: true,
+  }
+}
+
+function readOffsiteState(dataDirectory) {
+  const main = join(dataDirectory, 'dara.sqlite3')
+  const config = sqliteOne(
+    main,
+    `SELECT
+       revision,
+       backup_set_id AS backupSetId,
+       replica_epoch_id AS replicaEpochId,
+       enabled,
+       jurisdiction,
+       account_id AS accountId,
+       bucket,
+       prefix
+     FROM offsite_backup_config
+     WHERE singleton_id = 1`,
+  )
+  const checkpoints = sqliteRows(
+    main,
+    `SELECT
+       checkpoint_id AS checkpointId,
+       backup_set_id AS backupSetId,
+       replica_epoch_id AS replicaEpochId,
+       config_revision AS configRevision,
+       created_at AS createdAt
+     FROM offsite_backup_checkpoint
+     WHERE phase = '${CheckpointPhase.Published}'
+       AND publication_sequence IS NOT NULL
+     ORDER BY publication_sequence DESC
+     LIMIT 1`,
+  )
+  return {
+    config,
+    checkpoint: checkpoints[0] ?? null,
+  }
+}
+
+function offsiteRecoveryEnvironment() {
+  const environment = { ...process.env }
+  delete environment.DARA_LITESTREAM_PATH
+  for (const name of [
+    'DARA_LITESTREAM_R2_ACCOUNT_ID',
+    'DARA_LITESTREAM_R2_JURISDICTION',
+    'DARA_LITESTREAM_R2_BUCKET',
+    'DARA_LITESTREAM_R2_PREFIX',
+    'DARA_LITESTREAM_R2_ACCESS_KEY_ID',
+    'DARA_LITESTREAM_R2_SECRET_ACCESS_KEY',
+  ]) {
+    assert(environment[name], `missing packaged recovery variable: ${name}`)
+  }
+  return environment
 }
 
 async function inspectCleanRun(dataDirectory, app) {
@@ -617,6 +920,10 @@ function assertStopped(dataDirectory, app) {
     !existsSync(join(dataDirectory, sidecarPidFile)),
     'llama-server pidfile remains; quit Dara cleanly before checking',
   )
+  assert(
+    !existsSync(join(dataDirectory, litestreamPidFile)),
+    'Litestream pidfile remains; quit Dara cleanly before checking',
+  )
   const receiptPath = join(dataDirectory, receiptFile)
   if (existsSync(receiptPath)) {
     const receipt = readJson(receiptPath)
@@ -628,6 +935,12 @@ function assertStopped(dataDirectory, app) {
     )
     assert(!liveSidecar, `Dara llama-server is still running: ${liveSidecar}`)
   }
+  const liveLitestream = processLines().find(
+    (line) =>
+      line.includes(app.litestream) &&
+      line.includes(join(dataDirectory, litestreamConfigFile)),
+  )
+  assert(!liveLitestream, `Dara Litestream is still running: ${liveLitestream}`)
   recoveryList(app, dataDirectory)
 }
 
@@ -682,11 +995,13 @@ function resolvePackagedApp(value) {
   const path = realpathSync(resolve(value ?? defaultAppPath))
   const executable = realpathSync(join(path, appExecutableRelativePath))
   const sidecar = realpathSync(join(path, sidecarRelativePath))
+  const litestream = realpathSync(join(path, litestreamRelativePath))
   assert(statSync(path).isDirectory(), 'Dara.app is not a directory')
   assert(statSync(executable).isFile(), 'packaged Dara executable is missing')
   assert(statSync(sidecar).isFile(), 'packaged llama-server is missing')
+  assert(statSync(litestream).isFile(), 'packaged Litestream is missing')
   readJson(join(path, releaseManifestRelativePath))
-  return { executable, path, sidecar }
+  return { executable, litestream, path, sidecar }
 }
 
 function resolveNewDataDirectory(value) {
@@ -828,6 +1143,9 @@ Usage:
   pnpm release:acceptance ${AcceptanceCommand.PrepareUpgrade} <data-name>
   pnpm release:acceptance ${AcceptanceCommand.CheckUpgrade} <data-name> [Dara.app]
   pnpm release:acceptance ${AcceptanceCommand.ProveUpgradeRestore} <data-name> <restore-name> [Dara.app]
+  pnpm release:acceptance ${AcceptanceCommand.CheckOffsiteBackup} <data-name> [Dara.app]
+  pnpm release:acceptance ${AcceptanceCommand.ProveOffsiteRestore} <source-name> <restore-name> [Dara.app]
+  pnpm release:acceptance ${AcceptanceCommand.CheckOffsiteTakeover} <source-name> <restore-name> [Dara.app]
 
 All data names resolve to direct, non-existing or existing task directories beneath:
   ${dataRoot}
