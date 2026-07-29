@@ -104,7 +104,9 @@ test('confirmed retention invokes the atomic replay workflow and refreshes the s
   expect(schedulerGateway.installSchedulerReplay).toHaveBeenCalledTimes(1)
   expect(onSchedulingChanged).toHaveBeenCalledTimes(1)
   expect(onBusyChange).toHaveBeenCalledWith(true)
-  expect(onBusyChange).toHaveBeenLastCalledWith(false)
+  await waitFor(() => {
+    expect(onBusyChange).toHaveBeenLastCalledWith(false)
+  })
   expect((getByRole('slider', { name: 'Desired retention' }) as HTMLInputElement).value).toBe('85')
 })
 
