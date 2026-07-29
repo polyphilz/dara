@@ -23,6 +23,28 @@ const initialDefinition: OcclusionDefinition = {
   layers: [],
 }
 
+test('fits the entire source image within the editor height', () => {
+  const squareDefinition: OcclusionDefinition = {
+    ...initialDefinition,
+    sourceImage: {
+      ...initialDefinition.sourceImage,
+      naturalHeight: 1024,
+      naturalWidth: 1024,
+    },
+  }
+  const { container } = render(
+    <OcclusionEditor
+      definition={squareDefinition}
+      onChange={vi.fn()}
+      onReplaceImage={vi.fn()}
+    />,
+  )
+
+  const frame = container.querySelector<HTMLElement>('.occlusion-editor-image')
+  expect(frame?.style.getPropertyValue('--occlusion-image-aspect')).toBe('1')
+  expect(frame?.style.maxWidth).toBe('530px')
+})
+
 test('builds multiple layers and multiple masks per layer with local undo', async () => {
   let current = initialDefinition
   function Harness() {

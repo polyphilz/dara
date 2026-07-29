@@ -121,7 +121,7 @@
 
 .occlusion-editor-workspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 190px;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 320px);
   align-items: start;
   gap: 12px;
 }
@@ -165,7 +165,6 @@
 }
 
 .occlusion-editor-image {
-  max-height: 530px;
   border: 1px solid var(--line);
 }
 

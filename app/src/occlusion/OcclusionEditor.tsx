@@ -48,6 +48,8 @@ interface OcclusionEditorProps {
   onReplaceImage: () => void
 }
 
+const EDITOR_IMAGE_MAXIMUM_HEIGHT = 530
+
 const DrawIntent = {
   NewLayer: 'NEW_LAYER',
   SelectedLayer: 'SELECTED_LAYER',
@@ -727,6 +729,7 @@ export const OcclusionEditor = forwardRef<
           <OcclusionImageFrame
             className={`occlusion-editor-image occlusion-draw-${drawIntent.toLowerCase()}`}
             image={definition.sourceImage}
+            maximumHeight={EDITOR_IMAGE_MAXIMUM_HEIGHT}
             overlayLabel="Editable image masks"
             overlayProps={{
               onKeyDown: handleKeyDown,
