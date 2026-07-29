@@ -576,6 +576,11 @@ function inspectOffsiteBackup(dataDirectory, app) {
     offsite.config.replicaEpochId,
     'restore-drill epoch',
   )
+  assertEqual(
+    restoreDrill.checkpointId,
+    offsite.checkpoint.checkpointId,
+    'restore-drill checkpoint',
+  )
   const remote = JSON.parse(
     run(
       app.executable,
