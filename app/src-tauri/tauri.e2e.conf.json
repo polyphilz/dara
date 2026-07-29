@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Dara E2E",
-  "identifier": "com.rohan.dara.e2e",
+  "identifier": "com.silo77.dara.e2e",
   "build": {
     "beforeBuildCommand": "pnpm build:e2e"
   },

@@ -30,7 +30,7 @@ that build.
 
 `pnpm release:verify-app` confirmed:
 
-- an ad-hoc-signed arm64 app with identifier `com.rohan.dara`;
+- an ad-hoc-signed arm64 app with identifier `com.silo77.dara`;
 - strict deep signature verification for the complete bundle;
 - a minimum system version of macOS 14.0;
 - the executable bit and staged SHA-256 on `Contents/Resources/bin/llama-server`;

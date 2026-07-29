@@ -34,6 +34,20 @@ const localIdentity = applicationIdentities[ApplicationIdentityKey.Local]
 const productionIdentity =
   applicationIdentities[ApplicationIdentityKey.Production]
 const e2eIdentity = applicationIdentities[ApplicationIdentityKey.E2e]
+const claimedIdentifiers = new Map()
+
+for (const [identityKey, identity] of Object.entries(applicationIdentities)) {
+  assertIdentityShape(identity, identityKey)
+  claimIdentifier(identity.identifier, `${identityKey} current identifier`)
+  for (const legacyIdentifier of identity.legacyIdentifiers) {
+    if (legacyIdentifier === identity.identifier) {
+      throw new Error(
+        `${identityKey} current identifier must not also be a legacy identifier`,
+      )
+    }
+    claimIdentifier(legacyIdentifier, `${identityKey} legacy identifier`)
+  }
+}
 
 for (const marker of ['tauri-plugin-wdio', 'wdio-webdriver']) {
   if (productionTree.includes(marker)) {
@@ -135,6 +149,40 @@ function assertIdentity(config, expected, label) {
       })}`,
     )
   }
+}
+
+function assertIdentityShape(identity, identityKey) {
+  if (
+    typeof identity?.productName !== 'string' ||
+    identity.productName.length === 0 ||
+    typeof identity.identifier !== 'string' ||
+    !isBundleIdentifier(identity.identifier) ||
+    !Array.isArray(identity.legacyIdentifiers) ||
+    identity.legacyIdentifiers.some(
+      (identifier) => !isBundleIdentifier(identifier),
+    )
+  ) {
+    throw new Error(
+      `Invalid ${identityKey} application identity: ${JSON.stringify(identity)}`,
+    )
+  }
+}
+
+function claimIdentifier(identifier, label) {
+  const existing = claimedIdentifiers.get(identifier)
+  if (existing !== undefined) {
+    throw new Error(
+      `Application identifier ${identifier} is shared by ${existing} and ${label}`,
+    )
+  }
+  claimedIdentifiers.set(identifier, label)
+}
+
+function isBundleIdentifier(identifier) {
+  return (
+    typeof identifier === 'string' &&
+    /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(identifier)
+  )
 }
 
 function cargoTree(extraArguments) {

@@ -89,7 +89,7 @@ DARA_LLAMA_SERVER_PATH=/opt/homebrew/bin/llama-server \
   pnpm tauri dev
 ```
 
-The development command runs as **Dara Local** with bundle identifier `com.rohan.dara.local` and
+The development command runs as **Dara Local** with bundle identifier `com.silo77.dara.local` and
 keeps its databases under `app/.data/local/`. Its macOS application identity, single-instance
 boundary, autostart entry, logs, and R2 Keychain service are separate from the packaged **Dara**
 application. A non-production build refuses to start without an explicit `DARA_DATA_DIR`; the

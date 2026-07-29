@@ -41,9 +41,12 @@ app/.data/local
 ```
 
 That command runs **Dara Local** with bundle identifier
-`com.rohan.dara.local`. Development and production use separate macOS
+`com.silo77.dara.local`. Development and production use separate macOS
 application, single-instance, autostart, logging, and R2 Keychain identities.
 Non-production builds refuse to start without an explicit `DARA_DATA_DIR`.
+The production bundle identifier is `com.silo77.dara`. Builds using the new
+SILO77 identifiers migrate any saved R2 credentials from Dara's former
+`com.rohan.dara` Keychain service after verifying the replacement entry.
 
 Replacing `/Applications/Dara.app` does not replace or reset the production
 data directory. Never copy, delete, or overwrite production data as part of a

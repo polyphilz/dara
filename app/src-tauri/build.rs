@@ -3,9 +3,11 @@ use std::{env, fs};
 const APPLICATION_IDENTITIES_PATH: &str = "app-identities.json";
 const BASE_CONFIG_PATH: &str = "tauri.conf.json";
 const APP_IDENTIFIER_ENV: &str = "DARA_APP_IDENTIFIER";
+const LEGACY_APP_IDENTIFIERS_ENV: &str = "DARA_LEGACY_APP_IDENTIFIERS";
 const PRODUCTION_APP_IDENTIFIER_ENV: &str = "DARA_PRODUCTION_APP_IDENTIFIER";
 const PRODUCTION_IDENTITY_KEY: &str = "production";
 const IDENTIFIER_FIELD: &str = "identifier";
+const LEGACY_IDENTIFIERS_FIELD: &str = "legacyIdentifiers";
 
 fn main() {
     let application_identities: serde_json::Value = serde_json::from_str(
@@ -34,22 +36,48 @@ fn main() {
         .and_then(|identity| identity.get(IDENTIFIER_FIELD))
         .and_then(serde_json::Value::as_str)
         .expect("application identity mapping should define the production identifier");
-    let known_identifier = application_identities
+    let identities = application_identities
         .as_object()
-        .expect("application identity mapping should be an object")
+        .expect("application identity mapping should be an object");
+    let current_identity = identities
         .values()
-        .filter_map(|identity| identity.get(IDENTIFIER_FIELD))
-        .filter_map(serde_json::Value::as_str)
-        .any(|known| known == identifier);
+        .find(|identity| {
+            identity
+                .get(IDENTIFIER_FIELD)
+                .and_then(serde_json::Value::as_str)
+                == Some(identifier)
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "Tauri config identifier {identifier:?} is absent from the application identity mapping"
+            )
+        });
+    let legacy_identifiers = current_identity
+        .get(LEGACY_IDENTIFIERS_FIELD)
+        .and_then(serde_json::Value::as_array)
+        .expect("application identity mapping should define legacy identifiers")
+        .iter()
+        .map(|legacy| {
+            legacy
+                .as_str()
+                .expect("legacy application identifiers should be strings")
+        })
+        .collect::<Vec<_>>();
     assert!(
-        known_identifier,
-        "Tauri config identifier {identifier:?} is absent from the application identity mapping"
+        legacy_identifiers
+            .iter()
+            .all(|legacy| *legacy != identifier),
+        "current and legacy application identifiers must be distinct"
     );
 
     println!("cargo:rerun-if-changed={APPLICATION_IDENTITIES_PATH}");
     println!("cargo:rerun-if-changed={BASE_CONFIG_PATH}");
     println!("cargo:rerun-if-env-changed=TAURI_CONFIG");
     println!("cargo:rustc-env={APP_IDENTIFIER_ENV}={identifier}");
+    println!(
+        "cargo:rustc-env={LEGACY_APP_IDENTIFIERS_ENV}={}",
+        legacy_identifiers.join(",")
+    );
     println!("cargo:rustc-env={PRODUCTION_APP_IDENTIFIER_ENV}={production_identifier}");
     tauri_build::build()
 }
