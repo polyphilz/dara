@@ -6,6 +6,7 @@ interface OcclusionImageFrameProps {
   children?: ReactNode
   className?: string
   image: OcclusionSourceImage
+  maximumHeight?: number
   overlayLabel: string
   overlayProps?: SVGProps<SVGSVGElement>
 }
@@ -14,11 +15,15 @@ export function OcclusionImageFrame({
   children,
   className,
   image,
+  maximumHeight,
   overlayLabel,
   overlayProps,
 }: OcclusionImageFrameProps) {
+  const aspectRatio = image.naturalWidth / image.naturalHeight
   const imageStyle = {
-    '--occlusion-image-aspect': image.naturalWidth / image.naturalHeight,
+    '--occlusion-image-aspect': aspectRatio,
+    maxWidth:
+      maximumHeight === undefined ? undefined : maximumHeight * aspectRatio,
   } as CSSProperties
   const classes = ['occlusion-image-frame', className]
     .filter(Boolean)
