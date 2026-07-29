@@ -283,8 +283,8 @@ The packaged binary exposes:
 dara recovery list <data-directory>
 dara recovery verify <manifest>
 dara recovery restore <manifest> <data-directory>
-dara recovery remote-inspect [checkpoint-id]
-dara recovery remote-restore [checkpoint-id] <data-directory>
+dara recovery remote-inspect <latest|checkpoint-id>
+dara recovery remote-restore <latest|checkpoint-id> <data-directory>
 ```
 
 The local `restore` and remote `remote-restore` commands can overwrite database
