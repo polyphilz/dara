@@ -464,7 +464,10 @@ fn install_tray(app: &App, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
                         log::error!("failed to show quick add: {error}");
                     }
                 }
-                Some(TrayMenuAction::Quit) => app.exit(0),
+                Some(TrayMenuAction::Quit) => {
+                    log::info!("application quit requested from the menu-bar icon");
+                    app.exit(0);
+                }
                 None => {}
             },
         )
@@ -1094,8 +1097,14 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
                     .try_state::<ApplicationLaunchContext>()
                     .map(|context| context.mode);
                 match main_window_close_action(launch_mode) {
-                    MainWindowCloseAction::Exit => window.app_handle().exit(0),
+                    MainWindowCloseAction::Exit => {
+                        log::info!("recovery window close requested application exit");
+                        window.app_handle().exit(0);
+                    }
                     MainWindowCloseAction::Hide => {
+                        log::info!(
+                            "main window close requested; Dara remains in menu-bar resident mode"
+                        );
                         if let Err(error) = window.hide() {
                             log::error!("failed to hide main window: {error}");
                         }
@@ -1134,6 +1143,25 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
         }
         _ => {}
     }
+}
+
+pub(crate) fn log_application_quit_context(app: &AppHandle) {
+    let main = app.get_webview_window(MAIN_LABEL);
+    let main_visible = main
+        .as_ref()
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    let main_focused = main
+        .as_ref()
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    let quick_add_visible = app
+        .get_webview_window(QUICK_ADD_LABEL)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    log::info!(
+        "application quit accepted (main_visible={main_visible}, main_focused={main_focused}, quick_add_visible={quick_add_visible})"
+    );
 }
 
 #[cfg(test)]

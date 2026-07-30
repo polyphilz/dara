@@ -15,6 +15,9 @@ import { spawn, spawnSync } from 'node:child_process'
 const AcceptanceCommand = Object.freeze({
   PrepareClean: 'prepare-clean',
   Launch: 'launch',
+  CheckRunning: 'check-running',
+  QuitAndCheck: 'quit-and-check',
+  CheckStopped: 'check-stopped',
   CheckInterruptedDownload: 'check-interrupted-download',
   CheckClean: 'check-clean',
   CheckpointRestart: 'checkpoint-restart',
@@ -50,6 +53,10 @@ const RestoreDrillOutcome = Object.freeze({
   Success: 'SUCCESS',
 })
 
+const ApplicationQuitEvent = Object.freeze({
+  NormalTerminate: 'NS_RUNNING_APPLICATION_TERMINATE',
+})
+
 const KeyboardCommand = Object.freeze({
   QuickAdd: 'QUICK_ADD',
   Review: 'REVIEW',
@@ -68,6 +75,7 @@ const launchRecordFile = '.release-acceptance-launch.json'
 const receiptFile = 'semantic-search-verification.json'
 const sidecarPidFile = 'llama-server.pid'
 const litestreamPidFile = join('run', 'backup', 'ls.pid.json')
+const litestreamSocketFile = join('run', 'backup', 'ls.sock')
 const litestreamConfigFile = join('run', 'backup', 'ls.yml')
 const sidecarLogFile = join('logs', 'llama-server.log')
 const offsiteEvidenceFile = '.release-acceptance-offsite.json'
@@ -104,6 +112,9 @@ const litestreamRelativePath = join(
   'litestream',
 )
 const appExecutableRelativePath = join('Contents', 'MacOS', 'dara')
+const appInfoPlistRelativePath = join('Contents', 'Info.plist')
+const shutdownTimeoutMilliseconds = 130_000
+const shutdownPollMilliseconds = 250
 
 await main()
 
@@ -118,6 +129,15 @@ async function main() {
       break
     case AcceptanceCommand.Launch:
       launch(arguments_)
+      break
+    case AcceptanceCommand.CheckRunning:
+      checkRunning(arguments_)
+      break
+    case AcceptanceCommand.QuitAndCheck:
+      await quitAndCheck(arguments_)
+      break
+    case AcceptanceCommand.CheckStopped:
+      checkStopped(arguments_)
       break
     case AcceptanceCommand.CheckInterruptedDownload:
       checkInterruptedDownload(arguments_)
@@ -196,16 +216,77 @@ function launch(arguments_) {
   })
   child.unref()
   writeJsonReplacing(join(dataDirectory, launchRecordFile), {
-    formatVersion: 1,
+    formatVersion: 2,
     launchedAt: new Date().toISOString(),
     pid: child.pid,
     appPath: app.path,
     executable: app.executable,
+    bundleIdentifier: app.identifier,
     dataDirectory,
     developmentOverridesRemoved: true,
   })
   console.info(`Launched packaged Dara (pid ${child.pid}) against ${dataDirectory}`)
-  console.info('Quit with Cmd+Q before running an acceptance check.')
+  console.info(
+    'Use quit-and-check for an automated normal Quit, or check-stopped after a manual Cmd+Q/menu-bar Quit.',
+  )
+}
+
+function checkRunning(arguments_) {
+  const dataDirectory = resolveExistingDataDirectory(requiredArgument(arguments_, 0))
+  const app = resolvePackagedApp(arguments_[1])
+  assert(arguments_.length <= 2, 'check-running accepts a data directory and optional Dara.app path')
+  const launchRecord = readLaunchRecord(dataDirectory, app)
+  const command = assertRecordedAppRunning(launchRecord, app)
+  console.info(
+    `Packaged Dara is still running (pid ${launchRecord.pid}): ${command}`,
+  )
+  console.info(
+    'This proves process residency only; separately confirm that the main window is hidden.',
+  )
+}
+
+async function quitAndCheck(arguments_) {
+  const dataDirectory = resolveExistingDataDirectory(requiredArgument(arguments_, 0))
+  const app = resolvePackagedApp(arguments_[1])
+  assert(arguments_.length <= 2, 'quit-and-check accepts a data directory and optional Dara.app path')
+  const launchRecord = readLaunchRecord(dataDirectory, app)
+  assertRecordedAppRunning(launchRecord, app)
+
+  const requestedAt = new Date().toISOString()
+  const started = Date.now()
+  requestNormalApplicationQuit(launchRecord.pid, app.identifier)
+  await waitForRecordedAppToExit(launchRecord.pid, app)
+  assertStopped(dataDirectory, app)
+  const durationMilliseconds = Date.now() - started
+
+  writeJsonReplacing(join(dataDirectory, launchRecordFile), {
+    ...launchRecord,
+    shutdownAcceptance: {
+      event: ApplicationQuitEvent.NormalTerminate,
+      requestedAt,
+      completedAt: new Date().toISOString(),
+      durationMilliseconds,
+      timeoutMilliseconds: shutdownTimeoutMilliseconds,
+      daraStopped: true,
+      llamaServerStopped: true,
+      litestreamStopped: true,
+      runtimeMarkersRemoved: true,
+      dataLockReleased: true,
+    },
+  })
+  console.info(
+    `Normal packaged Quit passed in ${durationMilliseconds} ms: Dara, llama-server, Litestream, runtime markers, and the data lock are clear.`,
+  )
+}
+
+function checkStopped(arguments_) {
+  const dataDirectory = resolveExistingDataDirectory(requiredArgument(arguments_, 0))
+  const app = resolvePackagedApp(arguments_[1])
+  assert(arguments_.length <= 2, 'check-stopped accepts a data directory and optional Dara.app path')
+  assertStopped(dataDirectory, app)
+  console.info(
+    'Manual packaged Quit passed: Dara, llama-server, Litestream, runtime markers, and the data lock are clear.',
+  )
 }
 
 function checkInterruptedDownload(arguments_) {
@@ -926,6 +1007,10 @@ function assertStopped(dataDirectory, app) {
     !existsSync(join(dataDirectory, litestreamPidFile)),
     'Litestream pidfile remains; quit Dara cleanly before checking',
   )
+  assert(
+    !existsSync(join(dataDirectory, litestreamSocketFile)),
+    'Litestream control socket remains; quit Dara cleanly before checking',
+  )
   const receiptPath = join(dataDirectory, receiptFile)
   if (existsSync(receiptPath)) {
     const receipt = readJson(receiptPath)
@@ -944,6 +1029,80 @@ function assertStopped(dataDirectory, app) {
   )
   assert(!liveLitestream, `Dara Litestream is still running: ${liveLitestream}`)
   recoveryList(app, dataDirectory)
+}
+
+function readLaunchRecord(dataDirectory, app) {
+  const launchRecord = readJson(join(dataDirectory, launchRecordFile))
+  assertEqual(launchRecord.formatVersion, 2, 'launch record format')
+  assertEqual(realpathSync(launchRecord.dataDirectory), dataDirectory, 'launch record data directory')
+  assertEqual(realpathSync(launchRecord.appPath), app.path, 'launch record app path')
+  assertEqual(realpathSync(launchRecord.executable), app.executable, 'launch record executable')
+  assertEqual(launchRecord.bundleIdentifier, app.identifier, 'launch record bundle identifier')
+  assert(
+    Number.isSafeInteger(launchRecord.pid) && launchRecord.pid > 0,
+    'launch record PID is invalid',
+  )
+  return launchRecord
+}
+
+function assertRecordedAppRunning(launchRecord, app) {
+  const command = processCommandForPid(launchRecord.pid)
+  assert(command, `recorded packaged Dara pid ${launchRecord.pid} is not running`)
+  assert(
+    command.includes(app.executable),
+    `recorded pid ${launchRecord.pid} is not the packaged Dara executable: ${command}`,
+  )
+  return command
+}
+
+function requestNormalApplicationQuit(pid, expectedBundleIdentifier) {
+  const script = `
+ObjC.import('AppKit')
+const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(${pid})
+if (ObjC.unwrap(app) === undefined) {
+  throw new Error('Dara is no longer registered with macOS')
+}
+const actualBundleIdentifier = ObjC.unwrap(app.bundleIdentifier)
+if (actualBundleIdentifier !== ${JSON.stringify(expectedBundleIdentifier)}) {
+  throw new Error('unexpected bundle identifier: ' + actualBundleIdentifier)
+}
+// JXA exposes Objective-C no-argument methods as evaluated properties.
+if (!Boolean(app.terminate)) {
+  throw new Error('macOS refused the normal application terminate request')
+}
+`
+  run('/usr/bin/osascript', ['-l', 'JavaScript', '-e', script])
+}
+
+async function waitForRecordedAppToExit(pid, app) {
+  const deadline = Date.now() + shutdownTimeoutMilliseconds
+  while (Date.now() < deadline) {
+    if (processCommandForPid(pid) === null) {
+      return
+    }
+    await new Promise((resolvePromise) =>
+      setTimeout(resolvePromise, shutdownPollMilliseconds),
+    )
+  }
+  const command = processCommandForPid(pid)
+  assert(
+    command === null,
+    `packaged Dara did not exit within ${shutdownTimeoutMilliseconds} ms: ${command ?? app.executable}`,
+  )
+}
+
+function processCommandForPid(pid) {
+  const result = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+    encoding: 'utf8',
+  })
+  if (result.error) {
+    throw result.error
+  }
+  if (result.status === 1) {
+    return null
+  }
+  requireSuccess(result, `ps -p ${pid}`)
+  return result.stdout.trim() || null
 }
 
 function assertNoPackagedAppProcess(executable) {
@@ -1003,7 +1162,16 @@ function resolvePackagedApp(value) {
   assert(statSync(sidecar).isFile(), 'packaged llama-server is missing')
   assert(statSync(litestream).isFile(), 'packaged Litestream is missing')
   readJson(join(path, releaseManifestRelativePath))
-  return { executable, litestream, path, sidecar }
+  const identifier = run('/usr/bin/plutil', [
+    '-extract',
+    'CFBundleIdentifier',
+    'raw',
+    '-o',
+    '-',
+    join(path, appInfoPlistRelativePath),
+  ])
+  assert(identifier, 'packaged Dara bundle identifier is missing')
+  return { executable, identifier, litestream, path, sidecar }
 }
 
 function resolveNewDataDirectory(value) {
@@ -1138,6 +1306,9 @@ function printUsage() {
 Usage:
   pnpm release:acceptance ${AcceptanceCommand.PrepareClean} <data-name>
   pnpm release:acceptance ${AcceptanceCommand.Launch} <data-name> [Dara.app]
+  pnpm release:acceptance ${AcceptanceCommand.CheckRunning} <data-name> [Dara.app]
+  pnpm release:acceptance ${AcceptanceCommand.QuitAndCheck} <data-name> [Dara.app]
+  pnpm release:acceptance ${AcceptanceCommand.CheckStopped} <data-name> [Dara.app]
   pnpm release:acceptance ${AcceptanceCommand.CheckInterruptedDownload} <data-name> [Dara.app]
   pnpm release:acceptance ${AcceptanceCommand.CheckClean} <data-name> [Dara.app]
   pnpm release:acceptance ${AcceptanceCommand.CheckpointRestart} <data-name> [Dara.app]

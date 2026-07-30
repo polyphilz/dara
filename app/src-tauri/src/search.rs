@@ -47,6 +47,7 @@ const SIDECAR_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const HEALTH_POLL_DELAY: Duration = Duration::from_millis(100);
 const RECONCILIATION_POLL_DELAY: Duration = Duration::from_secs(1);
 const EMBEDDING_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const SEARCH_WORKER_JOIN_BUDGET: Duration = Duration::from_secs(35);
 const LIFECYCLE_LOCK_WAIT: Duration = Duration::from_secs(30);
 const LIFECYCLE_LOCK_POLL_DELAY: Duration = Duration::from_millis(50);
 const SIDECAR_LOG_FILE_NAME: &str = "llama-server.log";
@@ -308,11 +309,33 @@ impl SearchService {
         stop_sidecar(&self.inner);
         drop(lock(&self.inner.sidecar_startup));
         if let Some(worker) = lock(&self.worker).take() {
+            join_search_worker_with_budget(worker, SEARCH_WORKER_JOIN_BUDGET);
+        }
+        release_lifecycle_lock(&self.inner);
+    }
+}
+
+fn join_search_worker_with_budget(worker: JoinHandle<()>, budget: Duration) {
+    let (done, completed) = std::sync::mpsc::sync_channel(1);
+    match thread::Builder::new()
+        .name("dara-semantic-search-reaper".into())
+        .spawn(move || {
             if let Err(error) = worker.join() {
                 log::error!("semantic-search worker panicked during shutdown: {error:?}");
             }
+            let _ = done.send(());
+        }) {
+        Ok(_) => {
+            if completed.recv_timeout(budget).is_err() {
+                log::warn!(
+                    "semantic-search worker exceeded the {} ms shutdown deadline",
+                    budget.as_millis()
+                );
+            }
         }
-        release_lifecycle_lock(&self.inner);
+        Err(error) => {
+            log::error!("could not start semantic-search worker reaper: {error}");
+        }
     }
 }
 
@@ -1929,5 +1952,24 @@ mod tests {
         first.unlock().expect("first lifecycle unlock");
         second.try_lock().expect("second lifecycle lock");
         second.unlock().expect("second lifecycle unlock");
+    }
+
+    #[test]
+    fn search_worker_join_respects_its_shutdown_budget() {
+        let (release, released) = std::sync::mpsc::sync_channel(0);
+        let (finished, completion) = std::sync::mpsc::sync_channel(0);
+        let worker = thread::spawn(move || {
+            released.recv().expect("worker release");
+            finished.send(()).expect("worker completion");
+        });
+        let started = Instant::now();
+
+        join_search_worker_with_budget(worker, Duration::from_millis(20));
+
+        assert!(started.elapsed() < Duration::from_secs(1));
+        release.send(()).expect("release worker");
+        completion
+            .recv_timeout(Duration::from_secs(1))
+            .expect("worker should finish after release");
     }
 }
