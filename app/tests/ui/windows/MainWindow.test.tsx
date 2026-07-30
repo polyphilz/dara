@@ -285,7 +285,9 @@ test('saving in the main editor creates the card and returns home', async () => 
     )
   })
   expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(1)
-  expect(getByRole('region', { name: 'Review activity' })).toBeTruthy()
+  expect(
+    await findByRole('region', { name: 'Review activity' }),
+  ).toBeTruthy()
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
 })
 

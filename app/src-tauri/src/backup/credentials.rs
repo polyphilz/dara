@@ -46,6 +46,13 @@ impl R2Credentials {
         &self.secret_access_key
     }
 
+    pub(crate) fn try_clone(&self) -> Result<Self, CredentialError> {
+        Self::new(
+            self.access_key_id().to_owned(),
+            self.secret_access_key().to_owned(),
+        )
+    }
+
     fn encode(&self) -> Result<Zeroizing<Vec<u8>>, CredentialError> {
         let payload = CredentialPayloadRef {
             format_version: CREDENTIAL_FORMAT_VERSION,

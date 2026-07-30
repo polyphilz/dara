@@ -27,6 +27,10 @@ import {
   type OffsiteBackupStatus,
   type OffsiteBackupTarget,
 } from '../../backup/index.ts'
+import {
+  validateR2ConnectionForm,
+  type R2ConnectionFormErrors,
+} from '../../backup/r2-form-validation.ts'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import {
   DaraButtonSize,
@@ -80,12 +84,7 @@ interface BackupForm {
   secretAccessKey: string
 }
 
-interface BackupFormErrors {
-  accountId?: string
-  bucket?: string
-  accessKeyId?: string
-  secretAccessKey?: string
-}
+type BackupFormErrors = R2ConnectionFormErrors
 
 interface OffsiteBackupSectionProps {
   disabled?: boolean
@@ -1029,31 +1028,10 @@ function validateForm(
   form: BackupForm,
   mode: BackupFormMode,
 ): BackupFormErrors {
-  const errors: BackupFormErrors = {}
-  const lowerHex = /^[0-9a-f]+$/
-  if (mode !== BackupFormMode.ReplaceCredentials) {
-    if (form.accountId.length !== 32 || !lowerHex.test(form.accountId)) {
-      errors.accountId = 'Enter the 32-character lowercase R2 account ID.'
-    }
-    if (
-      !/^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])$/.test(form.bucket)
-    ) {
-      errors.bucket =
-        'Use 3–63 lowercase letters, numbers, or hyphens.'
-    }
-  }
-  if (form.accessKeyId.length !== 32 || !lowerHex.test(form.accessKeyId)) {
-    errors.accessKeyId =
-      'Enter the 32-character lowercase R2 Access Key ID.'
-  }
-  if (
-    form.secretAccessKey.length !== 64 ||
-    !lowerHex.test(form.secretAccessKey)
-  ) {
-    errors.secretAccessKey =
-      'Enter the 64-character lowercase R2 Secret Access Key.'
-  }
-  return errors
+  return validateR2ConnectionForm(
+    form,
+    mode !== BackupFormMode.ReplaceCredentials,
+  )
 }
 
 function clearCredentials(

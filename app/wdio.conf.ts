@@ -28,6 +28,7 @@ export const config: WebdriverIO.Config = {
         driverProvider: 'embedded',
         env: {
           DARA_DATA_DIR: dataDirectory,
+          DARA_E2E_START_FRESH: '1',
           RUST_LOG: 'info',
         },
         startTimeout: 60_000,

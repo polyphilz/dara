@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { fireEvent, render, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { expect, test, vi } from 'vitest'
 import { DaraSelect } from '../../../src/components/DaraSelect.tsx'
 
@@ -81,6 +82,25 @@ test('Escape closes the listbox and returns focus to its trigger', async () => {
   await waitFor(() => expect(document.activeElement).toBe(trigger))
 })
 
+test('a direct pointer click toggles the listbox only once', async () => {
+  const user = userEvent.setup()
+  const { getByRole, queryByRole } = render(
+    <DaraSelect
+      ariaLabel="Card type"
+      onSelect={vi.fn()}
+      options={options}
+      value={TestValue.Basic}
+    />,
+  )
+  const trigger = getByRole('button', { name: 'Card type: Basic' })
+
+  await user.click(trigger)
+  expect(getByRole('listbox', { name: 'Card type' })).toBeTruthy()
+
+  await user.click(trigger)
+  expect(queryByRole('listbox', { name: 'Card type' })).toBeNull()
+})
+
 test('returns focus to a caller-owned surface after selection when requested', async () => {
   const returnTarget = document.createElement('button')
   document.body.append(returnTarget)
@@ -98,4 +118,28 @@ test('returns focus to a caller-owned surface after selection when requested', a
 
   await waitFor(() => expect(document.activeElement).toBe(returnTarget))
   returnTarget.remove()
+})
+
+test('associates an external label with the select trigger', async () => {
+  const user = userEvent.setup()
+  const { getByLabelText, getByRole, getByText } = render(
+    <>
+      <label htmlFor="card-type">Card type</label>
+      <DaraSelect
+        ariaLabel="Card type"
+        id="card-type"
+        onSelect={vi.fn()}
+        options={options}
+        value={TestValue.Basic}
+      />
+    </>,
+  )
+
+  const trigger = getByLabelText('Card type')
+  expect(trigger.tagName).toBe('BUTTON')
+  expect(trigger.id).toBe('card-type')
+
+  await user.click(getByText('Card type'))
+
+  expect(getByRole('listbox', { name: 'Card type' })).toBeTruthy()
 })

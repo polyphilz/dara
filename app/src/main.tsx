@@ -13,18 +13,40 @@ import './windows/main/main-window.css'
 import { MainWindow } from './windows/main/MainWindow.tsx'
 import { installAppZoom } from './zoom/app-zoom.ts'
 import { installAppAppearance } from './settings/index.ts'
+import {
+  ApplicationLaunchMode,
+  tauriFreshInstallRecoveryGateway,
+} from './recovery/index.ts'
+import { RecoveryWindow } from './recovery/RecoveryWindow.tsx'
 
 const mainWindowHistory = createHashHistory()
 
-void installAppZoom().catch((error: unknown) => {
-  console.error('Could not initialize app zoom', error)
-})
-void installAppAppearance().catch((error: unknown) => {
-  console.error('Could not initialize app appearance', error)
-})
+async function bootstrap() {
+  const context =
+    await tauriFreshInstallRecoveryGateway.loadLaunchContext()
+  if (context.mode === ApplicationLaunchMode.Normal) {
+    await Promise.all([
+      installAppZoom().catch((error: unknown) => {
+        console.error('Could not initialize app zoom', error)
+      }),
+      installAppAppearance().catch((error: unknown) => {
+        console.error('Could not initialize app appearance', error)
+      }),
+    ])
+  }
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      {context.mode === ApplicationLaunchMode.Recovery ? (
+        <RecoveryWindow />
+      ) : (
+        <MainWindow history={mainWindowHistory} />
+      )}
+    </StrictMode>,
+  )
+}
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <MainWindow history={mainWindowHistory} />
-  </StrictMode>,
-)
+void bootstrap().catch((error: unknown) => {
+  console.error('Could not start Dara', error)
+  document.getElementById('root')!.textContent =
+    'Dara could not start safely. Quit and reopen the app.'
+})

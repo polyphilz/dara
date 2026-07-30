@@ -19,6 +19,7 @@ export interface DaraSelectOption<Value extends string> {
 interface DaraSelectProps<Value extends string> {
   ariaLabel: string
   disabled?: boolean
+  id?: string
   menuHeight?: number
   menuWidth?: number
   onReturnFocus?: () => void
@@ -44,6 +45,7 @@ const VIEWPORT_MARGIN = 8
 export function DaraSelect<Value extends string>({
   ariaLabel,
   disabled = false,
+  id,
   menuHeight = DEFAULT_MENU_HEIGHT,
   menuWidth = DEFAULT_MENU_WIDTH,
   onReturnFocus,
@@ -60,6 +62,8 @@ export function DaraSelect<Value extends string>({
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
+  const suppressNextTriggerClick = useRef(false)
+  const suppressClickTimer = useRef<number | null>(null)
   const menuId = useId()
   const selectedIndex = Math.max(
     0,
@@ -90,6 +94,15 @@ export function DaraSelect<Value extends string>({
       document.removeEventListener('pointerdown', closeOnOutsidePointer, true)
     }
   }, [open, selectedIndex])
+
+  useEffect(
+    () => () => {
+      if (suppressClickTimer.current !== null) {
+        window.clearTimeout(suppressClickTimer.current)
+      }
+    },
+    [],
+  )
 
   const showMenu = () => {
     const trigger = triggerRef.current
@@ -131,13 +144,37 @@ export function DaraSelect<Value extends string>({
     }
   }
 
-  const handleTriggerMouseDown = (event: MouseEvent<HTMLButtonElement>) => {
-    event.preventDefault()
+  const toggleMenu = () => {
     if (open) {
       closeAndReturn()
     } else {
       showMenu()
     }
+  }
+
+  const handleTriggerMouseDown = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault()
+    suppressNextTriggerClick.current = true
+    if (suppressClickTimer.current !== null) {
+      window.clearTimeout(suppressClickTimer.current)
+    }
+    suppressClickTimer.current = window.setTimeout(() => {
+      suppressNextTriggerClick.current = false
+      suppressClickTimer.current = null
+    }, 0)
+    toggleMenu()
+  }
+
+  const handleTriggerClick = () => {
+    if (suppressNextTriggerClick.current) {
+      suppressNextTriggerClick.current = false
+      if (suppressClickTimer.current !== null) {
+        window.clearTimeout(suppressClickTimer.current)
+        suppressClickTimer.current = null
+      }
+      return
+    }
+    toggleMenu()
   }
 
   const handleTriggerKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
@@ -214,6 +251,8 @@ export function DaraSelect<Value extends string>({
         aria-label={`${ariaLabel}: ${currentLabel}`}
         className={triggerClasses}
         disabled={disabled}
+        id={id}
+        onClick={handleTriggerClick}
         onKeyDown={handleTriggerKeyDown}
         onMouseDown={handleTriggerMouseDown}
         ref={triggerRef}

@@ -712,6 +712,35 @@ impl UtcTimestamp {
             .map_err(|_| BackupDomainError::InvalidField("createdAt"))
     }
 
+    pub(crate) fn parse_basic_utc(value: &str) -> Result<Self, BackupDomainError> {
+        if value.len() != 16 {
+            return Err(BackupDomainError::InvalidField("createdAt"));
+        }
+        let bytes = value.as_bytes();
+        if bytes[8] != b'T'
+            || bytes[15] != b'Z'
+            || bytes
+                .iter()
+                .enumerate()
+                .any(|(index, byte)| !matches!(index, 8 | 15) && !byte.is_ascii_digit())
+        {
+            return Err(BackupDomainError::InvalidField("createdAt"));
+        }
+        let timestamp = Self::parse(format!(
+            "{}-{}-{}T{}:{}:{}Z",
+            &value[0..4],
+            &value[4..6],
+            &value[6..8],
+            &value[9..11],
+            &value[11..13],
+            &value[13..15],
+        ))?;
+        if timestamp.basic_utc()? != value {
+            return Err(BackupDomainError::InvalidField("createdAt"));
+        }
+        Ok(timestamp)
+    }
+
     fn basic_utc(&self) -> Result<String, BackupDomainError> {
         let value = OffsetDateTime::parse(&self.0, &Rfc3339)
             .map_err(|_| BackupDomainError::InvalidField("createdAt"))?;
