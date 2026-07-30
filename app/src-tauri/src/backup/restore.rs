@@ -64,6 +64,7 @@ const ACCESS_KEY_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCESS_KEY_ID";
 const SECRET_ACCESS_KEY_ENV: &str = "DARA_LITESTREAM_R2_SECRET_ACCESS_KEY";
 const RESTORE_RUNTIME_PREFIX: &str = ".dara-ls-restore-";
 const RESTORE_RUNTIME_CREATE_ATTEMPTS: usize = 8;
+const FRESH_PLACEHOLDER_QUARANTINE_PREFIX: &str = ".dara-recovery-quarantine-";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RemoteCheckpointSelector {
@@ -753,7 +754,7 @@ impl RemoteRecoveryEngine {
 
 fn prepare_fresh_restore_target(data_directory: &Path) -> Result<(), BackupErrorCode> {
     let paths = crate::database::DatabasePaths::new(data_directory);
-    let mut removed_placeholder = false;
+    let mut quarantine = None;
     for database_path in [&paths.main, &paths.media] {
         match connection::inspect_file(database_path)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?
@@ -763,21 +764,89 @@ fn prepare_fresh_restore_target(data_directory: &Path) -> Result<(), BackupError
         }
         match fs::symlink_metadata(database_path) {
             Ok(metadata) if metadata.file_type().is_file() && metadata.len() == 0 => {
-                fs::remove_file(database_path)
-                    .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
-                removed_placeholder = true;
+                if quarantine.is_none() {
+                    quarantine = Some(FreshPlaceholderQuarantine::create(data_directory)?);
+                }
+                quarantine
+                    .as_ref()
+                    .expect("fresh placeholder quarantine was initialized")
+                    .capture(database_path)?;
             }
             Ok(_) => return Err(BackupErrorCode::RestoreValidationFailed),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
         }
     }
-    if removed_placeholder {
-        File::open(data_directory)
-            .and_then(|directory| directory.sync_all())
-            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
-    }
     recovery::ensure_fresh_offsite_restore_target(&paths)
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)
+}
+
+struct FreshPlaceholderQuarantine {
+    path: PathBuf,
+}
+
+impl FreshPlaceholderQuarantine {
+    fn create(data_directory: &Path) -> Result<Self, BackupErrorCode> {
+        let path = data_directory.join(format!(
+            "{FRESH_PLACEHOLDER_QUARANTINE_PREFIX}{}",
+            Uuid::now_v7()
+        ));
+        create_private_directory(&path)?;
+        sync_restore_directory(data_directory)?;
+        Ok(Self { path })
+    }
+
+    fn capture(&self, database_path: &Path) -> Result<(), BackupErrorCode> {
+        let file_name = database_path
+            .file_name()
+            .ok_or(BackupErrorCode::RestoreValidationFailed)?;
+        let quarantined_path = self.path.join(file_name);
+        match fs::rename(database_path, &quarantined_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+        }
+        sync_restore_directory(&self.path)?;
+        sync_restore_directory(
+            database_path
+                .parent()
+                .ok_or(BackupErrorCode::RestoreValidationFailed)?,
+        )?;
+
+        let metadata = fs::symlink_metadata(&quarantined_path)
+            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        if metadata.file_type().is_file() && metadata.len() == 0 {
+            return Ok(());
+        }
+
+        if metadata.file_type().is_file() {
+            match fs::hard_link(&quarantined_path, database_path) {
+                Ok(()) => sync_restore_directory(
+                    database_path
+                        .parent()
+                        .ok_or(BackupErrorCode::RestoreValidationFailed)?,
+                )?,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    log::warn!(
+                        "could not relink a changed recovery placeholder; preserved it at {}: \
+                         {error}",
+                        quarantined_path.display()
+                    );
+                }
+            }
+        }
+        log::warn!(
+            "a recovery placeholder changed while it was being quarantined; preserved it at {}",
+            quarantined_path.display()
+        );
+        Err(BackupErrorCode::RestoreValidationFailed)
+    }
+}
+
+fn sync_restore_directory(path: &Path) -> Result<(), BackupErrorCode> {
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
         .map_err(|_| BackupErrorCode::RestoreValidationFailed)
 }
 
@@ -1816,7 +1885,7 @@ mod tests {
     }
 
     #[test]
-    fn fresh_install_restore_removes_zero_length_database_placeholders() {
+    fn fresh_install_restore_quarantines_zero_length_database_placeholders() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let paths = DatabasePaths::new(directory.path());
         fs::write(&paths.main, []).expect("empty main placeholder");
@@ -1826,6 +1895,61 @@ mod tests {
 
         assert!(!paths.main.exists());
         assert!(!paths.media.exists());
+        let quarantines = fs::read_dir(directory.path())
+            .expect("quarantine entries")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(FRESH_PLACEHOLDER_QUARANTINE_PREFIX)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(quarantines.len(), 1);
+        assert_eq!(
+            fs::read(
+                quarantines[0]
+                    .path()
+                    .join(paths.main.file_name().expect("main file name")),
+            )
+            .expect("quarantined main"),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            fs::read(
+                quarantines[0]
+                    .path()
+                    .join(paths.media.file_name().expect("media file name")),
+            )
+            .expect("quarantined media"),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn changed_placeholder_is_preserved_and_rejected_after_atomic_quarantine() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let paths = DatabasePaths::new(directory.path());
+        let quarantine = FreshPlaceholderQuarantine::create(directory.path()).expect("quarantine");
+        fs::write(&paths.main, b"database").expect("changed placeholder");
+
+        assert_eq!(
+            quarantine.capture(&paths.main),
+            Err(BackupErrorCode::RestoreValidationFailed)
+        );
+        assert_eq!(
+            fs::read(&paths.main).expect("relinked database"),
+            b"database"
+        );
+        assert_eq!(
+            fs::read(
+                quarantine
+                    .path
+                    .join(paths.main.file_name().expect("main file name")),
+            )
+            .expect("preserved database"),
+            b"database"
+        );
     }
 
     #[test]
