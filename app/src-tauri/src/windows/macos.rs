@@ -210,6 +210,18 @@ pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     Ok(())
 }
 
+pub fn setup_recovery(app: &mut App) -> tauri::Result<()> {
+    app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    let window = app
+        .get_webview_window(MAIN_LABEL)
+        .ok_or(tauri::Error::WebviewNotFound)?;
+    window.set_title(&app.package_info().name)?;
+    window.center()?;
+    window.show()?;
+    window.set_focus()?;
+    Ok(())
+}
+
 fn enable_main_navigation_gestures(app: &App) -> tauri::Result<()> {
     let window = app
         .get_webview_window(MAIN_LABEL)
@@ -974,7 +986,9 @@ pub fn show_main(app: AppHandle) -> Result<(), String> {
 }
 
 fn show_main_inner(app: &AppHandle) -> Result<(), String> {
-    dismiss_quick_add_inner(app, DismissFocus::PreserveCurrent)?;
+    if app.try_state::<SpikeState>().is_some() {
+        dismiss_quick_add_inner(app, DismissFocus::PreserveCurrent)?;
+    }
     activate_main_window(app)
 }
 

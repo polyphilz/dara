@@ -8,6 +8,7 @@ mod external;
 mod logging;
 mod media;
 mod recovery;
+mod recovery_startup;
 mod search;
 mod windows;
 
@@ -51,13 +52,18 @@ impl ExitShutdownState {
 }
 
 fn shutdown_managed_services(app: &tauri::AppHandle) {
-    app.state::<backup::checkpoint::CheckpointCoordinator>()
-        .shutdown();
-    app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
-        .shutdown();
-    app.state::<search::SearchService>().shutdown();
-    app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
-        .shutdown();
+    if let Some(service) = app.try_state::<backup::checkpoint::CheckpointCoordinator>() {
+        service.shutdown();
+    }
+    if let Some(service) = app.try_state::<backup::media_reconciliation::MediaBackupCoordinator>() {
+        service.shutdown();
+    }
+    if let Some(service) = app.try_state::<search::SearchService>() {
+        service.shutdown();
+    }
+    if let Some(service) = app.try_state::<backup::litestream_runtime::LitestreamRuntimeService>() {
+        service.shutdown();
+    }
 }
 
 fn finish_exit_after_shutdown(
@@ -147,6 +153,9 @@ pub fn run() {
             media::ingest_clipboard_image,
             media::ingest_image_bytes,
             external::open_external_url,
+            recovery_startup::discover_remote_backups,
+            recovery_startup::load_application_launch_context,
+            recovery_startup::start_fresh_install,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,
             windows::macos::load_settings,
@@ -163,6 +172,14 @@ pub fn run() {
             let data_root = app.state::<app_lock::AppDataLock>().data_root().to_owned();
             let database_paths = database::DatabasePaths::new(data_root);
             recovery::recover_interrupted_restore(&database_paths)?;
+            let pair_state = recovery_startup::inspect_database_pair(&database_paths)?;
+            let launch_context = recovery_startup::launch_context(pair_state);
+            app.manage(launch_context);
+            if pair_state == recovery_startup::DatabasePairState::Fresh {
+                app.manage(recovery_startup::FreshInstallRecoveryState::default());
+                windows::macos::setup_recovery(app)?;
+                return Ok(());
+            }
             database::register_sqlite_vec()?;
             let database = database::initialize(
                 database_paths.clone(),
@@ -229,12 +246,19 @@ pub fn run() {
             {
                 log::error!("failed to refresh review clock after wake: {error}");
             }
-            app.state::<backup::media_reconciliation::MediaBackupCoordinator>()
-                .connectivity_restored();
-            app.state::<backup::litestream_runtime::LitestreamRuntimeService>()
-                .connectivity_restored();
-            app.state::<backup::checkpoint::CheckpointCoordinator>()
-                .wake();
+            if let Some(service) =
+                app.try_state::<backup::media_reconciliation::MediaBackupCoordinator>()
+            {
+                service.connectivity_restored();
+            }
+            if let Some(service) =
+                app.try_state::<backup::litestream_runtime::LitestreamRuntimeService>()
+            {
+                service.connectivity_restored();
+            }
+            if let Some(service) = app.try_state::<backup::checkpoint::CheckpointCoordinator>() {
+                service.wake();
+            }
         }
         match event {
             RunEvent::ExitRequested { code, api, .. } => {

@@ -112,6 +112,9 @@ export class FakeDaraBackend {
       payload: recordedPayload(command, payload),
     })
     switch (command) {
+      case DaraIpcCommand.LoadApplicationLaunchContext:
+        requireEmptyPayload(payload, command)
+        return { mode: 'NORMAL' }
       case DaraIpcCommand.CreateCardContent: {
         const envelope = requireRecord(payload, command)
         const content = requireCardContentDraft(envelope.input, command)
