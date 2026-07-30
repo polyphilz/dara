@@ -632,14 +632,19 @@ body {
   font-weight: 750;
 }
 
-.backup-state-pill.on {
+.backup-state-pill.healthy {
   color: #31714b;
   background: color-mix(in srgb, #31714b 11%, transparent);
 }
 
-.backup-state-pill.off {
+.backup-state-pill.neutral {
   color: var(--ink);
   background: color-mix(in srgb, var(--muted) 11%, transparent);
+}
+
+.backup-state-pill.warning {
+  color: #a05d22;
+  background: color-mix(in srgb, #a05d22 11%, transparent);
 }
 
 .offsite-backup-form,

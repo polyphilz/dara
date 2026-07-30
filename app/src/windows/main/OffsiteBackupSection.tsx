@@ -70,6 +70,23 @@ const BackupStatusTone = {
 type BackupStatusTone =
   (typeof BackupStatusTone)[keyof typeof BackupStatusTone]
 
+const BackupOverviewState = {
+  Off: 'OFF',
+  On: 'ON',
+  WaitingForTakeover: 'WAITING_FOR_TAKEOVER',
+} as const
+
+type BackupOverviewState =
+  (typeof BackupOverviewState)[keyof typeof BackupOverviewState]
+
+const BackupNoticeLifetime = {
+  UntilNextOperation: 'UNTIL_NEXT_OPERATION',
+  UntilCompleteCheckpoint: 'UNTIL_COMPLETE_CHECKPOINT',
+} as const
+
+type BackupNoticeLifetime =
+  (typeof BackupNoticeLifetime)[keyof typeof BackupNoticeLifetime]
+
 const jurisdictionOptions = [
   { label: 'Automatic', value: R2Jurisdiction.Default },
   { label: 'European Union', value: R2Jurisdiction.Eu },
@@ -82,6 +99,46 @@ interface BackupForm {
   bucket: string
   accessKeyId: string
   secretAccessKey: string
+}
+
+interface BackupNotice {
+  message: string
+  lifetime: BackupNoticeLifetime
+}
+
+interface BackupOverview {
+  detail: string
+  pill: string
+  state: BackupOverviewState
+  title: string
+  tone: BackupStatusTone
+}
+
+const backupOverviews: Record<BackupOverviewState, BackupOverview> = {
+  [BackupOverviewState.Off]: {
+    detail:
+      'Dara always works from this Mac. A network or backup problem will not block normal use.',
+    pill: 'Off',
+    state: BackupOverviewState.Off,
+    title: 'Backup is off',
+    tone: BackupStatusTone.Neutral,
+  },
+  [BackupOverviewState.On]: {
+    detail:
+      'Dara always works from this Mac. A network or backup problem will not block normal use.',
+    pill: 'On',
+    state: BackupOverviewState.On,
+    title: 'Backup is on',
+    tone: BackupStatusTone.Healthy,
+  },
+  [BackupOverviewState.WaitingForTakeover]: {
+    detail:
+      'This restored library works normally, but new backups are paused until this Mac takes over.',
+    pill: 'Paused',
+    state: BackupOverviewState.WaitingForTakeover,
+    title: 'Backup is paused',
+    tone: BackupStatusTone.Warning,
+  },
 }
 
 type BackupFormErrors = R2ConnectionFormErrors
@@ -107,7 +164,7 @@ export function OffsiteBackupSection({
   const [operation, setOperation] =
     useState<OffsiteBackupOperationKind | null>(null)
   const [progress, setProgress] = useState<OffsiteBackupProgress | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
+  const [notice, setNotice] = useState<BackupNotice | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
   const [confirmation, setConfirmation] =
     useState<BackupConfirmation | null>(null)
@@ -126,6 +183,11 @@ export function OffsiteBackupSection({
   const applyStatus = useCallback((next: OffsiteBackupStatus) => {
     setStatus(next)
     setLoadingError(null)
+    setNotice((current) =>
+      current && noticeWasSupersededByStatus(current, next)
+        ? null
+        : current,
+    )
     if (next.target && !targetFormDirtyRef.current) {
       setForm((current) => ({
         ...current,
@@ -138,11 +200,12 @@ export function OffsiteBackupSection({
 
   const reload = useCallback(async () => {
     try {
-      applyStatus(await gateway.loadStatus())
-      return true
+      const next = await gateway.loadStatus()
+      applyStatus(next)
+      return next
     } catch (error) {
       setLoadingError(errorMessage(error))
-      return false
+      return null
     }
   }, [applyStatus, gateway])
 
@@ -206,6 +269,7 @@ export function OffsiteBackupSection({
     invoke: () => Promise<OffsiteBackupOperation>,
     success: string,
     returnFocus?: () => void,
+    waitForCompleteCheckpoint = false,
   ) => {
     setOperation(kind)
     setProgress(null)
@@ -220,9 +284,22 @@ export function OffsiteBackupSection({
         return
       }
       if (accepted.reused) {
-        setNotice('That backup task is already running.')
+        setNotice({
+          message: 'That backup task is already running.',
+          lifetime: BackupNoticeLifetime.UntilNextOperation,
+        })
       } else {
-        setNotice(success)
+        const nextNotice: BackupNotice = {
+          message: success,
+          lifetime: waitForCompleteCheckpoint
+            ? BackupNoticeLifetime.UntilCompleteCheckpoint
+            : BackupNoticeLifetime.UntilNextOperation,
+        }
+        setNotice(
+          noticeWasSupersededByStatus(nextNotice, refreshed)
+            ? null
+            : nextNotice,
+        )
         targetFormDirtyRef.current = false
         setFormMode(BackupFormMode.Configure)
       }
@@ -276,12 +353,17 @@ export function OffsiteBackupSection({
       OffsiteBackupOperationKind.TestAndEnable,
       () => gateway.testAndEnable({ credentials, target }),
       'Off-site backup is enabled. Dara is building its first complete backup.',
+      undefined,
+      true,
     )
   }
 
   const activeOperation = operation ?? status?.activeOperation?.operation ?? null
   const controlsDisabled = disabled || activeOperation !== null
   const enabled = status?.enabled === true
+  const overview = backupOverview(status)
+  const waitingForTakeover =
+    overview.state === BackupOverviewState.WaitingForTakeover
 
   return (
     <section className="setting-section offsite-backup-section">
@@ -313,14 +395,11 @@ export function OffsiteBackupSection({
             )}
             <div className="offsite-backup-intro">
               <div>
-                <strong>{enabled ? 'Backup is on' : 'Backup is off'}</strong>
-                <span>
-                  Dara always works from this Mac. A network or backup problem
-                  will not block normal use.
-                </span>
+                <strong>{overview.title}</strong>
+                <span>{overview.detail}</span>
               </div>
-              <span className={`backup-state-pill ${enabled ? 'on' : 'off'}`}>
-                {enabled ? 'On' : 'Off'}
+              <span className={`backup-state-pill ${overview.tone}`}>
+                {overview.pill}
               </span>
             </div>
 
@@ -379,7 +458,7 @@ export function OffsiteBackupSection({
               <div className="offsite-backup-actions">
                 <div className="offsite-backup-primary-actions">
                   <DaraButton
-                    disabled={controlsDisabled}
+                    disabled={controlsDisabled || waitingForTakeover}
                     onClick={() =>
                       void runOperation(
                         OffsiteBackupOperationKind.BackupNow,
@@ -556,7 +635,11 @@ export function OffsiteBackupSection({
                   )}
                 </p>
               )}
-              {notice && <p className="success" role="status">{notice}</p>}
+              {notice && (
+                <p className="success" role="status">
+                  {notice.message}
+                </p>
+              )}
               {operationError && <p className="error" role="alert">{operationError}</p>}
             </div>
           </>
@@ -596,6 +679,7 @@ export function OffsiteBackupSection({
                   changeTargetButtonRef.current
                 focusTarget?.focus()
               },
+              true,
             )
           }}
           title="Change off-site backup target?"
@@ -695,6 +779,7 @@ export function OffsiteBackupSection({
               () => gateway.takeOverRestoredBackup(),
               'This Mac now owns the backup. Dara is building a new complete checkpoint.',
               () => takeoverButtonRef.current?.focus(),
+              true,
             )
           }
           title="Take over this restored backup?"
@@ -975,6 +1060,30 @@ function BackupStatusItem({
         <span>{detail}</span>
       </dd>
     </div>
+  )
+}
+
+function backupOverview(
+  status: OffsiteBackupStatus | null,
+): BackupOverview {
+  const state =
+    status?.enabled === true && status.takeoverAvailable
+      ? BackupOverviewState.WaitingForTakeover
+      : status?.enabled === true
+        ? BackupOverviewState.On
+        : BackupOverviewState.Off
+  return backupOverviews[state]
+}
+
+function noticeWasSupersededByStatus(
+  notice: BackupNotice,
+  status: OffsiteBackupStatus,
+): boolean {
+  return (
+    notice.lifetime ===
+      BackupNoticeLifetime.UntilCompleteCheckpoint &&
+    status.checkpoint.phase === CheckpointBackupPhase.Idle &&
+    status.checkpoint.lastCompleteCheckpointId !== null
   )
 }
 
