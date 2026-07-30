@@ -33,6 +33,7 @@ const REMOTE_RESTORE_ARGUMENT: &str = "remote-restore";
 const RESTORE_INTENT_FILE_NAME: &str = ".dara-restore-intent.json";
 const RESTORE_INTENT_TEMP_FILE_NAME: &str = ".dara-restore-intent.json.tmp";
 const RESTORE_INTENT_FORMAT_VERSION: u32 = 1;
+const RESTORE_ABORT_QUARANTINE_PREFIX: &str = ".dara-restore-abort-quarantine-";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -1170,14 +1171,68 @@ fn validate_exclusive_install_destination(
 }
 
 fn remove_link_if_owned(source: &Path, destination: &Path) -> Result<(), RecoveryError> {
-    match fs::symlink_metadata(destination) {
-        Ok(_) if paths_refer_to_same_file(source, destination)? => {
-            remove_file_if_exists(destination)
+    let destination_root = destination.parent().ok_or_else(|| {
+        RecoveryError::InvalidRestoreJournal(format!(
+            "installed restore path {} has no parent",
+            destination.display()
+        ))
+    })?;
+    let file_name = destination.file_name().ok_or_else(|| {
+        RecoveryError::InvalidRestoreJournal(format!(
+            "installed restore path {} has no file name",
+            destination.display()
+        ))
+    })?;
+    let quarantine = create_private_restore_quarantine(destination_root)?;
+    let quarantined_destination = quarantine.join(file_name);
+    match fs::rename(destination, &quarantined_destination) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::remove_dir(&quarantine)?;
+            sync_directory(destination_root)?;
+            return Ok(());
         }
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error.into()),
+        Err(error) => return Err(error.into()),
     }
+    sync_directory(&quarantine)?;
+    sync_directory(destination_root)?;
+
+    if paths_refer_to_same_file(source, &quarantined_destination)? {
+        remove_file_if_exists(&quarantined_destination)?;
+        fs::remove_dir(&quarantine)?;
+        sync_directory(destination_root)?;
+        return Ok(());
+    }
+
+    let metadata = fs::symlink_metadata(&quarantined_destination)?;
+    if !metadata.file_type().is_file() {
+        return Err(RecoveryError::InvalidRestoreTarget);
+    }
+    match fs::hard_link(&quarantined_destination, destination) {
+        Ok(()) => sync_directory(destination_root)?,
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
+    }
+    log::warn!(
+        "a database path changed during fresh-restore cleanup; preserved the moved entry at {}",
+        quarantined_destination.display()
+    );
+    Ok(())
+}
+
+fn create_private_restore_quarantine(root: &Path) -> Result<PathBuf, RecoveryError> {
+    let quarantine = root.join(format!(
+        "{RESTORE_ABORT_QUARANTINE_PREFIX}{}",
+        Uuid::now_v7()
+    ));
+    fs::create_dir(&quarantine)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&quarantine, fs::Permissions::from_mode(0o700))?;
+    }
+    sync_directory(root)?;
+    Ok(quarantine)
 }
 
 #[cfg(unix)]
@@ -1685,6 +1740,75 @@ mod tests {
             b"external database"
         );
         assert!(source.main_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_restore_abort_removes_only_its_owned_link() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("staged.sqlite3");
+        let destination = directory.path().join("dara.sqlite3");
+        fs::write(&source, b"staged database").expect("staged database");
+        fs::hard_link(&source, &destination).expect("installed hard link");
+
+        remove_link_if_owned(&source, &destination).expect("remove owned link");
+
+        assert!(!destination.exists());
+        assert_eq!(
+            fs::read(&source).expect("staged source"),
+            b"staged database"
+        );
+        assert!(
+            fs::read_dir(directory.path())
+                .expect("data directory")
+                .filter_map(Result::ok)
+                .all(|entry| {
+                    !entry
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with(RESTORE_ABORT_QUARANTINE_PREFIX)
+                }),
+            "owned link left a quarantine behind"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn fresh_restore_abort_preserves_an_atomically_replaced_destination() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("staged.sqlite3");
+        let destination = directory.path().join("dara.sqlite3");
+        let replacement = directory.path().join("external.sqlite3");
+        fs::write(&source, b"staged database").expect("staged database");
+        fs::hard_link(&source, &destination).expect("installed hard link");
+        fs::write(&replacement, b"external database").expect("external database");
+        fs::rename(&replacement, &destination).expect("atomic replacement");
+
+        remove_link_if_owned(&source, &destination).expect("preserve replacement");
+
+        assert_eq!(
+            fs::read(&destination).expect("restored destination"),
+            b"external database"
+        );
+        assert_eq!(
+            fs::read(&source).expect("staged source"),
+            b"staged database"
+        );
+        let quarantines = fs::read_dir(directory.path())
+            .expect("data directory")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(RESTORE_ABORT_QUARANTINE_PREFIX)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(quarantines.len(), 1);
+        assert_eq!(
+            fs::read(quarantines[0].path().join("dara.sqlite3")).expect("quarantined destination"),
+            b"external database"
+        );
     }
 
     #[test]
