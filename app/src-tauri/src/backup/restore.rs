@@ -503,8 +503,13 @@ impl RemoteRecoveryEngine {
         let mut stages = vec![RestoreValidationStage::CheckpointDiscovered];
         let restored =
             self.reconstruct(task.path(), &discovered.epoch, &checkpoint, &mut stages)?;
-        recovery::install_offsite_snapshot(lock, &restored.manifest_path)
-            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        if expected_backup_set_id.is_some() {
+            recovery::install_fresh_offsite_snapshot(lock, &restored.manifest_path)
+                .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        } else {
+            recovery::install_offsite_snapshot(lock, &restored.manifest_path)
+                .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        }
         Ok(RemoteRestoreReport {
             checkpoint_id: checkpoint.manifest.checkpoint_id().clone(),
             checkpoint_created_at: checkpoint.manifest.created_at().as_str().to_owned(),
@@ -2774,6 +2779,30 @@ mod tests {
         assert!(recovery::restored_offsite_takeover_required(&paths)
             .expect("off-site takeover requirement"));
         recovery::confirm_restored_launch(&paths).expect("launch confirmation");
+    }
+
+    #[test]
+    fn fresh_install_restore_uses_the_exclusive_install_path() {
+        let fixture = rich_remote_fixture();
+        let target = tempfile::tempdir().expect("restore parent");
+        let data_root = target.path().join("restored");
+        fs::create_dir(&data_root).expect("fresh data root");
+        let lock = AppDataLock::acquire(&data_root).expect("data lock");
+
+        fixture
+            .engine
+            .restore_fresh_to_locked(
+                &lock,
+                &RemoteCheckpointSelector::Latest,
+                fixture.manifest.backup_set_id(),
+            )
+            .expect("fresh remote restore");
+
+        let paths = DatabasePaths::new(&data_root);
+        connection::open_read_only(&paths.main, DatabaseKind::Main).expect("installed main");
+        connection::open_read_only(&paths.media, DatabaseKind::Media).expect("installed media");
+        assert!(recovery::restored_offsite_takeover_required(&paths)
+            .expect("off-site takeover requirement"));
     }
 
     #[test]

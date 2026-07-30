@@ -14,9 +14,7 @@ use zeroize::Zeroize;
 use crate::{
     app_lock::AppDataLock,
     backup::{
-        credentials::{
-            CredentialError, CredentialStore, MacOsKeychainCredentialStore, R2Credentials,
-        },
+        credentials::{CredentialStore, MacOsKeychainCredentialStore, R2Credentials},
         domain::{
             BackupErrorCode, BackupSetId, CheckpointId, R2AccountId, R2BucketName, R2Jurisdiction,
             R2Prefix, R2Target,
@@ -452,28 +450,9 @@ fn restore_session(
             }));
         }
     }
-    let credential_store = MacOsKeychainCredentialStore;
-    let previous_credentials = match save_restore_credentials(
-        &credential_store,
-        &session.backup_set_id,
-        &session.credentials,
-    ) {
-        Ok(previous_credentials) => previous_credentials,
-        Err(_) => {
-            return Err(Box::new(RestoreSessionFailure {
-                error: RecoveryCommandError::backup(BackupErrorCode::KeychainUnavailable),
-                session,
-            }));
-        }
-    };
     let engine_credentials = match session.credentials.try_clone() {
         Ok(credentials) => credentials,
         Err(_) => {
-            restore_previous_credentials(
-                &credential_store,
-                &session.backup_set_id,
-                previous_credentials.as_ref(),
-            );
             return Err(Box::new(RestoreSessionFailure {
                 error: RecoveryCommandError::invalid_input(),
                 session,
@@ -487,57 +466,30 @@ fn restore_session(
     ) {
         Ok(engine) => engine,
         Err(error) => {
-            restore_previous_credentials(
-                &credential_store,
-                &session.backup_set_id,
-                previous_credentials.as_ref(),
-            );
             return Err(Box::new(RestoreSessionFailure {
                 error: RecoveryCommandError::backup(error),
                 session,
             }));
         }
     };
-    match engine.restore_fresh_to_locked(data_lock, selector, &session.backup_set_id) {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            restore_previous_credentials(
-                &credential_store,
-                &session.backup_set_id,
-                previous_credentials.as_ref(),
-            );
-            Err(Box::new(RestoreSessionFailure {
-                error: RecoveryCommandError::backup(error),
-                session,
-            }))
-        }
+    if let Err(error) = engine.restore_fresh_to_locked(data_lock, selector, &session.backup_set_id)
+    {
+        return Err(Box::new(RestoreSessionFailure {
+            error: RecoveryCommandError::backup(error),
+            session,
+        }));
     }
-}
-
-fn save_restore_credentials(
-    credential_store: &impl CredentialStore,
-    backup_set_id: &BackupSetId,
-    credentials: &R2Credentials,
-) -> Result<Option<R2Credentials>, CredentialError> {
-    let previous_credentials = match credential_store.load(backup_set_id) {
-        Ok(credentials) => Some(credentials),
-        Err(CredentialError::Missing) => None,
-        Err(error) => return Err(error),
-    };
-    credential_store.save(backup_set_id, credentials)?;
-    Ok(previous_credentials)
-}
-
-fn restore_previous_credentials(
-    credential_store: &impl CredentialStore,
-    backup_set_id: &BackupSetId,
-    previous_credentials: Option<&R2Credentials>,
-) {
-    if let Some(previous_credentials) = previous_credentials {
-        let _ = credential_store.save(backup_set_id, previous_credentials);
-    } else {
-        let _ = credential_store.remove(backup_set_id);
+    // Keep any existing canonical credentials untouched until the restore journal
+    // durably records an installed, validated database pair. A crash during remote
+    // reconstruction therefore cannot destroy credentials used by another Dara
+    // data directory. A post-install Keychain failure is recoverable from Settings:
+    // restored backups remain paused until the user explicitly takes ownership.
+    if let Err(error) =
+        MacOsKeychainCredentialStore.save(&session.backup_set_id, &session.credentials)
+    {
+        log::warn!("restored Dara data but could not save its R2 credentials: {error}");
     }
+    Ok(())
 }
 
 fn parse_connection(
@@ -566,46 +518,6 @@ fn parse_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[derive(Default)]
-    struct RecordingCredentialStore {
-        load_unavailable: AtomicBool,
-        saved_access_keys: Mutex<Vec<String>>,
-        removals: std::sync::atomic::AtomicUsize,
-    }
-
-    impl CredentialStore for RecordingCredentialStore {
-        fn save(
-            &self,
-            _backup_set_id: &BackupSetId,
-            credentials: &R2Credentials,
-        ) -> Result<(), crate::backup::credentials::CredentialError> {
-            self.saved_access_keys
-                .lock()
-                .expect("saved credentials")
-                .push(credentials.access_key_id().to_owned());
-            Ok(())
-        }
-
-        fn load(
-            &self,
-            _backup_set_id: &BackupSetId,
-        ) -> Result<R2Credentials, crate::backup::credentials::CredentialError> {
-            if self.load_unavailable.load(Ordering::Relaxed) {
-                Err(crate::backup::credentials::CredentialError::Unavailable)
-            } else {
-                Err(crate::backup::credentials::CredentialError::Missing)
-            }
-        }
-
-        fn remove(
-            &self,
-            _backup_set_id: &BackupSetId,
-        ) -> Result<(), crate::backup::credentials::CredentialError> {
-            self.removals.fetch_add(1, Ordering::Relaxed);
-            Ok(())
-        }
-    }
 
     #[test]
     fn empty_directory_enters_recovery_without_creating_databases() {
@@ -697,63 +609,5 @@ mod tests {
 
         drop(operation);
         state.begin_operation().expect("operation after release");
-    }
-
-    #[test]
-    fn failed_restore_reinstates_previous_credentials() {
-        let store = RecordingCredentialStore::default();
-        let backup_set_id = BackupSetId::new();
-        let previous = R2Credentials::new(
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        )
-        .expect("previous credentials");
-
-        restore_previous_credentials(&store, &backup_set_id, Some(&previous));
-
-        assert_eq!(
-            store
-                .saved_access_keys
-                .lock()
-                .expect("saved credentials")
-                .as_slice(),
-            ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
-        );
-        assert_eq!(store.removals.load(Ordering::Relaxed), 0);
-    }
-
-    #[test]
-    fn failed_restore_removes_new_credentials_when_none_existed() {
-        let store = RecordingCredentialStore::default();
-
-        restore_previous_credentials(&store, &BackupSetId::new(), None);
-
-        assert!(store
-            .saved_access_keys
-            .lock()
-            .expect("saved credentials")
-            .is_empty());
-        assert_eq!(store.removals.load(Ordering::Relaxed), 1);
-    }
-
-    #[test]
-    fn unavailable_keychain_is_not_overwritten_before_restore() {
-        let store = RecordingCredentialStore::default();
-        store.load_unavailable.store(true, Ordering::Relaxed);
-        let credentials = R2Credentials::new(
-            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        )
-        .expect("candidate credentials");
-
-        assert!(matches!(
-            save_restore_credentials(&store, &BackupSetId::new(), &credentials),
-            Err(CredentialError::Unavailable)
-        ));
-        assert!(store
-            .saved_access_keys
-            .lock()
-            .expect("saved credentials")
-            .is_empty());
     }
 }

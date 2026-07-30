@@ -83,6 +83,8 @@ struct RestoreIntent {
     phase: RestorePhase,
     #[serde(default)]
     offsite_takeover_required: bool,
+    #[serde(default)]
+    fresh_target_required: bool,
     source_manifest: PathBuf,
     expected: snapshot::SnapshotManifest,
     stage_directory: String,
@@ -477,6 +479,21 @@ pub(crate) fn install_offsite_snapshot(
     target_lock: &AppDataLock,
     manifest_path: &Path,
 ) -> Result<(), RecoveryError> {
+    install_offsite_snapshot_with_target_policy(target_lock, manifest_path, false)
+}
+
+pub(crate) fn install_fresh_offsite_snapshot(
+    target_lock: &AppDataLock,
+    manifest_path: &Path,
+) -> Result<(), RecoveryError> {
+    install_offsite_snapshot_with_target_policy(target_lock, manifest_path, true)
+}
+
+fn install_offsite_snapshot_with_target_policy(
+    target_lock: &AppDataLock,
+    manifest_path: &Path,
+    fresh_target_required: bool,
+) -> Result<(), RecoveryError> {
     prepare_offsite_restore_target(target_lock)?;
     let target_root = fs::canonicalize(target_lock.data_root())?;
     let manifest_path = fs::canonicalize(manifest_path)?;
@@ -485,7 +502,7 @@ pub(crate) fn install_offsite_snapshot(
     }
     let paths = DatabasePaths::new(target_root);
     let source = snapshot::load_and_validate_snapshot(&manifest_path)?;
-    prepare_restore_with_offsite_takeover(&paths, source, None)?;
+    prepare_restore_with_offsite_takeover(&paths, source, fresh_target_required, None)?;
     Ok(())
 }
 
@@ -519,24 +536,29 @@ fn prepare_restore(
     source: ValidatedSnapshot,
     failpoint: Option<RestoreFailpoint>,
 ) -> Result<RestoreReport, RecoveryError> {
-    prepare_restore_with_takeover_requirement(paths, source, false, failpoint)
+    prepare_restore_with_takeover_requirement(paths, source, false, false, failpoint)
 }
 
 fn prepare_restore_with_offsite_takeover(
     paths: &DatabasePaths,
     source: ValidatedSnapshot,
+    fresh_target_required: bool,
     failpoint: Option<RestoreFailpoint>,
 ) -> Result<RestoreReport, RecoveryError> {
-    prepare_restore_with_takeover_requirement(paths, source, true, failpoint)
+    prepare_restore_with_takeover_requirement(paths, source, true, fresh_target_required, failpoint)
 }
 
 fn prepare_restore_with_takeover_requirement(
     paths: &DatabasePaths,
     source: ValidatedSnapshot,
     offsite_takeover_required: bool,
+    fresh_target_required: bool,
     failpoint: Option<RestoreFailpoint>,
 ) -> Result<RestoreReport, RecoveryError> {
     let initial_files = inspect_restore_target(paths)?;
+    if fresh_target_required && !initial_files.is_empty() {
+        return Err(RecoveryError::InvalidRestoreTarget);
+    }
     let identifier = Uuid::now_v7();
     let stage_directory = format!(".dara-restore-stage-{identifier}");
     let rollback_directory = format!(".dara-restore-rollback-{identifier}");
@@ -565,12 +587,16 @@ fn prepare_restore_with_takeover_requirement(
             )?)
         };
         let rollback_files = inspect_restore_target(paths)?;
+        if fresh_target_required && !rollback_files.is_empty() {
+            return Err(RecoveryError::InvalidRestoreTarget);
+        }
         interrupt_if(RestoreFailpoint::SafetySnapshotCreated, failpoint)?;
 
         let intent = RestoreIntent {
             format_version: RESTORE_INTENT_FORMAT_VERSION,
             phase: RestorePhase::Staged,
             offsite_takeover_required,
+            fresh_target_required,
             source_manifest: source.manifest_path.clone(),
             expected: source.manifest.clone(),
             stage_directory,
@@ -685,6 +711,16 @@ fn resume_restore(
     let stage_media = stage.join(RestoreFile::Media.file_name());
 
     if intent.phase == RestorePhase::Staged {
+        if intent.fresh_target_required {
+            match inspect_restore_target(paths) {
+                Ok(files) if files.is_empty() => {}
+                Ok(_) | Err(RecoveryError::InvalidRestoreTarget) => {
+                    abort_staged_fresh_restore(paths, intent)?;
+                    return Err(RecoveryError::InvalidRestoreTarget);
+                }
+                Err(error) => return Err(error),
+            }
+        }
         if let Err(error) =
             snapshot::validate_snapshot_pair_files(&intent.expected, &stage_main, &stage_media)
         {
@@ -753,17 +789,35 @@ fn resume_restore(
     sync_directory(paths.root())?;
     sync_directory(&rollback)?;
 
-    move_once(
-        &stage_media,
-        &paths.media,
-        "installing the restored media database",
-    )?;
+    if intent.fresh_target_required {
+        install_once_exclusive(
+            &stage_media,
+            &paths.media,
+            &intent.expected.media.sha256,
+            "installing the restored media database",
+        )?;
+    } else {
+        move_once(
+            &stage_media,
+            &paths.media,
+            "installing the restored media database",
+        )?;
+    }
     interrupt_if(RestoreFailpoint::MediaInstalled, failpoint)?;
-    move_once(
-        &stage_main,
-        &paths.main,
-        "installing the restored main database",
-    )?;
+    if intent.fresh_target_required {
+        install_once_exclusive(
+            &stage_main,
+            &paths.main,
+            &intent.expected.main.sha256,
+            "installing the restored main database",
+        )?;
+    } else {
+        move_once(
+            &stage_main,
+            &paths.main,
+            "installing the restored main database",
+        )?;
+    }
     interrupt_if(RestoreFailpoint::MainInstalled, failpoint)?;
     sync_directory(paths.root())?;
 
@@ -780,6 +834,26 @@ fn resume_restore(
     write_restore_intent(paths, intent)?;
     interrupt_if(RestoreFailpoint::InstalledValidated, failpoint)?;
     Ok(())
+}
+
+fn abort_staged_fresh_restore(
+    paths: &DatabasePaths,
+    intent: &RestoreIntent,
+) -> Result<(), RecoveryError> {
+    if intent.phase != RestorePhase::Staged
+        || !intent.fresh_target_required
+        || !intent.rollback_files.is_empty()
+        || intent.safety_snapshot.is_some()
+    {
+        return Err(RecoveryError::InvalidRestoreJournal(
+            "cannot abort a non-fresh staged restore".into(),
+        ));
+    }
+    remove_directory_if_exists(&restore_subdirectory(paths, &intent.stage_directory)?)?;
+    remove_directory_if_exists(&restore_subdirectory(paths, &intent.rollback_directory)?)?;
+    remove_file_if_exists(&restore_intent_path(paths))?;
+    remove_file_if_exists(&restore_intent_temp_path(paths))?;
+    sync_directory(paths.root())
 }
 
 fn complete_rollback(
@@ -1011,6 +1085,42 @@ fn move_once(source: &Path, destination: &Path, operation: &str) -> Result<(), R
             destination.display()
         ))),
     }
+}
+
+fn install_once_exclusive(
+    source: &Path,
+    destination: &Path,
+    expected_hash: &str,
+    operation: &str,
+) -> Result<(), RecoveryError> {
+    match (source.exists(), destination.exists()) {
+        (true, false) => match fs::hard_link(source, destination) {
+            Ok(()) => remove_file_if_exists(source),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                validate_exclusive_install_destination(destination, expected_hash)?;
+                remove_file_if_exists(source)
+            }
+            Err(error) => Err(error.into()),
+        },
+        (true, true) => {
+            validate_exclusive_install_destination(destination, expected_hash)?;
+            remove_file_if_exists(source)
+        }
+        (false, true) => validate_exclusive_install_destination(destination, expected_hash),
+        (false, false) => Err(RecoveryError::InvalidRestoreJournal(format!(
+            "{operation}: neither {} nor {} exists",
+            source.display(),
+            destination.display()
+        ))),
+    }
+}
+
+fn validate_exclusive_install_destination(
+    destination: &Path,
+    expected_hash: &str,
+) -> Result<(), RecoveryError> {
+    snapshot::validate_recorded_hash(destination, expected_hash)
+        .map_err(|_| RecoveryError::InvalidRestoreTarget)
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<(), RecoveryError> {
@@ -1442,6 +1552,73 @@ mod tests {
     }
 
     #[test]
+    fn fresh_offsite_restore_preserves_a_pair_created_before_installation() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+
+        assert!(matches!(
+            prepare_restore_with_offsite_takeover(
+                &target_paths,
+                source,
+                true,
+                Some(RestoreFailpoint::IntentWritten),
+            ),
+            Err(RecoveryError::InjectedInterruption)
+        ));
+        let intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("staged restore");
+        let stage =
+            restore_subdirectory(&target_paths, &intent.stage_directory).expect("stage directory");
+        let rollback = restore_subdirectory(&target_paths, &intent.rollback_directory)
+            .expect("rollback directory");
+        fs::write(&target_paths.main, b"external main").expect("external main");
+        fs::write(&target_paths.media, b"external media").expect("external media");
+
+        assert!(matches!(
+            recover_interrupted_restore(&target_paths),
+            Err(RecoveryError::InvalidRestoreTarget)
+        ));
+        assert_eq!(
+            fs::read(&target_paths.main).expect("preserved main"),
+            b"external main"
+        );
+        assert_eq!(
+            fs::read(&target_paths.media).expect("preserved media"),
+            b"external media"
+        );
+        assert!(!restore_intent_path(&target_paths).exists());
+        assert!(!stage.exists());
+        assert!(!rollback.exists());
+    }
+
+    #[test]
+    fn exclusive_fresh_install_never_overwrites_an_existing_file() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let destination = target_directory.path().join("dara.sqlite3");
+        fs::write(&destination, b"external database").expect("external database");
+
+        assert!(matches!(
+            install_once_exclusive(
+                &source.main_path,
+                &destination,
+                &source.manifest.main.sha256,
+                "test installation",
+            ),
+            Err(RecoveryError::InvalidRestoreTarget)
+        ));
+        assert_eq!(
+            fs::read(&destination).expect("preserved destination"),
+            b"external database"
+        );
+        assert!(source.main_path.exists());
+    }
+
+    #[test]
     fn safety_snapshot_survives_normal_snapshot_pruning() {
         let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
         let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
@@ -1833,6 +2010,7 @@ mod tests {
             format_version: RESTORE_INTENT_FORMAT_VERSION,
             phase: RestorePhase::Staged,
             offsite_takeover_required: false,
+            fresh_target_required: false,
             source_manifest: source.manifest_path.clone(),
             expected: source.manifest.clone(),
             stage_directory,
@@ -1871,6 +2049,7 @@ mod tests {
             format_version: RESTORE_INTENT_FORMAT_VERSION,
             phase: RestorePhase::Staged,
             offsite_takeover_required: false,
+            fresh_target_required: false,
             source_manifest: source.manifest_path,
             expected: source.manifest,
             stage_directory: "../outside".into(),
