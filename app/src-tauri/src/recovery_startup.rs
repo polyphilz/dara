@@ -14,7 +14,9 @@ use zeroize::Zeroize;
 use crate::{
     app_lock::AppDataLock,
     backup::{
-        credentials::{CredentialStore, MacOsKeychainCredentialStore, R2Credentials},
+        credentials::{
+            CredentialError, CredentialStore, MacOsKeychainCredentialStore, R2Credentials,
+        },
         domain::{
             BackupErrorCode, BackupSetId, CheckpointId, R2AccountId, R2BucketName, R2Jurisdiction,
             R2Prefix, R2Target,
@@ -451,16 +453,19 @@ fn restore_session(
         }
     }
     let credential_store = MacOsKeychainCredentialStore;
-    let previous_credentials = credential_store.load(&session.backup_set_id).ok();
-    if credential_store
-        .save(&session.backup_set_id, &session.credentials)
-        .is_err()
-    {
-        return Err(Box::new(RestoreSessionFailure {
-            error: RecoveryCommandError::backup(BackupErrorCode::KeychainUnavailable),
-            session,
-        }));
-    }
+    let previous_credentials = match save_restore_credentials(
+        &credential_store,
+        &session.backup_set_id,
+        &session.credentials,
+    ) {
+        Ok(previous_credentials) => previous_credentials,
+        Err(_) => {
+            return Err(Box::new(RestoreSessionFailure {
+                error: RecoveryCommandError::backup(BackupErrorCode::KeychainUnavailable),
+                session,
+            }));
+        }
+    };
     let engine_credentials = match session.credentials.try_clone() {
         Ok(credentials) => credentials,
         Err(_) => {
@@ -509,6 +514,20 @@ fn restore_session(
     }
 }
 
+fn save_restore_credentials(
+    credential_store: &impl CredentialStore,
+    backup_set_id: &BackupSetId,
+    credentials: &R2Credentials,
+) -> Result<Option<R2Credentials>, CredentialError> {
+    let previous_credentials = match credential_store.load(backup_set_id) {
+        Ok(credentials) => Some(credentials),
+        Err(CredentialError::Missing) => None,
+        Err(error) => return Err(error),
+    };
+    credential_store.save(backup_set_id, credentials)?;
+    Ok(previous_credentials)
+}
+
 fn restore_previous_credentials(
     credential_store: &impl CredentialStore,
     backup_set_id: &BackupSetId,
@@ -550,6 +569,7 @@ mod tests {
 
     #[derive(Default)]
     struct RecordingCredentialStore {
+        load_unavailable: AtomicBool,
         saved_access_keys: Mutex<Vec<String>>,
         removals: std::sync::atomic::AtomicUsize,
     }
@@ -571,7 +591,11 @@ mod tests {
             &self,
             _backup_set_id: &BackupSetId,
         ) -> Result<R2Credentials, crate::backup::credentials::CredentialError> {
-            Err(crate::backup::credentials::CredentialError::Missing)
+            if self.load_unavailable.load(Ordering::Relaxed) {
+                Err(crate::backup::credentials::CredentialError::Unavailable)
+            } else {
+                Err(crate::backup::credentials::CredentialError::Missing)
+            }
         }
 
         fn remove(
@@ -710,5 +734,26 @@ mod tests {
             .expect("saved credentials")
             .is_empty());
         assert_eq!(store.removals.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn unavailable_keychain_is_not_overwritten_before_restore() {
+        let store = RecordingCredentialStore::default();
+        store.load_unavailable.store(true, Ordering::Relaxed);
+        let credentials = R2Credentials::new(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .expect("candidate credentials");
+
+        assert!(matches!(
+            save_restore_credentials(&store, &BackupSetId::new(), &credentials),
+            Err(CredentialError::Unavailable)
+        ));
+        assert!(store
+            .saved_access_keys
+            .lock()
+            .expect("saved credentials")
+            .is_empty());
     }
 }
