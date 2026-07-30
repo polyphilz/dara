@@ -210,7 +210,12 @@ const fn main_window_close_action(
 }
 
 pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
-    app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+    // Dara stays a Regular application for its whole lifetime. macOS binds menu-bar ownership
+    // during activation, from the policy the process already holds at that moment, so an
+    // Accessory process that is activated by its own menu-bar icon can never take the menu
+    // bar afterwards -- it reads keystrokes while the previously active application stays
+    // named in the menu bar. Remaining Regular costs a Dock icon and keeps activation honest.
+    app.set_activation_policy(tauri::ActivationPolicy::Regular);
     app.get_webview_window(MAIN_LABEL)
         .ok_or(tauri::Error::WebviewNotFound)?
         .set_title(&app.package_info().name)?;
@@ -995,7 +1000,7 @@ fn restore_previous_focus(app: &AppHandle, target: RestoreTarget) -> Result<(), 
         if main_is_visible {
             return activate_main_window(app);
         }
-        enter_resident_mode(app);
+        enter_resident_mode();
     }
 
     Ok(())
@@ -1029,9 +1034,6 @@ fn activate_main_window(app: &AppHandle) -> Result<(), String> {
     let marker = ObjcMainThreadMarker::new().ok_or_else(|| {
         "main-window activation was not dispatched to the main thread".to_string()
     })?;
-    app.set_activation_policy(tauri::ActivationPolicy::Regular)
-        .map_err(|error| format!("could not enter regular-app mode: {error}"))?;
-
     let window = app
         .get_webview_window(MAIN_LABEL)
         .ok_or_else(|| "main window unavailable".to_string())?;
@@ -1061,12 +1063,11 @@ fn frontmost_application_pid() -> Option<i32> {
         .map(|application| application.processIdentifier())
 }
 
-fn enter_resident_mode(app: &AppHandle) {
+/// Steps out of the foreground while leaving Dara running behind its menu-bar icon. The
+/// activation policy stays Regular so the next activation still owns the menu bar.
+fn enter_resident_mode() {
     if let Some(marker) = ObjcMainThreadMarker::new() {
         NSApplication::sharedApplication(marker).deactivate();
-    }
-    if let Err(error) = app.set_activation_policy(tauri::ActivationPolicy::Accessory) {
-        log::error!("failed to restore resident Accessory mode: {error}");
     }
 }
 
@@ -1108,7 +1109,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
                         if let Err(error) = window.hide() {
                             log::error!("failed to hide main window: {error}");
                         }
-                        enter_resident_mode(window.app_handle());
+                        enter_resident_mode();
                     }
                 }
             }

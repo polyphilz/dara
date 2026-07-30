@@ -15,7 +15,7 @@ Installed builds continue to use the platform application-data directory.
 
 ## Shortcuts
 
-- `⌃⌥⌘D` activates the frameless Quick Add window while Dara remains in menu-bar-only Accessory mode.
+- `⌃⌥⌘D` activates the frameless Quick Add window and restores the prior app on dismiss.
 - `⌃⌥⌘R` activates dara and opens the ordinary main window.
 - `Esc` cancels quick add; `⌘↵` saves a BASIC card.
 - `⌘B`, `⌘I`, and `⌘K` apply bold, italic, and link formatting in card editors.
