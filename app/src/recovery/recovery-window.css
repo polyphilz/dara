@@ -123,6 +123,11 @@
   outline-offset: 1px;
 }
 
+.recovery-field input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .recovery-field input[aria-invalid='true'] {
   border-color: #a63232;
 }
