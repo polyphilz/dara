@@ -777,13 +777,8 @@ fn prepare_fresh_restore_target(data_directory: &Path) -> Result<(), BackupError
             .and_then(|directory| directory.sync_all())
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
     }
-    for database_path in [&paths.main, &paths.media] {
-        match fs::symlink_metadata(database_path) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Ok(_) | Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
-        }
-    }
-    Ok(())
+    recovery::ensure_fresh_offsite_restore_target(&paths)
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)
 }
 
 fn required_environment(name: &'static str) -> Result<String, BackupErrorCode> {
@@ -1831,6 +1826,18 @@ mod tests {
 
         assert!(!paths.main.exists());
         assert!(!paths.media.exists());
+    }
+
+    #[test]
+    fn fresh_install_restore_rejects_sqlite_companions() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        fs::write(directory.path().join("dara.sqlite3-wal"), b"existing")
+            .expect("existing main WAL");
+
+        assert_eq!(
+            prepare_fresh_restore_target(directory.path()),
+            Err(BackupErrorCode::RestoreValidationFailed)
+        );
     }
 
     struct FakeRelationalRestore {

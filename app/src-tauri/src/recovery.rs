@@ -518,6 +518,16 @@ pub(crate) fn prepare_offsite_restore_target(
     Ok(())
 }
 
+pub(crate) fn ensure_fresh_offsite_restore_target(
+    paths: &DatabasePaths,
+) -> Result<(), RecoveryError> {
+    if inspect_restore_target(paths)?.is_empty() {
+        Ok(())
+    } else {
+        Err(RecoveryError::InvalidRestoreTarget)
+    }
+}
+
 fn acquire_ordered_locks(
     source_root: &Path,
     target_root: &Path,

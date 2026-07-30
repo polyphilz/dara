@@ -311,7 +311,7 @@ export function RecoveryWindow({
                     RemoteCheckpointAvailability.Restorable
                   return (
                     <li key={checkpoint.checkpointId}>
-                      <button
+                      <DaraButton
                         aria-pressed={
                           selectedCheckpointId === checkpoint.checkpointId
                         }
@@ -320,7 +320,8 @@ export function RecoveryWindow({
                         onClick={() =>
                           setSelectedCheckpointId(checkpoint.checkpointId)
                         }
-                        type="button"
+                        size={DaraButtonSize.Custom}
+                        variant={DaraButtonVariant.Custom}
                       >
                         <div>
                           <strong>{formatDate(checkpoint.createdAt)}</strong>
@@ -336,7 +337,7 @@ export function RecoveryWindow({
                         <span className={restorable ? 'ready' : 'unavailable'}>
                           {restorable ? 'Ready to restore' : 'Unavailable'}
                         </span>
-                      </button>
+                      </DaraButton>
                     </li>
                   )
                 })}

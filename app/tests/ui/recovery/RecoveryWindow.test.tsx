@@ -85,6 +85,11 @@ test('clears credentials and displays complete remote checkpoints after discover
 
   expect(await findByText('Ready to restore')).toBeTruthy()
   expect(await findByText(/3 images/)).toBeTruthy()
+  expect(
+    getByRole('button', { name: /ready to restore/i }).classList.contains(
+      'dara-button',
+    ),
+  ).toBe(true)
   expect(gateway.discover).toHaveBeenCalledWith({
     accountId: ACCOUNT_ID,
     jurisdiction: R2Jurisdiction.Default,

@@ -68,7 +68,6 @@
   color: var(--ink);
   background: transparent;
   text-align: left;
-  cursor: pointer;
 }
 
 .recovery-choice:hover:not(:disabled) {
@@ -195,17 +194,6 @@
 .recovery-checkpoint[aria-pressed='true'] {
   border-color: var(--accent);
   background: var(--accent-soft);
-}
-
-.recovery-checkpoint:focus-visible {
-  border-color: var(--accent);
-  outline: 3px solid var(--accent-soft);
-  outline-offset: 2px;
-}
-
-.recovery-checkpoint:disabled {
-  cursor: not-allowed;
-  opacity: 0.62;
 }
 
 .recovery-checkpoint > div,
