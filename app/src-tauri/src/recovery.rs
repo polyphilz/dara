@@ -734,9 +734,13 @@ fn resume_restore(
         if let Err(error) =
             snapshot::validate_snapshot_pair_files(&intent.expected, &stage_main, &stage_media)
         {
-            intent.phase = RestorePhase::RollingBack;
-            write_restore_intent(paths, intent)?;
-            complete_rollback(paths, intent)?;
+            if intent.fresh_target_required {
+                abort_staged_fresh_restore(paths, intent)?;
+            } else {
+                intent.phase = RestorePhase::RollingBack;
+                write_restore_intent(paths, intent)?;
+                complete_rollback(paths, intent)?;
+            }
             return Err(error.into());
         }
         intent.phase = RestorePhase::Installing;

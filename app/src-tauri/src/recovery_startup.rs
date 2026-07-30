@@ -412,6 +412,11 @@ pub(crate) async fn restore_remote_backup(
     let data_lock = data_lock.try_clone().map_err(|error| {
         RecoveryCommandError::internal(format!("Could not retain the Dara data lock: {error}"))
     })?;
+    request_show_main_after_restart(&paths).map_err(|error| {
+        RecoveryCommandError::internal(format!(
+            "Could not prepare Dara to show the restored library: {error}"
+        ))
+    })?;
     let session = state.take_session()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         restore_session(&data_lock, &resource_dir, &selector, session)
@@ -420,14 +425,7 @@ pub(crate) async fn restore_remote_backup(
     .map_err(|_| RecoveryCommandError::internal("The restore task stopped unexpectedly."))?;
     drop(operation);
     match result {
-        Ok(()) => {
-            request_show_main_after_restart(&paths).map_err(|error| {
-                RecoveryCommandError::internal(format!(
-                    "Could not prepare Dara to show the restored library: {error}"
-                ))
-            })?;
-            app.restart()
-        }
+        Ok(()) => app.restart(),
         Err(failure) => {
             let RestoreSessionFailure { error, session } = *failure;
             state.replace_session(session);
