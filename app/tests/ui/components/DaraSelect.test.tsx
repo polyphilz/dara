@@ -99,3 +99,22 @@ test('returns focus to a caller-owned surface after selection when requested', a
   await waitFor(() => expect(document.activeElement).toBe(returnTarget))
   returnTarget.remove()
 })
+
+test('associates an external label with the select trigger', () => {
+  const { getByLabelText } = render(
+    <>
+      <label htmlFor="card-type">Card type</label>
+      <DaraSelect
+        ariaLabel="Card type"
+        id="card-type"
+        onSelect={vi.fn()}
+        options={options}
+        value={TestValue.Basic}
+      />
+    </>,
+  )
+
+  const trigger = getByLabelText('Card type')
+  expect(trigger.tagName).toBe('BUTTON')
+  expect(trigger.id).toBe('card-type')
+})

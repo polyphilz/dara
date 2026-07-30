@@ -19,6 +19,7 @@ export interface DaraSelectOption<Value extends string> {
 interface DaraSelectProps<Value extends string> {
   ariaLabel: string
   disabled?: boolean
+  id?: string
   menuHeight?: number
   menuWidth?: number
   onReturnFocus?: () => void
@@ -44,6 +45,7 @@ const VIEWPORT_MARGIN = 8
 export function DaraSelect<Value extends string>({
   ariaLabel,
   disabled = false,
+  id,
   menuHeight = DEFAULT_MENU_HEIGHT,
   menuWidth = DEFAULT_MENU_WIDTH,
   onReturnFocus,
@@ -214,6 +216,7 @@ export function DaraSelect<Value extends string>({
         aria-label={`${ariaLabel}: ${currentLabel}`}
         className={triggerClasses}
         disabled={disabled}
+        id={id}
         onKeyDown={handleTriggerKeyDown}
         onMouseDown={handleTriggerMouseDown}
         ref={triggerRef}

@@ -514,7 +514,6 @@ impl RemoteRecoveryEngine {
         let prefix = self.keyspace.checkpoints(owner.replica_epoch_id());
         let mut continuation = None;
         let mut candidates = Vec::new();
-        let mut checkpoint_id_counts = HashMap::new();
         let mut malformed_objects_ignored = 0_u64;
         let mut listing_complete = false;
         for _ in 0..MAX_CHECKPOINT_LIST_PAGES {
@@ -538,9 +537,6 @@ impl RemoteRecoveryEngine {
                         continue;
                     }
                 };
-                *checkpoint_id_counts
-                    .entry(candidate.checkpoint_id.clone())
-                    .or_insert(0_u64) += 1;
                 candidates.push(candidate);
             }
             retain_most_recent_checkpoint_candidates(
@@ -559,9 +555,6 @@ impl RemoteRecoveryEngine {
         if !listing_complete {
             return Err(BackupErrorCode::RestoreValidationFailed);
         }
-        malformed_objects_ignored = malformed_objects_ignored.saturating_add(
-            discard_duplicate_checkpoint_candidates(&mut candidates, &checkpoint_id_counts),
-        );
         if let Some(required_checkpoint_id) = required_checkpoint_id {
             candidates.retain(|candidate| &candidate.checkpoint_id == required_checkpoint_id);
         }
@@ -569,9 +562,6 @@ impl RemoteRecoveryEngine {
 
         let mut checkpoints = Vec::with_capacity(candidates.len());
         for candidate in candidates {
-            if checkpoints.len() >= MAX_DISCOVERED_CHECKPOINTS {
-                break;
-            }
             let listed = candidate.listed;
             let stored = match self.store.get(&listed.key) {
                 Ok(stored) => stored,
@@ -606,7 +596,17 @@ impl RemoteRecoveryEngine {
                 created_at_millis: created_at_millis.expect("validated checkpoint timestamp"),
             });
         }
+        let mut checkpoint_id_counts = HashMap::new();
+        for checkpoint in &checkpoints {
+            *checkpoint_id_counts
+                .entry(checkpoint.manifest.checkpoint_id().clone())
+                .or_insert(0_u64) += 1;
+        }
+        malformed_objects_ignored = malformed_objects_ignored.saturating_add(
+            discard_duplicate_checkpoints(&mut checkpoints, &checkpoint_id_counts),
+        );
         sort_checkpoints_most_recent_first(&mut checkpoints);
+        checkpoints.truncate(MAX_DISCOVERED_CHECKPOINTS);
         Ok(DiscoveredCheckpoints {
             checkpoints,
             malformed_objects_ignored,
@@ -1695,11 +1695,12 @@ fn retain_most_recent_checkpoint_candidates(
     candidates.truncate(maximum);
 }
 
-fn discard_duplicate_checkpoint_candidates(
-    candidates: &mut Vec<ListedCheckpointCandidate>,
+fn discard_duplicate_checkpoints(
+    checkpoints: &mut Vec<RemoteCheckpoint>,
     counts: &HashMap<CheckpointId, u64>,
 ) -> u64 {
-    candidates.retain(|candidate| counts.get(&candidate.checkpoint_id).copied() == Some(1));
+    checkpoints
+        .retain(|checkpoint| counts.get(checkpoint.manifest.checkpoint_id()).copied() == Some(1));
     counts
         .values()
         .filter(|count| **count > 1)
@@ -2917,7 +2918,7 @@ mod tests {
     #[test]
     fn recovery_discovery_bounds_downloads_and_preserves_explicit_targets() {
         let fixture = rich_remote_fixture();
-        for index in 0..MAX_DISCOVERED_CHECKPOINTS + 25 {
+        for index in 0..MAX_CHECKPOINT_MANIFEST_DOWNLOADS + 25 {
             let checkpoint_id = CheckpointId::new();
             let minute = index / 60;
             let second = index % 60;
@@ -2963,7 +2964,7 @@ mod tests {
                 .into_iter()
                 .filter(|operation| *operation == ObjectOperation::Get)
                 .count(),
-            MAX_DISCOVERED_CHECKPOINTS + 2
+            MAX_CHECKPOINT_MANIFEST_DOWNLOADS + 2
         );
         assert_eq!(
             catalog
@@ -2971,7 +2972,7 @@ mod tests {
                 .first()
                 .expect("latest checkpoint")
                 .created_at,
-            "2099-07-29T00:02:04Z"
+            "2099-07-29T00:17:04Z"
         );
 
         let explicit = fixture
@@ -2993,7 +2994,7 @@ mod tests {
                 .into_iter()
                 .filter(|operation| *operation == ObjectOperation::Get)
                 .count(),
-            MAX_DISCOVERED_CHECKPOINTS + 5
+            MAX_CHECKPOINT_MANIFEST_DOWNLOADS + 5
         );
     }
 
@@ -3033,6 +3034,27 @@ mod tests {
                 .count(),
             MAX_DISCOVERED_CHECKPOINTS + 3
         );
+    }
+
+    #[test]
+    fn malformed_duplicate_id_does_not_hide_a_valid_checkpoint() {
+        let fixture = rich_remote_fixture();
+        let impostor_created_at =
+            UtcTimestamp::parse("2099-07-29T00:00:00Z").expect("impostor timestamp");
+        put_json(
+            fixture.store.as_ref(),
+            fixture
+                .keyspace
+                .checkpoint(&fixture.epoch, &fixture.checkpoint_id, &impostor_created_at)
+                .expect("impostor key"),
+            b"{".to_vec(),
+        );
+
+        let catalog = fixture.engine.list_checkpoints().expect("catalog");
+
+        assert_eq!(catalog.checkpoints.len(), 1);
+        assert_eq!(catalog.checkpoints[0].checkpoint_id, fixture.checkpoint_id);
+        assert_eq!(catalog.malformed_objects_ignored, 1);
     }
 
     #[test]

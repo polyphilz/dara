@@ -194,6 +194,7 @@ export function RecoveryWindow({
               <DaraSelect
                 ariaLabel="Jurisdiction"
                 disabled={busy}
+                id={jurisdictionId}
                 onSelect={(value) => updateForm('jurisdiction', value)}
                 options={jurisdictionOptions}
                 value={form.jurisdiction}
