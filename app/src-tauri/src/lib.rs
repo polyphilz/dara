@@ -242,6 +242,9 @@ pub fn run() {
             app.manage(backup::commands::OffsiteBackupOperationRegistry::default());
 
             windows::setup(app, startup_settings)?;
+            if recovery_startup::take_show_main_after_restart_request(&database_paths)? {
+                windows::macos::show_main(app.handle().clone()).map_err(std::io::Error::other)?;
+            }
             recovery::confirm_restored_launch(&database_paths)?;
             Ok(())
         })

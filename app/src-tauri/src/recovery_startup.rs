@@ -1,5 +1,6 @@
 use std::{
-    fs,
+    fs::{self, OpenOptions},
+    io,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -17,11 +18,16 @@ use crate::{
         domain::{BackupErrorCode, R2AccountId, R2BucketName, R2Jurisdiction, R2Prefix, R2Target},
         restore::{RemoteCheckpointCatalog, RemoteRecoveryEngine},
     },
-    database::{self, DatabasePaths, InitializationOptions},
+    database::{
+        self,
+        connection::{self, FileState},
+        DatabasePaths, InitializationOptions,
+    },
 };
 
 #[cfg(feature = "e2e")]
 const E2E_START_FRESH_ENV: &str = "DARA_E2E_START_FRESH";
+const SHOW_MAIN_AFTER_RESTART_FILE_NAME: &str = ".show-main-after-restart";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
@@ -48,25 +54,51 @@ pub(crate) enum RecoveryStartupError {
     IncompleteDatabasePair,
 
     #[error("could not inspect the Dara data directory: {0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
+
+    #[error("could not inspect the Dara databases: {0}")]
+    Database(#[from] database::DatabaseError),
 }
 
 pub(crate) fn inspect_database_pair(
     paths: &DatabasePaths,
 ) -> Result<DatabasePairState, RecoveryStartupError> {
-    let main_exists = path_exists(&paths.main)?;
-    let media_exists = path_exists(&paths.media)?;
-    match (main_exists, media_exists) {
-        (false, false) => Ok(DatabasePairState::Fresh),
-        (true, true) => Ok(DatabasePairState::Existing),
+    let main_state = connection::inspect_file(&paths.main)?;
+    let media_state = connection::inspect_file(&paths.media)?;
+    match (main_state, media_state) {
+        (FileState::Fresh, FileState::Fresh) => Ok(DatabasePairState::Fresh),
+        (FileState::Existing, FileState::Existing) => Ok(DatabasePairState::Existing),
         _ => Err(RecoveryStartupError::IncompleteDatabasePair),
     }
 }
 
-fn path_exists(path: &std::path::Path) -> Result<bool, std::io::Error> {
-    match fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+fn request_show_main_after_restart(paths: &DatabasePaths) -> Result<(), io::Error> {
+    let marker_path = paths.root().join(SHOW_MAIN_AFTER_RESTART_FILE_NAME);
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker_path)
+    {
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            let metadata = fs::symlink_metadata(&marker_path)?;
+            if metadata.file_type().is_file() {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub(crate) fn take_show_main_after_restart_request(
+    paths: &DatabasePaths,
+) -> Result<bool, io::Error> {
+    let marker_path = paths.root().join(SHOW_MAIN_AFTER_RESTART_FILE_NAME);
+    match fs::remove_file(marker_path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error),
     }
 }
@@ -235,7 +267,7 @@ pub(crate) fn start_fresh_install(
         return Err(RecoveryCommandError::not_fresh_install());
     }
     let database = database::initialize(
-        paths,
+        paths.clone(),
         env!("CARGO_PKG_VERSION"),
         InitializationOptions {
             launch_snapshot: false,
@@ -245,6 +277,11 @@ pub(crate) fn start_fresh_install(
         RecoveryCommandError::internal(format!("Could not create Dara data: {error}"))
     })?;
     drop(database);
+    request_show_main_after_restart(&paths).map_err(|error| {
+        RecoveryCommandError::internal(format!(
+            "Could not prepare Dara to show the new library: {error}"
+        ))
+    })?;
     app.restart()
 }
 
@@ -355,6 +392,35 @@ mod tests {
             inspect_database_pair(&paths),
             Err(RecoveryStartupError::IncompleteDatabasePair)
         ));
+    }
+
+    #[test]
+    fn zero_length_database_placeholders_are_fresh() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let paths = DatabasePaths::new(directory.path());
+        fs::write(&paths.main, []).expect("empty main placeholder");
+
+        assert_eq!(
+            inspect_database_pair(&paths).expect("pair state"),
+            DatabasePairState::Fresh
+        );
+
+        fs::write(&paths.media, []).expect("empty media placeholder");
+        assert_eq!(
+            inspect_database_pair(&paths).expect("pair state"),
+            DatabasePairState::Fresh
+        );
+    }
+
+    #[test]
+    fn start_fresh_restart_request_is_consumed_once() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let paths = DatabasePaths::new(directory.path());
+
+        assert!(!take_show_main_after_restart_request(&paths).expect("no request"));
+        request_show_main_after_restart(&paths).expect("request main window");
+        assert!(take_show_main_after_restart_request(&paths).expect("pending request"));
+        assert!(!take_show_main_after_restart_request(&paths).expect("consumed request"));
     }
 
     #[test]
