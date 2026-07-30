@@ -188,6 +188,7 @@ beforeEach(() => {
     },
     revision: null,
     takeoverAvailable: false,
+    restoredTakeoverRequired: false,
     target: null,
   })
   mocks.loadSettings.mockResolvedValue({

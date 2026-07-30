@@ -958,6 +958,13 @@ function BackupField({
 }
 
 function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
+  const lastCompleteCheckpointId =
+    status.checkpoint.lastCompleteCheckpointId
+  const hasLocalCompleteCheckpoint =
+    lastCompleteCheckpointId !== null
+  const restoredCopyKept =
+    !hasLocalCompleteCheckpoint && status.restoredTakeoverRequired
+
   return (
     <dl className="offsite-backup-status-list">
       <BackupStatusItem
@@ -994,19 +1001,23 @@ function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
       />
       <BackupStatusItem
         detail={
-          status.checkpoint.lastCompleteCheckpointId &&
+          lastCompleteCheckpointId !== null &&
           status.checkpoint.lastCompleteAt
-            ? `${formatDate(status.checkpoint.lastCompleteAt)} · checkpoint ${abbreviate(status.checkpoint.lastCompleteCheckpointId)}`
+            ? `${formatDate(status.checkpoint.lastCompleteAt)} · checkpoint ${abbreviate(lastCompleteCheckpointId)}`
+            : restoredCopyKept
+              ? 'The complete backup used to restore this Mac remains in R2 while new backups are paused.'
             : 'Relational data and media may still be syncing, but there is no complete recoverable checkpoint yet.'
         }
         label="Recoverable backup"
         state={
-          status.checkpoint.lastCompleteCheckpointId
+          hasLocalCompleteCheckpoint
             ? checkpointLabel(status.checkpoint.phase)
-            : 'Not ready'
+            : restoredCopyKept
+              ? 'Last complete copy kept'
+              : 'Not ready'
         }
         tone={
-          status.checkpoint.lastCompleteCheckpointId
+          hasLocalCompleteCheckpoint || restoredCopyKept
             ? BackupStatusTone.Healthy
             : BackupStatusTone.Warning
         }

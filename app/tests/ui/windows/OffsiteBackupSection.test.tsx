@@ -150,6 +150,22 @@ test('shows the last complete checkpoint and durable restore-drill result', asyn
   ).toHaveProperty('disabled', false)
 })
 
+test('keeps the restored remote checkpoint visible while takeover is paused', async () => {
+  const restored = enabledStatus({ complete: false })
+  restored.takeoverAvailable = true
+  restored.restoredTakeoverRequired = true
+  const fixture = backupFixture(restored)
+  const { findByText, queryByText } = renderSection(fixture.gateway)
+
+  expect(await findByText('Last complete copy kept')).toBeTruthy()
+  expect(
+    await findByText(
+      'The complete backup used to restore this Mac remains in R2 while new backups are paused.',
+    ),
+  ).toBeTruthy()
+  expect(queryByText('Not ready')).toBeNull()
+})
+
 test('announces typed progress and reloads after completion', async () => {
   const fixture = backupFixture(enabledStatus({ complete: true }))
   const { findByRole, findByText } = renderSection(fixture.gateway)
@@ -519,6 +535,7 @@ function disabledStatus(): OffsiteBackupStatus {
     lastRestoreDrillAt: null,
     lastRestoreDrillError: null,
     takeoverAvailable: false,
+    restoredTakeoverRequired: false,
     credentialCleanupPending: false,
     activeOperation: null,
   }

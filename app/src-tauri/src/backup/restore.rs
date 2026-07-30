@@ -529,7 +529,7 @@ impl RemoteRecoveryEngine {
         let identity_object = self
             .store
             .get(&self.keyspace.identity())
-            .map_err(|error| map_store_error(error.code))?;
+            .map_err(|error| map_discovery_manifest_error(error.code))?;
         validate_json_object(&identity_object)?;
         let identity = IdentityManifestV1::from_json(&identity_object.bytes)
             .map_err(|_| BackupErrorCode::MalformedManifest)?;
@@ -537,7 +537,7 @@ impl RemoteRecoveryEngine {
         let owner_object = self
             .store
             .get(&self.keyspace.owner())
-            .map_err(|error| map_store_error(error.code))?;
+            .map_err(|error| map_discovery_manifest_error(error.code))?;
         validate_json_object(&owner_object)?;
         let owner = OwnerManifestV1::from_json(&owner_object.bytes)
             .map_err(|_| BackupErrorCode::MalformedManifest)?;
@@ -1468,6 +1468,13 @@ fn validate_reconstructed_pair(
         return Err(BackupErrorCode::RestoreValidationFailed);
     }
     Ok(())
+}
+
+fn map_discovery_manifest_error(code: ObjectStoreErrorCode) -> BackupErrorCode {
+    match code {
+        ObjectStoreErrorCode::NotFound => BackupErrorCode::CheckpointNotFound,
+        other => map_store_error(other),
+    }
 }
 
 fn validate_json_object(stored: &GetObjectResult) -> Result<(), BackupErrorCode> {
@@ -3048,6 +3055,34 @@ mod tests {
             .validation_stages
             .contains(&RestoreValidationStage::PairValidated));
         assert!(reports.path().join(DRILL_REPORT_FILE_NAME).is_file());
+    }
+
+    #[test]
+    fn missing_remote_identity_reports_an_empty_backup_location() {
+        let fixture = rich_remote_fixture();
+        fixture
+            .store
+            .delete(&fixture.keyspace.identity())
+            .expect("remove remote identity");
+
+        assert_eq!(
+            fixture.engine.list_checkpoints(),
+            Err(BackupErrorCode::CheckpointNotFound)
+        );
+    }
+
+    #[test]
+    fn missing_remote_owner_reports_an_empty_backup_location() {
+        let fixture = rich_remote_fixture();
+        fixture
+            .store
+            .delete(&fixture.keyspace.owner())
+            .expect("remove remote owner");
+
+        assert_eq!(
+            fixture.engine.list_checkpoints(),
+            Err(BackupErrorCode::CheckpointNotFound)
+        );
     }
 
     #[test]
