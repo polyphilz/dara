@@ -80,6 +80,13 @@ impl RemoteCheckpointSelector {
                 .map_err(|_| BackupErrorCode::CheckpointNotFound)
         }
     }
+
+    fn checkpoint_id(&self) -> Option<&CheckpointId> {
+        match self {
+            Self::Latest => None,
+            Self::Checkpoint(checkpoint_id) => Some(checkpoint_id),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -330,7 +337,7 @@ impl RemoteRecoveryEngine {
 
     pub(crate) fn list_checkpoints(&self) -> Result<RemoteCheckpointCatalog, BackupErrorCode> {
         let scratch = RestoreTask::create(&std::env::temp_dir(), ".dara-remote-inspect-")?;
-        let discovered = self.discover_checkpoints()?;
+        let discovered = self.discover_checkpoints(None)?;
         let catalog_length = discovered
             .checkpoints
             .len()
@@ -364,7 +371,7 @@ impl RemoteRecoveryEngine {
         selector: &RemoteCheckpointSelector,
     ) -> Result<RemoteCheckpointSummary, BackupErrorCode> {
         let scratch = RestoreTask::create(&std::env::temp_dir(), ".dara-remote-inspect-")?;
-        let discovered = self.discover_checkpoints()?;
+        let discovered = self.discover_checkpoints(selector.checkpoint_id())?;
         let checkpoint = self.select_checkpoint(scratch.path(), &discovered, selector)?;
         Ok(checkpoint.summary(RemoteCheckpointAvailability::Restorable))
     }
@@ -407,7 +414,7 @@ impl RemoteRecoveryEngine {
         let mut selected: Option<RemoteCheckpoint> = None;
         let mut report_scope = expected_scope.clone();
         let attempt = (|| {
-            let discovered = self.discover_checkpoints()?;
+            let discovered = self.discover_checkpoints(selector.checkpoint_id())?;
             if let Some((expected_backup_set_id, expected_replica_epoch_id)) =
                 expected_scope.as_ref()
             {
@@ -462,7 +469,7 @@ impl RemoteRecoveryEngine {
         recovery::prepare_offsite_restore_target(&lock)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         let task = RestoreTask::create(&data_directory, ".dara-remote-restore-")?;
-        let discovered = self.discover_checkpoints()?;
+        let discovered = self.discover_checkpoints(selector.checkpoint_id())?;
         let checkpoint = self.select_checkpoint(task.path(), &discovered, selector)?;
         let mut stages = vec![RestoreValidationStage::CheckpointDiscovered];
         let restored =
@@ -480,7 +487,10 @@ impl RemoteRecoveryEngine {
         })
     }
 
-    fn discover_checkpoints(&self) -> Result<DiscoveredCheckpoints, BackupErrorCode> {
+    fn discover_checkpoints(
+        &self,
+        required_checkpoint_id: Option<&CheckpointId>,
+    ) -> Result<DiscoveredCheckpoints, BackupErrorCode> {
         let identity_object = self
             .store
             .get(&self.keyspace.identity())
@@ -535,6 +545,7 @@ impl RemoteRecoveryEngine {
             retain_most_recent_checkpoint_candidates(
                 &mut candidates,
                 MAX_CHECKPOINT_MANIFEST_CANDIDATES,
+                required_checkpoint_id,
             );
             match page.next {
                 Some(next) => continuation = Some(next),
@@ -1651,11 +1662,29 @@ fn sort_checkpoint_candidates_most_recent_first(candidates: &mut [ListedCheckpoi
 fn retain_most_recent_checkpoint_candidates(
     candidates: &mut Vec<ListedCheckpointCandidate>,
     maximum: usize,
+    required_checkpoint_id: Option<&CheckpointId>,
 ) {
+    if maximum == 0 {
+        candidates.clear();
+        return;
+    }
     if candidates.len() <= maximum {
         return;
     }
     sort_checkpoint_candidates_most_recent_first(candidates);
+    if let Some(required_checkpoint_id) = required_checkpoint_id {
+        if let Some(required_index) = candidates
+            .iter()
+            .position(|candidate| &candidate.checkpoint_id == required_checkpoint_id)
+        {
+            if required_index >= maximum {
+                let required = candidates.remove(required_index);
+                candidates.truncate(maximum.saturating_sub(1));
+                candidates.push(required);
+                return;
+            }
+        }
+    }
     candidates.truncate(maximum);
 }
 
@@ -2700,7 +2729,7 @@ mod tests {
                     .trim_end_matches('/'),
                 fixture
                     .engine
-                    .discover_checkpoints()
+                    .discover_checkpoints(None)
                     .expect("discovery")
                     .epoch
                     .as_str()
@@ -2936,6 +2965,28 @@ mod tests {
                 .expect("latest checkpoint")
                 .created_at,
             "2099-07-29T00:02:04Z"
+        );
+
+        let explicit = fixture
+            .engine
+            .inspect_checkpoint(&RemoteCheckpointSelector::Checkpoint(
+                fixture.checkpoint_id.clone(),
+            ))
+            .expect("older explicit checkpoint");
+
+        assert_eq!(explicit.checkpoint_id, fixture.checkpoint_id);
+        assert_eq!(
+            fixture.relational.dry_run_count.load(Ordering::Relaxed),
+            MAX_RECOVERY_CATALOG_CHECKPOINTS + 1
+        );
+        assert_eq!(
+            fixture
+                .store
+                .operations()
+                .into_iter()
+                .filter(|operation| *operation == ObjectOperation::Get)
+                .count(),
+            (MAX_CHECKPOINT_MANIFEST_CANDIDATES + 2) * 2
         );
     }
 
