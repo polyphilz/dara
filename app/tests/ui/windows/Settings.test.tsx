@@ -472,6 +472,7 @@ function disabledBackupStatus(): OffsiteBackupStatus {
     lastRestoreDrillAt: null,
     lastRestoreDrillError: null,
     takeoverAvailable: false,
+    restoredTakeoverRequired: false,
     credentialCleanupPending: false,
     activeOperation: null,
   }

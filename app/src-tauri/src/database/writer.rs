@@ -707,6 +707,7 @@ impl DatabaseClient {
             .map_err(|_| DatabaseError::WriterUnavailable)?
     }
 
+    #[cfg(test)]
     pub(crate) fn load_offsite_backup_takeover_availability(&self) -> Result<bool> {
         self.load_offsite_backup_takeover_reason()
             .map(|reason| reason.is_some())

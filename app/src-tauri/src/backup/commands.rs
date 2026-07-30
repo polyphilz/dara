@@ -400,6 +400,7 @@ pub(crate) struct OffsiteBackupStatus {
     last_restore_drill_at: Option<i64>,
     last_restore_drill_error: Option<BackupErrorCode>,
     takeover_available: bool,
+    restored_takeover_required: bool,
     credential_cleanup_pending: bool,
     active_operation: Option<OffsiteBackupOperation>,
 }
@@ -1166,8 +1167,8 @@ fn load_status(
     let config = client
         .load_offsite_backup_config()
         .map_err(map_database_error)?;
-    let persisted_takeover_available = client
-        .load_offsite_backup_takeover_availability()
+    let persisted_takeover_reason = client
+        .load_offsite_backup_takeover_reason()
         .map_err(map_database_error)?;
     let credential_cleanup_pending = !client
         .load_pending_offsite_credential_cleanup()
@@ -1204,9 +1205,11 @@ fn load_status(
             }
         });
     let takeover_available = config.is_some()
-        && (persisted_takeover_available
+        && (persisted_takeover_reason.is_some()
             || takeover_hint
             || relational_status.last_error_code == Some(BackupErrorCode::OwnerMismatch));
+    let restored_takeover_required =
+        persisted_takeover_reason == Some(OffsiteBackupTakeoverReason::RestoredBackup);
     let active_operation = active_operation.map(|operation| OffsiteBackupOperation {
         operation_id: operation.operation_id,
         operation: operation.kind,
@@ -1227,6 +1230,7 @@ fn load_status(
         last_restore_drill_at,
         last_restore_drill_error,
         takeover_available,
+        restored_takeover_required,
         credential_cleanup_pending,
         active_operation,
     })
