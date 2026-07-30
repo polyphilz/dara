@@ -132,7 +132,7 @@ impl Drop for RecoveryOperationGuard {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct DiscoverRemoteBackupsInput {
     account_id: String,
-    jurisdiction: String,
+    jurisdiction: R2Jurisdiction,
     bucket: String,
     credentials: RecoveryCredentialsInput,
 }
@@ -289,8 +289,6 @@ fn parse_connection(
 ) -> Result<(R2Target, R2Credentials), RecoveryCommandError> {
     let account_id = R2AccountId::parse(std::mem::take(&mut input.account_id))
         .map_err(|_| RecoveryCommandError::invalid_input())?;
-    let jurisdiction = R2Jurisdiction::from_db(&input.jurisdiction)
-        .map_err(|_| RecoveryCommandError::invalid_input())?;
     let bucket = R2BucketName::parse(std::mem::take(&mut input.bucket))
         .map_err(|_| RecoveryCommandError::invalid_input())?;
     let credentials = R2Credentials::new(
@@ -301,7 +299,7 @@ fn parse_connection(
     Ok((
         R2Target {
             account_id,
-            jurisdiction,
+            jurisdiction: input.jurisdiction,
             bucket,
             prefix: R2Prefix::primary(),
         },

@@ -36,6 +36,7 @@ import {
   RestoreDrillOutcome,
   type OffsiteBackupStatus,
 } from '../../../src/backup/index.ts'
+import { ApplicationLaunchMode } from '../../../src/recovery/index.ts'
 import type { BrowserScenario } from './scenarios.ts'
 import { BrowserScenarioId } from './scenarios.ts'
 
@@ -114,7 +115,7 @@ export class FakeDaraBackend {
     switch (command) {
       case DaraIpcCommand.LoadApplicationLaunchContext:
         requireEmptyPayload(payload, command)
-        return { mode: 'NORMAL' }
+        return { mode: ApplicationLaunchMode.Normal }
       case DaraIpcCommand.CreateCardContent: {
         const envelope = requireRecord(payload, command)
         const content = requireCardContentDraft(envelope.input, command)
