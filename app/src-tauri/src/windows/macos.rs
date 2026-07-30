@@ -230,6 +230,13 @@ pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     register_shortcuts(app.handle(), &settings.keyboard_bindings);
     install_clock_change_observers(app.handle());
 
+    // Dara carries a Dock icon, so launching it opens its window like any other application.
+    // The policy is already Regular by this point, before macOS activates the launching
+    // process, which is the ordering that lets the window arrive owning the menu bar.
+    if let Err(error) = activate_main_window(app.handle()) {
+        log::error!("failed to show the main window on launch: {error}");
+    }
+
     Ok(())
 }
 

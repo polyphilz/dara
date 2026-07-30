@@ -25,7 +25,8 @@ describe('native Tauri boundary', () => {
       return windows.includes(NativeWindowLabel.Main) &&
         windows.includes(NativeWindowLabel.QuickAdd)
     })
-    expect(await visibleWindowLabels()).toEqual([])
+    // Launching Dara opens its main window; only Quick Add stays hidden until summoned.
+    expect(await visibleWindowLabels()).toEqual([NativeWindowLabel.Main])
 
     const settings = await browser.tauri.execute(
       (tauri, command) => tauri.core.invoke(command),
