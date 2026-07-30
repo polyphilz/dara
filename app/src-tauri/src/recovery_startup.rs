@@ -20,6 +20,9 @@ use crate::{
     database::{self, DatabasePaths, InitializationOptions},
 };
 
+#[cfg(feature = "e2e")]
+const E2E_START_FRESH_ENV: &str = "DARA_E2E_START_FRESH";
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub(crate) enum ApplicationLaunchMode {
@@ -75,6 +78,11 @@ pub(crate) fn launch_context(pair: DatabasePairState) -> ApplicationLaunchContex
             DatabasePairState::Existing => ApplicationLaunchMode::Normal,
         },
     }
+}
+
+#[cfg(feature = "e2e")]
+pub(crate) fn e2e_start_fresh_requested() -> bool {
+    std::env::var(E2E_START_FRESH_ENV).as_deref() == Ok("1")
 }
 
 #[derive(Clone)]

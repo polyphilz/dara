@@ -174,8 +174,18 @@ pub fn run() {
             recovery::recover_interrupted_restore(&database_paths)?;
             let pair_state = recovery_startup::inspect_database_pair(&database_paths)?;
             let launch_context = recovery_startup::launch_context(pair_state);
+            #[cfg(feature = "e2e")]
+            let launch_context = if pair_state == recovery_startup::DatabasePairState::Fresh
+                && recovery_startup::e2e_start_fresh_requested()
+            {
+                recovery_startup::ApplicationLaunchContext {
+                    mode: recovery_startup::ApplicationLaunchMode::Normal,
+                }
+            } else {
+                launch_context
+            };
             app.manage(launch_context);
-            if pair_state == recovery_startup::DatabasePairState::Fresh {
+            if launch_context.mode == recovery_startup::ApplicationLaunchMode::Recovery {
                 app.manage(recovery_startup::FreshInstallRecoveryState::default());
                 windows::macos::setup_recovery(app)?;
                 return Ok(());
