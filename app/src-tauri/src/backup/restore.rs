@@ -45,7 +45,8 @@ use crate::{
 };
 
 const MAX_CHECKPOINT_MANIFEST_BYTES: u64 = 64 * 1024;
-const MAX_CHECKPOINT_MANIFEST_CANDIDATES: usize = 100;
+const MAX_CHECKPOINT_MANIFEST_DOWNLOADS: usize = 1_000;
+const MAX_DISCOVERED_CHECKPOINTS: usize = 100;
 const MAX_CHECKPOINT_LIST_PAGES: usize = 100;
 const MAX_RECOVERY_CATALOG_CHECKPOINTS: usize = 20;
 const MAX_RESTORE_MEDIA_OBJECTS: usize = 100_000;
@@ -544,7 +545,7 @@ impl RemoteRecoveryEngine {
             }
             retain_most_recent_checkpoint_candidates(
                 &mut candidates,
-                MAX_CHECKPOINT_MANIFEST_CANDIDATES,
+                MAX_CHECKPOINT_MANIFEST_DOWNLOADS,
                 required_checkpoint_id,
             );
             match page.next {
@@ -561,10 +562,16 @@ impl RemoteRecoveryEngine {
         malformed_objects_ignored = malformed_objects_ignored.saturating_add(
             discard_duplicate_checkpoint_candidates(&mut candidates, &checkpoint_id_counts),
         );
+        if let Some(required_checkpoint_id) = required_checkpoint_id {
+            candidates.retain(|candidate| &candidate.checkpoint_id == required_checkpoint_id);
+        }
         sort_checkpoint_candidates_most_recent_first(&mut candidates);
 
         let mut checkpoints = Vec::with_capacity(candidates.len());
         for candidate in candidates {
+            if checkpoints.len() >= MAX_DISCOVERED_CHECKPOINTS {
+                break;
+            }
             let listed = candidate.listed;
             let stored = match self.store.get(&listed.key) {
                 Ok(stored) => stored,
@@ -2908,9 +2915,9 @@ mod tests {
     }
 
     #[test]
-    fn recovery_catalog_validates_only_a_bounded_recent_set() {
+    fn recovery_discovery_bounds_downloads_and_preserves_explicit_targets() {
         let fixture = rich_remote_fixture();
-        for index in 0..MAX_CHECKPOINT_MANIFEST_CANDIDATES + 25 {
+        for index in 0..MAX_DISCOVERED_CHECKPOINTS + 25 {
             let checkpoint_id = CheckpointId::new();
             let minute = index / 60;
             let second = index % 60;
@@ -2956,7 +2963,7 @@ mod tests {
                 .into_iter()
                 .filter(|operation| *operation == ObjectOperation::Get)
                 .count(),
-            MAX_CHECKPOINT_MANIFEST_CANDIDATES + 2
+            MAX_DISCOVERED_CHECKPOINTS + 2
         );
         assert_eq!(
             catalog
@@ -2986,7 +2993,45 @@ mod tests {
                 .into_iter()
                 .filter(|operation| *operation == ObjectOperation::Get)
                 .count(),
-            (MAX_CHECKPOINT_MANIFEST_CANDIDATES + 2) * 2
+            MAX_DISCOVERED_CHECKPOINTS + 5
+        );
+    }
+
+    #[test]
+    fn recovery_catalog_reads_past_malformed_recent_manifests() {
+        let fixture = rich_remote_fixture();
+        for index in 0..MAX_DISCOVERED_CHECKPOINTS {
+            let checkpoint_id = CheckpointId::new();
+            let minute = index / 60;
+            let second = index % 60;
+            let created_at = UtcTimestamp::parse(format!("2099-07-29T00:{minute:02}:{second:02}Z"))
+                .expect("checkpoint timestamp");
+            put_json(
+                fixture.store.as_ref(),
+                fixture
+                    .keyspace
+                    .checkpoint(&fixture.epoch, &checkpoint_id, &created_at)
+                    .expect("checkpoint key"),
+                b"{".to_vec(),
+            );
+        }
+
+        let catalog = fixture.engine.list_checkpoints().expect("catalog");
+
+        assert_eq!(catalog.checkpoints.len(), 1);
+        assert_eq!(catalog.checkpoints[0].checkpoint_id, fixture.checkpoint_id);
+        assert_eq!(
+            catalog.malformed_objects_ignored,
+            u64::try_from(MAX_DISCOVERED_CHECKPOINTS).expect("malformed count")
+        );
+        assert_eq!(
+            fixture
+                .store
+                .operations()
+                .into_iter()
+                .filter(|operation| *operation == ObjectOperation::Get)
+                .count(),
+            MAX_DISCOVERED_CHECKPOINTS + 3
         );
     }
 
