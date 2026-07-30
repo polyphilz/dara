@@ -450,7 +450,9 @@ fn restore_session(
             }));
         }
     }
-    if MacOsKeychainCredentialStore
+    let credential_store = MacOsKeychainCredentialStore;
+    let previous_credentials = credential_store.load(&session.backup_set_id).ok();
+    if credential_store
         .save(&session.backup_set_id, &session.credentials)
         .is_err()
     {
@@ -462,7 +464,11 @@ fn restore_session(
     let engine_credentials = match session.credentials.try_clone() {
         Ok(credentials) => credentials,
         Err(_) => {
-            let _ = MacOsKeychainCredentialStore.remove(&session.backup_set_id);
+            restore_previous_credentials(
+                &credential_store,
+                &session.backup_set_id,
+                previous_credentials.as_ref(),
+            );
             return Err(Box::new(RestoreSessionFailure {
                 error: RecoveryCommandError::invalid_input(),
                 session,
@@ -476,7 +482,11 @@ fn restore_session(
     ) {
         Ok(engine) => engine,
         Err(error) => {
-            let _ = MacOsKeychainCredentialStore.remove(&session.backup_set_id);
+            restore_previous_credentials(
+                &credential_store,
+                &session.backup_set_id,
+                previous_credentials.as_ref(),
+            );
             return Err(Box::new(RestoreSessionFailure {
                 error: RecoveryCommandError::backup(error),
                 session,
@@ -486,12 +496,28 @@ fn restore_session(
     match engine.restore_fresh_to_locked(data_lock, selector, &session.backup_set_id) {
         Ok(_) => Ok(()),
         Err(error) => {
-            let _ = MacOsKeychainCredentialStore.remove(&session.backup_set_id);
+            restore_previous_credentials(
+                &credential_store,
+                &session.backup_set_id,
+                previous_credentials.as_ref(),
+            );
             Err(Box::new(RestoreSessionFailure {
                 error: RecoveryCommandError::backup(error),
                 session,
             }))
         }
+    }
+}
+
+fn restore_previous_credentials(
+    credential_store: &impl CredentialStore,
+    backup_set_id: &BackupSetId,
+    previous_credentials: Option<&R2Credentials>,
+) {
+    if let Some(previous_credentials) = previous_credentials {
+        let _ = credential_store.save(backup_set_id, previous_credentials);
+    } else {
+        let _ = credential_store.remove(backup_set_id);
     }
 }
 
@@ -521,6 +547,41 @@ fn parse_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct RecordingCredentialStore {
+        saved_access_keys: Mutex<Vec<String>>,
+        removals: std::sync::atomic::AtomicUsize,
+    }
+
+    impl CredentialStore for RecordingCredentialStore {
+        fn save(
+            &self,
+            _backup_set_id: &BackupSetId,
+            credentials: &R2Credentials,
+        ) -> Result<(), crate::backup::credentials::CredentialError> {
+            self.saved_access_keys
+                .lock()
+                .expect("saved credentials")
+                .push(credentials.access_key_id().to_owned());
+            Ok(())
+        }
+
+        fn load(
+            &self,
+            _backup_set_id: &BackupSetId,
+        ) -> Result<R2Credentials, crate::backup::credentials::CredentialError> {
+            Err(crate::backup::credentials::CredentialError::Missing)
+        }
+
+        fn remove(
+            &self,
+            _backup_set_id: &BackupSetId,
+        ) -> Result<(), crate::backup::credentials::CredentialError> {
+            self.removals.fetch_add(1, Ordering::Relaxed);
+            Ok(())
+        }
+    }
 
     #[test]
     fn empty_directory_enters_recovery_without_creating_databases() {
@@ -612,5 +673,42 @@ mod tests {
 
         drop(operation);
         state.begin_operation().expect("operation after release");
+    }
+
+    #[test]
+    fn failed_restore_reinstates_previous_credentials() {
+        let store = RecordingCredentialStore::default();
+        let backup_set_id = BackupSetId::new();
+        let previous = R2Credentials::new(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        )
+        .expect("previous credentials");
+
+        restore_previous_credentials(&store, &backup_set_id, Some(&previous));
+
+        assert_eq!(
+            store
+                .saved_access_keys
+                .lock()
+                .expect("saved credentials")
+                .as_slice(),
+            ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"]
+        );
+        assert_eq!(store.removals.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn failed_restore_removes_new_credentials_when_none_existed() {
+        let store = RecordingCredentialStore::default();
+
+        restore_previous_credentials(&store, &BackupSetId::new(), None);
+
+        assert!(store
+            .saved_access_keys
+            .lock()
+            .expect("saved credentials")
+            .is_empty());
+        assert_eq!(store.removals.load(Ordering::Relaxed), 1);
     }
 }
