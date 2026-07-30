@@ -23,11 +23,14 @@ use tauri::{
 use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
-use crate::database::{
-    commands::{run_writer, CommandError, CommandResult},
-    validate_complete_bindings, AdoptLegacyZoomInput, DaraCommand, Database, KeyboardBinding,
-    SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
-    DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
+use crate::{
+    database::{
+        commands::{run_writer, CommandError, CommandResult},
+        validate_complete_bindings, AdoptLegacyZoomInput, DaraCommand, Database, KeyboardBinding,
+        SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
+        DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
+    },
+    recovery_startup::{ApplicationLaunchContext, ApplicationLaunchMode},
 };
 
 const MAIN_LABEL: &str = "main";
@@ -189,6 +192,21 @@ struct RestoreTarget {
 enum DismissFocus {
     RestorePrevious,
     PreserveCurrent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MainWindowCloseAction {
+    Exit,
+    Hide,
+}
+
+const fn main_window_close_action(
+    launch_mode: Option<ApplicationLaunchMode>,
+) -> MainWindowCloseAction {
+    match launch_mode {
+        Some(ApplicationLaunchMode::Recovery) => MainWindowCloseAction::Exit,
+        Some(ApplicationLaunchMode::Normal) | None => MainWindowCloseAction::Hide,
+    }
 }
 
 pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
@@ -1071,10 +1089,19 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
         WindowEvent::CloseRequested { api, .. } => match window.label() {
             MAIN_LABEL => {
                 api.prevent_close();
-                if let Err(error) = window.hide() {
-                    log::error!("failed to hide main window: {error}");
+                let launch_mode = window
+                    .app_handle()
+                    .try_state::<ApplicationLaunchContext>()
+                    .map(|context| context.mode);
+                match main_window_close_action(launch_mode) {
+                    MainWindowCloseAction::Exit => window.app_handle().exit(0),
+                    MainWindowCloseAction::Hide => {
+                        if let Err(error) = window.hide() {
+                            log::error!("failed to hide main window: {error}");
+                        }
+                        enter_resident_mode(window.app_handle());
+                    }
                 }
-                enter_resident_mode(window.app_handle());
             }
             QUICK_ADD_LABEL => {
                 api.prevent_close();
@@ -1111,7 +1138,10 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
 
 #[cfg(test)]
 mod focus_tests {
-    use super::{load_tray_icon, FocusContext};
+    use super::{
+        load_tray_icon, main_window_close_action, ApplicationLaunchMode, FocusContext,
+        MainWindowCloseAction,
+    };
 
     #[test]
     fn tray_icon_is_a_transparent_template_image() {
@@ -1131,5 +1161,18 @@ mod focus_tests {
 
         context.file_dialog_open = true;
         assert!(!context.should_dismiss_quick_add_on_focus_loss());
+    }
+
+    #[test]
+    fn recovery_close_exits_instead_of_hiding_the_only_window() {
+        assert_eq!(
+            main_window_close_action(Some(ApplicationLaunchMode::Recovery)),
+            MainWindowCloseAction::Exit
+        );
+        assert_eq!(
+            main_window_close_action(Some(ApplicationLaunchMode::Normal)),
+            MainWindowCloseAction::Hide
+        );
+        assert_eq!(main_window_close_action(None), MainWindowCloseAction::Hide);
     }
 }
