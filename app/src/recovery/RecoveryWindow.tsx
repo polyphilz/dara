@@ -13,7 +13,10 @@ import {
   type R2ConnectionFormErrors,
 } from '../backup/r2-form-validation.ts'
 import { DaraButton } from '../components/DaraButton.tsx'
-import { DaraButtonVariant } from '../components/dara-button-types.ts'
+import {
+  DaraButtonSize,
+  DaraButtonVariant,
+} from '../components/dara-button-types.ts'
 import { DaraInput } from '../components/DaraInput.tsx'
 import { DaraSelect } from '../components/DaraSelect.tsx'
 import {
@@ -145,27 +148,29 @@ export function RecoveryWindow({
 
         {step === RecoveryStep.Choose && (
           <div className="recovery-choice-list">
-            <button
+            <DaraButton
               className="recovery-choice"
               disabled={busy}
               onClick={() => void startFresh()}
-              type="button"
+              size={DaraButtonSize.Custom}
+              variant={DaraButtonVariant.Custom}
             >
               <strong>Start fresh</strong>
               <span>Create an empty Dara library on this Mac.</span>
-            </button>
-            <button
+            </DaraButton>
+            <DaraButton
               className="recovery-choice"
               disabled={busy}
               onClick={() => {
                 setOperationError(null)
                 setStep(RecoveryStep.Connect)
               }}
-              type="button"
+              size={DaraButtonSize.Custom}
+              variant={DaraButtonVariant.Custom}
             >
               <strong>Restore from backup</strong>
               <span>Find a complete Dara backup in your Cloudflare R2 bucket.</span>
-            </button>
+            </DaraButton>
           </div>
         )}
 

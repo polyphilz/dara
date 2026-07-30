@@ -76,17 +76,6 @@
   background: var(--accent-soft);
 }
 
-.recovery-choice:focus-visible {
-  border-color: var(--accent);
-  outline: 3px solid var(--accent-soft);
-  outline-offset: 2px;
-}
-
-.recovery-choice:disabled {
-  cursor: wait;
-  opacity: 0.55;
-}
-
 .recovery-choice strong {
   font-size: 14px;
 }

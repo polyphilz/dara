@@ -45,8 +45,9 @@ use crate::{
 };
 
 const MAX_CHECKPOINT_MANIFEST_BYTES: u64 = 64 * 1024;
-const MAX_CHECKPOINT_MANIFESTS: usize = 10_000;
+const MAX_RETAINED_CHECKPOINT_MANIFESTS: usize = 10_000;
 const MAX_CHECKPOINT_LIST_PAGES: usize = 100;
+const MAX_RECOVERY_CATALOG_CHECKPOINTS: usize = 20;
 const MAX_RESTORE_MEDIA_OBJECTS: usize = 100_000;
 const MAX_RESTORE_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const RESTORE_DRY_RUN_TIMEOUT: Duration = Duration::from_secs(35);
@@ -324,8 +325,17 @@ impl RemoteRecoveryEngine {
     pub(crate) fn list_checkpoints(&self) -> Result<RemoteCheckpointCatalog, BackupErrorCode> {
         let scratch = RestoreTask::create(&std::env::temp_dir(), ".dara-remote-inspect-")?;
         let discovered = self.discover_checkpoints()?;
-        let mut checkpoints = Vec::with_capacity(discovered.checkpoints.len());
-        for (index, checkpoint) in discovered.checkpoints.iter().enumerate() {
+        let catalog_length = discovered
+            .checkpoints
+            .len()
+            .min(MAX_RECOVERY_CATALOG_CHECKPOINTS);
+        let mut checkpoints = Vec::with_capacity(catalog_length);
+        for (index, checkpoint) in discovered
+            .checkpoints
+            .iter()
+            .take(MAX_RECOVERY_CATALOG_CHECKPOINTS)
+            .enumerate()
+        {
             let availability =
                 match self.dry_run_checkpoint(scratch.path(), &discovered.epoch, checkpoint, index)
                 {
@@ -487,6 +497,7 @@ impl RemoteRecoveryEngine {
         let prefix = self.keyspace.checkpoints(owner.replica_epoch_id());
         let mut continuation = None;
         let mut checkpoints = Vec::new();
+        let mut checkpoint_id_counts = HashMap::new();
         let mut malformed_objects_ignored = 0_u64;
         for _ in 0..MAX_CHECKPOINT_LIST_PAGES {
             let page = self
@@ -494,9 +505,6 @@ impl RemoteRecoveryEngine {
                 .list(&prefix, continuation.as_ref())
                 .map_err(|error| map_store_error(error.code))?;
             for listed in page.objects {
-                if checkpoints.len() >= MAX_CHECKPOINT_MANIFESTS {
-                    return Err(BackupErrorCode::RestoreValidationFailed);
-                }
                 if listed.byte_length == 0 || listed.byte_length > MAX_CHECKPOINT_MANIFEST_BYTES {
                     malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
                     continue;
@@ -529,27 +537,22 @@ impl RemoteRecoveryEngine {
                     malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
                     continue;
                 }
+                *checkpoint_id_counts
+                    .entry(manifest.checkpoint_id().clone())
+                    .or_insert(0_u64) += 1;
                 checkpoints.push(RemoteCheckpoint {
                     manifest,
                     created_at_millis: created_at_millis.expect("validated checkpoint timestamp"),
                 });
             }
+            retain_most_recent_checkpoints(&mut checkpoints, MAX_RETAINED_CHECKPOINT_MANIFESTS);
             match page.next {
                 Some(next) => continuation = Some(next),
                 None => {
-                    malformed_objects_ignored = malformed_objects_ignored
-                        .saturating_add(discard_duplicate_checkpoint_ids(&mut checkpoints));
-                    checkpoints.sort_by(|left, right| {
-                        right
-                            .created_at_millis
-                            .cmp(&left.created_at_millis)
-                            .then_with(|| {
-                                right
-                                    .manifest
-                                    .checkpoint_id()
-                                    .cmp(left.manifest.checkpoint_id())
-                            })
-                    });
+                    malformed_objects_ignored = malformed_objects_ignored.saturating_add(
+                        discard_duplicate_checkpoint_ids(&mut checkpoints, &checkpoint_id_counts),
+                    );
+                    sort_checkpoints_most_recent_first(&mut checkpoints);
                     return Ok(DiscoveredCheckpoints {
                         checkpoints,
                         malformed_objects_ignored,
@@ -1555,24 +1558,48 @@ fn elapsed_millis(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-fn discard_duplicate_checkpoint_ids(checkpoints: &mut Vec<RemoteCheckpoint>) -> u64 {
-    let mut counts = HashMap::new();
-    for checkpoint in checkpoints.iter() {
-        *counts
-            .entry(checkpoint.manifest.checkpoint_id().clone())
-            .or_insert(0_u64) += 1;
+fn sort_checkpoints_most_recent_first(checkpoints: &mut [RemoteCheckpoint]) {
+    checkpoints.sort_by(|left, right| {
+        right
+            .created_at_millis
+            .cmp(&left.created_at_millis)
+            .then_with(|| {
+                right
+                    .manifest
+                    .checkpoint_id()
+                    .cmp(left.manifest.checkpoint_id())
+            })
+    });
+}
+
+fn retain_most_recent_checkpoints(checkpoints: &mut Vec<RemoteCheckpoint>, maximum: usize) {
+    if checkpoints.len() <= maximum {
+        return;
     }
-    let before = checkpoints.len();
+    sort_checkpoints_most_recent_first(checkpoints);
+    checkpoints.truncate(maximum);
+}
+
+fn discard_duplicate_checkpoint_ids(
+    checkpoints: &mut Vec<RemoteCheckpoint>,
+    counts: &HashMap<CheckpointId, u64>,
+) -> u64 {
     checkpoints
         .retain(|checkpoint| counts.get(checkpoint.manifest.checkpoint_id()).copied() == Some(1));
-    u64::try_from(before.saturating_sub(checkpoints.len())).unwrap_or(u64::MAX)
+    counts
+        .values()
+        .filter(|count| **count > 1)
+        .fold(0_u64, |total, count| total.saturating_add(*count))
 }
 
 #[cfg(test)]
 mod tests {
     use std::{
         collections::HashSet,
-        sync::{Arc, Mutex},
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc, Mutex,
+        },
     };
 
     use super::*;
@@ -1600,6 +1627,7 @@ mod tests {
     struct FakeRelationalRestore {
         main_source: PathBuf,
         unavailable: Mutex<HashSet<u64>>,
+        dry_run_count: AtomicUsize,
     }
 
     impl RelationalRestore for FakeRelationalRestore {
@@ -1610,6 +1638,7 @@ mod tests {
             txid: LitestreamTxid,
             _output: &Path,
         ) -> Result<(), BackupErrorCode> {
+            self.dry_run_count.fetch_add(1, Ordering::Relaxed);
             if self
                 .unavailable
                 .lock()
@@ -2120,6 +2149,7 @@ mod tests {
         let relational = Arc::new(FakeRelationalRestore {
             main_source: source_main,
             unavailable: Mutex::new(HashSet::new()),
+            dry_run_count: AtomicUsize::new(0),
         });
         let engine = RemoteRecoveryEngine::with_parts(store.clone(), target, relational.clone());
         RemoteFixture {
@@ -2767,6 +2797,56 @@ mod tests {
         assert_eq!(
             catalog.checkpoints[1].availability,
             RemoteCheckpointAvailability::Restorable
+        );
+    }
+
+    #[test]
+    fn recovery_catalog_validates_only_a_bounded_recent_set() {
+        let fixture = rich_remote_fixture();
+        for second in 1..=MAX_RECOVERY_CATALOG_CHECKPOINTS + 5 {
+            let checkpoint_id = CheckpointId::new();
+            let created_at = UtcTimestamp::parse(format!("2099-07-29T00:00:{second:02}Z"))
+                .expect("checkpoint timestamp");
+            let manifest = CheckpointManifestV1::new(CheckpointManifestInput {
+                backup_set_id: fixture.manifest.backup_set_id().clone(),
+                replica_epoch_id: fixture.epoch.clone(),
+                checkpoint_id: checkpoint_id.clone(),
+                created_at: created_at.clone(),
+                dara_version: fixture.manifest.dara_version().into(),
+                content_revision: fixture.manifest.content_revision(),
+                main_migration_head: fixture.manifest.main_migration_head(),
+                litestream_path: fixture.keyspace.litestream(&fixture.epoch),
+                txid: format!("{:016x}", 0x100 + second),
+                media_migration_head: fixture.manifest.media_migration_head(),
+                referenced_hash_count: fixture.manifest.referenced_hash_count(),
+                referenced_total_bytes: fixture.manifest.referenced_total_bytes(),
+                referenced_hash_set_sha256: fixture.manifest.referenced_hash_set_sha256(),
+            })
+            .expect("checkpoint");
+            put_json(
+                fixture.store.as_ref(),
+                fixture
+                    .keyspace
+                    .checkpoint(&fixture.epoch, &checkpoint_id, &created_at)
+                    .expect("checkpoint key"),
+                manifest.to_json().expect("checkpoint JSON"),
+            );
+        }
+
+        let catalog = fixture.engine.list_checkpoints().expect("catalog");
+
+        assert_eq!(catalog.checkpoints.len(), MAX_RECOVERY_CATALOG_CHECKPOINTS);
+        assert_eq!(
+            fixture.relational.dry_run_count.load(Ordering::Relaxed),
+            MAX_RECOVERY_CATALOG_CHECKPOINTS
+        );
+        assert_eq!(
+            catalog
+                .checkpoints
+                .first()
+                .expect("latest checkpoint")
+                .created_at,
+            "2099-07-29T00:00:25Z"
         );
     }
 

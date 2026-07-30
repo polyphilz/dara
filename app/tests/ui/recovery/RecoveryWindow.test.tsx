@@ -23,8 +23,10 @@ test('offers only start-fresh and restore choices on a fresh installation', () =
   )
 
   expect(getByText('This Mac does not have any Dara data yet.')).toBeTruthy()
-  expect(getByRole('button', { name: /start fresh/i })).toBeTruthy()
-  expect(getByRole('button', { name: /restore from backup/i })).toBeTruthy()
+  const startFresh = getByRole('button', { name: /start fresh/i })
+  const restore = getByRole('button', { name: /restore from backup/i })
+  expect(startFresh.className).toContain('dara-button')
+  expect(restore.className).toContain('dara-button')
   expect(queryByLabelText('R2 account ID')).toBeNull()
 })
 
