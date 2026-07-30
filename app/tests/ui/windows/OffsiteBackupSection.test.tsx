@@ -112,6 +112,31 @@ test('keeps component freshness separate from a complete recoverable checkpoint'
   ).toHaveProperty('disabled', true)
 })
 
+test('shows an enabled restored backup as paused until takeover', async () => {
+  const status = enabledStatus({ complete: true })
+  status.takeoverAvailable = true
+  status.relational = {
+    ...status.relational,
+    phase: RelationalBackupPhase.Blocked,
+    lastErrorCode: BackupErrorCode.OwnerMismatch,
+  }
+  const fixture = backupFixture(status)
+  const { findByRole, findByText, queryByText } = renderSection(fixture.gateway)
+
+  expect(await findByText('Backup is paused')).toBeTruthy()
+  expect(await findByText('Paused')).toBeTruthy()
+  expect(
+    await findByText(/new backups are paused until this Mac takes over/i),
+  ).toBeTruthy()
+  expect(queryByText('Backup is on')).toBeNull()
+  expect(
+    await findByRole('button', { name: 'Take over restored backup' }),
+  ).toBeTruthy()
+  expect(
+    await findByRole('button', { name: 'Back up now' }),
+  ).toHaveProperty('disabled', true)
+})
+
 test('shows the last complete checkpoint and durable restore-drill result', async () => {
   const fixture = backupFixture(enabledStatus({ complete: true }))
   const { findByRole, findByText } = renderSection(fixture.gateway)
@@ -160,6 +185,57 @@ test('announces typed progress and reloads after completion', async () => {
     await findByText('A complete recoverable backup was created.'),
   ).toBeTruthy()
   expect(fixture.gateway.loadStatus).toHaveBeenCalledTimes(2)
+})
+
+test('clears a takeover notice when a newer complete checkpoint becomes durable', async () => {
+  const restored = enabledStatus({ complete: true })
+  restored.takeoverAvailable = true
+  const takingOver = enabledStatus({ complete: false })
+  const completed = enabledStatus({ complete: true })
+  completed.checkpoint.lastCompleteCheckpointId =
+    'aaaaaaaa-bbbb-7ccc-8ddd-eeeeeeeeeeee'
+  const fixture = backupFixture(restored)
+  fixture.gateway.loadStatus
+    .mockResolvedValueOnce(structuredClone(restored))
+    .mockResolvedValueOnce(structuredClone(takingOver))
+    .mockResolvedValue(structuredClone(completed))
+  const {
+    findByRole,
+    findByText,
+    getByRole,
+    queryByText,
+  } = renderSection(fixture.gateway)
+
+  fireEvent.click(
+    await findByRole('button', { name: 'Take over restored backup' }),
+  )
+  fireEvent.click(
+    getByRole('button', { name: 'Take over backup' }),
+  )
+
+  expect(
+    await findByText(
+      'This Mac now owns the backup. Dara is building a new complete checkpoint.',
+    ),
+  ).toBeTruthy()
+  await waitFor(() => expect(fixture.progress).toBeTypeOf('function'))
+  await act(async () => {
+    fixture.progress?.({
+      errorCode: null,
+      operation: OffsiteBackupOperationKind.TakeOver,
+      operationId: '019f547b-6200-7000-8000-000000000099',
+      phase: OffsiteBackupProgressPhase.Complete,
+    })
+  })
+
+  await waitFor(() => {
+    expect(
+      queryByText(
+        'This Mac now owns the backup. Dara is building a new complete checkpoint.',
+      ),
+    ).toBeNull()
+  })
+  expect(await findByText(/checkpoint aaaaaaaa/)).toBeTruthy()
 })
 
 test('does not announce operation success until status refresh succeeds', async () => {
