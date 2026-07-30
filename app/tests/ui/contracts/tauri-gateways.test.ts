@@ -161,7 +161,6 @@ describe('Tauri gateway contracts', () => {
       accountId: '0123456789abcdef0123456789abcdef',
       jurisdiction: R2Jurisdiction.Default,
       bucket: 'dara-local',
-      prefix: 'dara/primary',
     }
     const credentials = {
       accessKeyId: '11111111111111111111111111111111',

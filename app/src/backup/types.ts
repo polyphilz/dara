@@ -146,7 +146,6 @@ export interface OffsiteBackupTarget {
   accountId: string
   jurisdiction: R2Jurisdiction
   bucket: string
-  prefix: string
 }
 
 export interface OffsiteBackupCredentials {

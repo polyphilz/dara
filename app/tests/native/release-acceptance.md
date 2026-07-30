@@ -172,22 +172,22 @@ variants, media digest, review history, search projections, settings, and legacy
 
 ## C. Off-site backup and new-Mac recovery
 
-Use a dedicated private Standard-class R2 bucket or prefix containing no production backup.
+Use a dedicated private Standard-class R2 bucket whose `dara/primary` location contains no
+backup.
 Configure a bucket-scoped Object Read & Write token as described in
-[`docs/OFFSITE_BACKUP.md`](../../../docs/OFFSITE_BACKUP.md). Export the six exact values in the
+[`docs/OFFSITE_BACKUP.md`](../../../docs/OFFSITE_BACKUP.md). Export the five exact values in the
 terminal that will run the command-line proofs:
 
 ```sh
 export DARA_LITESTREAM_R2_ACCOUNT_ID='...'
 export DARA_LITESTREAM_R2_JURISDICTION='DEFAULT'
 export DARA_LITESTREAM_R2_BUCKET='...'
-export DARA_LITESTREAM_R2_PREFIX='dara/release-acceptance-20260728'
 export DARA_LITESTREAM_R2_ACCESS_KEY_ID='...'
 export DARA_LITESTREAM_R2_SECRET_ACCESS_KEY='...'
 ```
 
-Never paste these values into the release record or commit them. The prefix must be unique for
-this run.
+Never paste these values into the release record or commit them. Do not reuse a bucket containing
+a real Dara backup.
 
 ### C1. Publish and drill a packaged checkpoint
 
@@ -201,7 +201,7 @@ pnpm release:acceptance launch release-offsite-20260728
 In Dara:
 
 - create Basic, Cloze, and image-occlusion cards, including at least one real image;
-- open Settings → Off-site backup and save the same R2 target and prefix;
+- open Settings → Off-site backup and save the same R2 target;
 - confirm the connection, then enable backup;
 - wait for database and media progress to reach a complete checkpoint;
 - run a restore drill and wait for it to succeed; and
@@ -253,7 +253,7 @@ process.
 
 Preserve both local directories and the generated evidence until the release record is reviewed.
 Then disable backup for both test installations, remove their test credentials if they are no
-longer useful, and delete only the dedicated acceptance prefix in Cloudflare.
+longer useful, and delete `dara/primary` from the disposable acceptance bucket in Cloudflare.
 
 ## Release record
 

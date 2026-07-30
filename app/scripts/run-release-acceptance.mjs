@@ -72,6 +72,7 @@ const litestreamConfigFile = join('run', 'backup', 'ls.yml')
 const sidecarLogFile = join('logs', 'llama-server.log')
 const offsiteEvidenceFile = '.release-acceptance-offsite.json'
 const installationIdentityFile = 'installation-id-v1.json'
+const primaryR2Prefix = 'dara/primary'
 const modelManifestRelativePath = join(
   'Contents',
   'Resources',
@@ -541,6 +542,7 @@ function inspectOffsiteBackup(dataDirectory, app) {
   assertStopped(dataDirectory, app)
   const offsite = readOffsiteState(dataDirectory)
   assertEqual(offsite.config.enabled, 1, 'off-site backup enabled state')
+  assertEqual(offsite.config.prefix, primaryR2Prefix, 'off-site backup prefix')
   assert(offsite.checkpoint, 'no published off-site checkpoint exists')
   assertEqual(
     offsite.checkpoint.backupSetId,
@@ -646,11 +648,11 @@ function readOffsiteState(dataDirectory) {
 function offsiteRecoveryEnvironment() {
   const environment = { ...process.env }
   delete environment.DARA_LITESTREAM_PATH
+  delete environment.DARA_LITESTREAM_R2_PREFIX
   for (const name of [
     'DARA_LITESTREAM_R2_ACCOUNT_ID',
     'DARA_LITESTREAM_R2_JURISDICTION',
     'DARA_LITESTREAM_R2_BUCKET',
-    'DARA_LITESTREAM_R2_PREFIX',
     'DARA_LITESTREAM_R2_ACCESS_KEY_ID',
     'DARA_LITESTREAM_R2_SECRET_ACCESS_KEY',
   ]) {

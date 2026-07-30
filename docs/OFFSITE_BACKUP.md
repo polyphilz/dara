@@ -45,8 +45,8 @@ bucket.
    - Jurisdiction (`Default` unless you deliberately chose a restricted
      jurisdiction)
 
-4. Choose a backup prefix. A value such as `dara/personal-v1` keeps Dara's
-   objects in one namespace inside the bucket.
+Dara manages its own storage path inside the bucket. You do not need to choose
+or remember a folder or prefix.
 
 Cloudflare documents [creating S3-compatible credentials][r2-tokens],
 [R2's S3 endpoint][r2-s3], and [jurisdiction-specific endpoints][r2-location].
@@ -58,12 +58,10 @@ Bucket names are permanent, so choose the bucket intentionally.
 
 ## Enable backup in Dara
 
-Open **Settings → Off-site backup**, enter the R2 values, and choose **Save and
-test connection**. Dara stores the access key and secret in the macOS Keychain,
-not in either SQLite database.
-
-After the connection succeeds, enable off-site backup. The settings screen
-reports three related pieces of progress:
+Open **Settings → Off-site backup**, enter the R2 values, and choose **Test and
+enable backup**. Dara stores the access key and secret in the macOS Keychain,
+not in either SQLite database. The settings screen then reports three related
+pieces of progress:
 
 - **Database copy** means Litestream is continuously shipping database changes
   to R2.
@@ -117,8 +115,8 @@ message: it proves that Dara can read and assemble the stored backup.
 ## Recover after losing the Mac
 
 1. Install the same or a newer compatible Dara release on the replacement Mac.
-2. Open the recovery flow and enter the same R2 account, bucket, jurisdiction,
-   and prefix. The R2 credentials must be entered again because Keychain
+2. Open the recovery flow and enter the same R2 account, bucket, and
+   jurisdiction. The R2 credentials must be entered again because Keychain
    credentials are machine-local and are intentionally not backed up.
 3. Inspect and restore the latest complete checkpoint.
 4. Check important cards and media before deleting or changing any old backup
@@ -128,7 +126,7 @@ message: it proves that Dara can read and assemble the stored backup.
    publish new checkpoints.
 
 The takeover step prevents two Macs from silently writing incompatible backup
-histories to the same prefix. Do not take over merely to move between two
+histories to the same backup location. Do not take over merely to move between two
 currently active computers; off-site backup is not multi-device sync.
 
 ## Disable or decommission backup
@@ -140,8 +138,8 @@ These are separate actions:
 - **Remove credentials** deletes Dara's R2 credentials from the local Keychain.
   It does not delete remote objects.
 - **Delete the backup** is a manual Cloudflare operation. First disable backup,
-  run any final recovery check you need, then delete only the dedicated Dara
-  prefix or bucket in R2.
+  run any final recovery check you need, then delete the `dara/primary`
+  location or its dedicated bucket in R2.
 
 Never add an R2 lifecycle rule or Object Lock policy that deletes, transitions,
 expires, or prevents cleanup of Dara objects unless it has been tested against

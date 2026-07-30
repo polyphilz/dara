@@ -218,7 +218,6 @@ pub(crate) struct OffsiteBackupTargetInput {
     account_id: String,
     jurisdiction: R2Jurisdiction,
     bucket: String,
-    prefix: String,
 }
 
 impl OffsiteBackupTargetInput {
@@ -228,7 +227,7 @@ impl OffsiteBackupTargetInput {
                 .map_err(|_| BackupErrorCode::InvalidTarget)?,
             jurisdiction: self.jurisdiction,
             bucket: R2BucketName::parse(self.bucket).map_err(|_| BackupErrorCode::InvalidTarget)?,
-            prefix: R2Prefix::parse(self.prefix).map_err(|_| BackupErrorCode::InvalidTarget)?,
+            prefix: R2Prefix::primary(),
         })
     }
 }
@@ -296,7 +295,6 @@ pub(crate) struct OffsiteBackupTargetStatus {
     account_id: String,
     jurisdiction: R2Jurisdiction,
     bucket: String,
-    prefix: String,
 }
 
 impl From<&R2Target> for OffsiteBackupTargetStatus {
@@ -305,7 +303,6 @@ impl From<&R2Target> for OffsiteBackupTargetStatus {
             account_id: target.account_id.as_str().to_owned(),
             jurisdiction: target.jurisdiction,
             bucket: target.bucket.as_str().to_owned(),
-            prefix: target.prefix.as_str().to_owned(),
         }
     }
 }
@@ -1370,13 +1367,13 @@ const fn safe_error_message(code: BackupErrorCode) -> &'static str {
         BackupErrorCode::ServiceUnavailable => "Cloudflare R2 is temporarily unavailable.",
         BackupErrorCode::KeychainCredentialMissing => "Saved R2 credentials are missing.",
         BackupErrorCode::KeychainUnavailable => "Dara could not use macOS Keychain.",
-        BackupErrorCode::InvalidTarget => "Check the R2 account, bucket, prefix, and credentials.",
+        BackupErrorCode::InvalidTarget => "Check the R2 account, bucket, and credentials.",
         BackupErrorCode::AuthenticationRejected => "Cloudflare rejected the R2 credentials.",
         BackupErrorCode::AuthorizationRejected => {
             "The R2 credentials cannot read and write this bucket."
         }
         BackupErrorCode::PrefixIdentityMismatch => {
-            "This R2 prefix belongs to a different Dara backup."
+            "This R2 location belongs to a different Dara backup."
         }
         BackupErrorCode::OwnerMismatch => "Another Dara installation currently owns this backup.",
         BackupErrorCode::ImmutableObjectConflict => {
@@ -1407,26 +1404,40 @@ mod tests {
     use crate::backup::object_store::fake::FakeObjectStore;
 
     #[test]
-    fn target_input_uses_the_domain_validators() {
-        let target = OffsiteBackupTargetInput {
-            account_id: "0123456789abcdef0123456789abcdef".into(),
-            jurisdiction: R2Jurisdiction::Default,
-            bucket: "dara-local".into(),
-            prefix: "dara/primary".into(),
-        }
-        .parse()
-        .expect("valid target");
+    fn target_input_uses_the_fixed_primary_prefix_and_domain_validators() {
+        let input: OffsiteBackupTargetInput = serde_json::from_value(serde_json::json!({
+            "accountId": "0123456789abcdef0123456789abcdef",
+            "jurisdiction": "DEFAULT",
+            "bucket": "dara-local"
+        }))
+        .expect("target input");
+        let target = input.parse().expect("valid target");
         assert_eq!(target.bucket.as_str(), "dara-local");
-
+        assert_eq!(target.prefix, R2Prefix::primary());
         assert_eq!(
-            OffsiteBackupTargetInput {
-                account_id: "not-an-account".into(),
-                jurisdiction: R2Jurisdiction::Default,
-                bucket: "dara-local".into(),
-                prefix: "dara/primary".into(),
-            }
-            .parse(),
-            Err(BackupErrorCode::InvalidTarget)
+            serde_json::to_value(OffsiteBackupTargetStatus::from(&target)).expect("target status"),
+            serde_json::json!({
+                "accountId": "0123456789abcdef0123456789abcdef",
+                "jurisdiction": "DEFAULT",
+                "bucket": "dara-local"
+            })
+        );
+
+        let invalid_account: OffsiteBackupTargetInput = serde_json::from_value(serde_json::json!({
+            "accountId": "not-an-account",
+            "jurisdiction": "DEFAULT",
+            "bucket": "dara-local"
+        }))
+        .expect("invalid account input");
+        assert_eq!(invalid_account.parse(), Err(BackupErrorCode::InvalidTarget));
+        assert!(
+            serde_json::from_value::<OffsiteBackupTargetInput>(serde_json::json!({
+                "accountId": "0123456789abcdef0123456789abcdef",
+                "jurisdiction": "DEFAULT",
+                "bucket": "dara-local",
+                "prefix": "dara/other"
+            }))
+            .is_err()
         );
     }
 
@@ -1471,7 +1482,6 @@ mod tests {
             account_id: "0123456789abcdef0123456789abcdef".into(),
             jurisdiction: R2Jurisdiction::Default,
             bucket: "dara-local".into(),
-            prefix: "dara/primary".into(),
         }
         .parse()
         .expect("target");
@@ -1509,8 +1519,7 @@ mod tests {
         let target = OffsiteBackupTargetInput {
             account_id: "0123456789abcdef0123456789abcdef".into(),
             jurisdiction: R2Jurisdiction::Default,
-            bucket: "dara-local".into(),
-            prefix: "dara/new-target".into(),
+            bucket: "dara-new-target".into(),
         }
         .parse()
         .expect("target");
@@ -1529,7 +1538,7 @@ mod tests {
             backup_set_id: BackupSetId::new(),
             replica_epoch_id: ReplicaEpochId::new(),
             target: R2Target {
-                prefix: R2Prefix::parse("dara/old-target").expect("old prefix"),
+                bucket: R2BucketName::parse("dara-old-target").expect("old bucket"),
                 ..target.clone()
             },
             ..remote.clone()
@@ -1559,7 +1568,6 @@ mod tests {
             account_id: "0123456789abcdef0123456789abcdef".into(),
             jurisdiction: R2Jurisdiction::Default,
             bucket: "dara-local".into(),
-            prefix: "dara/primary".into(),
         }
         .parse()
         .expect("target");

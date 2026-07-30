@@ -37,7 +37,6 @@ import { DaraSelect } from '../../components/DaraSelect.tsx'
 import { ConfirmationDialog } from './ConfirmationDialog.tsx'
 import { ConfirmationDialogInitialFocus } from './confirmation-dialog.ts'
 
-const DEFAULT_PREFIX = 'dara/primary'
 const STATUS_REFRESH_MILLIS = 5_000
 
 const BackupFormMode = {
@@ -77,7 +76,6 @@ interface BackupForm {
   accountId: string
   jurisdiction: R2Jurisdiction
   bucket: string
-  prefix: string
   accessKeyId: string
   secretAccessKey: string
 }
@@ -85,7 +83,6 @@ interface BackupForm {
 interface BackupFormErrors {
   accountId?: string
   bucket?: string
-  prefix?: string
   accessKeyId?: string
   secretAccessKey?: string
 }
@@ -124,7 +121,6 @@ export function OffsiteBackupSection({
   const targetFormDirtyRef = useRef(false)
   const accountId = useId()
   const bucketId = useId()
-  const prefixId = useId()
   const accessKeyId = useId()
   const secretAccessKeyId = useId()
 
@@ -137,7 +133,6 @@ export function OffsiteBackupSection({
         accountId: next.target?.accountId ?? '',
         jurisdiction: next.target?.jurisdiction ?? R2Jurisdiction.Default,
         bucket: next.target?.bucket ?? '',
-        prefix: next.target?.prefix ?? DEFAULT_PREFIX,
       }))
     }
   }, [])
@@ -371,7 +366,6 @@ export function OffsiteBackupSection({
                   setOperationError(null)
                 }}
                 onSubmit={submitConfiguration}
-                prefixId={prefixId}
                 bucketId={bucketId}
                 secretAccessKeyId={secretAccessKeyId}
                 submitRef={
@@ -728,7 +722,6 @@ function BackupConfigurationForm({
   onCancel,
   onChange,
   onSubmit,
-  prefixId,
   secretAccessKeyId,
   submitRef,
 }: {
@@ -743,7 +736,6 @@ function BackupConfigurationForm({
   onCancel?: () => void
   onChange: (field: keyof BackupForm, value: string) => void
   onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  prefixId: string
   secretAccessKeyId: string
   submitRef?: Ref<HTMLButtonElement>
 }) {
@@ -787,16 +779,6 @@ function BackupConfigurationForm({
               id={bucketId}
               onChange={(event) => onChange('bucket', event.target.value)}
               value={form.bucket}
-            />
-          </BackupField>
-          <BackupField error={errors.prefix} id={prefixId} label="Prefix">
-            <DaraInput
-              aria-describedby={errors.prefix ? `${prefixId}-error` : undefined}
-              aria-invalid={Boolean(errors.prefix)}
-              disabled={controlsDisabled}
-              id={prefixId}
-              onChange={(event) => onChange('prefix', event.target.value)}
-              value={form.prefix}
             />
           </BackupField>
         </>
@@ -895,7 +877,7 @@ function EnabledBackupStatus({ status }: { status: OffsiteBackupStatus }) {
   return (
     <dl className="offsite-backup-status-list">
       <BackupStatusItem
-        detail={`Prefix ${status.target?.prefix ?? 'unavailable'} · ${jurisdictionLabel(status.target?.jurisdiction)}`}
+        detail={jurisdictionLabel(status.target?.jurisdiction)}
         label="R2 target"
         state={status.target?.bucket ?? 'Unavailable'}
         tone={BackupStatusTone.Neutral}
@@ -1002,7 +984,6 @@ function emptyForm(): BackupForm {
     accountId: '',
     jurisdiction: R2Jurisdiction.Default,
     bucket: '',
-    prefix: DEFAULT_PREFIX,
     accessKeyId: '',
     secretAccessKey: '',
   }
@@ -1013,7 +994,6 @@ function targetFromForm(form: BackupForm): OffsiteBackupTarget {
     accountId: form.accountId.trim(),
     jurisdiction: form.jurisdiction,
     bucket: form.bucket.trim(),
-    prefix: form.prefix.trim(),
   }
 }
 
@@ -1026,17 +1006,11 @@ function applyTargetToForm(
     accountId: target.accountId,
     jurisdiction: target.jurisdiction,
     bucket: target.bucket,
-    prefix: target.prefix,
   }
 }
 
 function isTargetFormField(field: keyof BackupForm): boolean {
-  return (
-    field === 'accountId' ||
-    field === 'jurisdiction' ||
-    field === 'bucket' ||
-    field === 'prefix'
-  )
+  return field === 'accountId' || field === 'jurisdiction' || field === 'bucket'
 }
 
 function targetsMatch(
@@ -1047,8 +1021,7 @@ function targetsMatch(
     current !== null &&
     current.accountId === candidate.accountId &&
     current.jurisdiction === candidate.jurisdiction &&
-    current.bucket === candidate.bucket &&
-    current.prefix === candidate.prefix
+    current.bucket === candidate.bucket
   )
 }
 
@@ -1067,21 +1040,6 @@ function validateForm(
     ) {
       errors.bucket =
         'Use 3–63 lowercase letters, numbers, or hyphens.'
-    }
-    const prefix = form.prefix
-    if (
-      prefix.length === 0 ||
-      prefix.length > 512 ||
-      prefix.startsWith('/') ||
-      prefix.endsWith('/') ||
-      prefix.includes('..') ||
-      prefix.includes('\\') ||
-      prefix.includes('?') ||
-      prefix.includes('#') ||
-      prefix.split('/').some((segment) => !/^[A-Za-z0-9_.-]+$/.test(segment))
-    ) {
-      errors.prefix =
-        'Use path segments made from letters, numbers, dots, dashes, or underscores.'
     }
   }
   if (form.accessKeyId.length !== 32 || !lowerHex.test(form.accessKeyId)) {
@@ -1234,10 +1192,10 @@ function backupErrorMessage(code: BackupErrorCode): string {
     [BackupErrorCode.ServiceUnavailable]: 'Cloudflare R2 is temporarily unavailable.',
     [BackupErrorCode.KeychainCredentialMissing]: 'Saved R2 credentials are missing.',
     [BackupErrorCode.KeychainUnavailable]: 'Dara could not use macOS Keychain.',
-    [BackupErrorCode.InvalidTarget]: 'Check the R2 account, bucket, prefix, and credentials.',
+    [BackupErrorCode.InvalidTarget]: 'Check the R2 account, bucket, and credentials.',
     [BackupErrorCode.AuthenticationRejected]: 'Cloudflare rejected the R2 credentials.',
     [BackupErrorCode.AuthorizationRejected]: 'These credentials cannot use that bucket.',
-    [BackupErrorCode.PrefixIdentityMismatch]: 'That prefix belongs to a different Dara backup.',
+    [BackupErrorCode.PrefixIdentityMismatch]: 'That R2 location belongs to a different Dara backup.',
     [BackupErrorCode.OwnerMismatch]: 'Another Dara installation owns this backup.',
     [BackupErrorCode.ImmutableObjectConflict]: 'Remote backup data conflicts with local data.',
     [BackupErrorCode.LocalMediaMissing]: 'A local image needed for backup is missing.',

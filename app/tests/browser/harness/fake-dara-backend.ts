@@ -196,7 +196,6 @@ export class FakeDaraBackend {
             command,
           ),
           bucket: requireString(target.bucket, 'input.target.bucket', command),
-          prefix: requireString(target.prefix, 'input.target.prefix', command),
         })
         return backupOperation(
           command === DaraIpcCommand.ChangeOffsiteBackupTarget
