@@ -402,6 +402,7 @@ pub(crate) async fn restore_remote_backup(
     }
     let state = state.inner().clone();
     let operation = state.begin_operation()?;
+    let paths = DatabasePaths::new(data_lock.data_root());
     let selector = CheckpointId::parse(input.checkpoint_id)
         .map(RemoteCheckpointSelector::Checkpoint)
         .map_err(|_| RecoveryCommandError::invalid_input())?;
@@ -419,7 +420,14 @@ pub(crate) async fn restore_remote_backup(
     .map_err(|_| RecoveryCommandError::internal("The restore task stopped unexpectedly."))?;
     drop(operation);
     match result {
-        Ok(()) => app.restart(),
+        Ok(()) => {
+            request_show_main_after_restart(&paths).map_err(|error| {
+                RecoveryCommandError::internal(format!(
+                    "Could not prepare Dara to show the restored library: {error}"
+                ))
+            })?;
+            app.restart()
+        }
         Err(failure) => {
             let RestoreSessionFailure { error, session } = *failure;
             state.replace_session(session);
@@ -655,7 +663,7 @@ mod tests {
     }
 
     #[test]
-    fn start_fresh_restart_request_is_consumed_once() {
+    fn show_main_after_restart_request_is_consumed_once() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let paths = DatabasePaths::new(directory.path());
 
