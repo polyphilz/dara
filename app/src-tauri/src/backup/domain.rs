@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub(crate) const OBJECT_FORMAT_VERSION: u32 = 1;
 pub(crate) const MANIFEST_FORMAT_VERSION: u32 = 1;
 const MAX_PREFIX_BYTES: usize = 512;
+pub(crate) const PRIMARY_R2_PREFIX: &str = "dara/primary";
 const MAX_OBJECT_KEY_BYTES: usize = 1_024;
 const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 const MAX_DARA_VERSION_BYTES: usize = 64;
@@ -397,6 +398,10 @@ impl R2BucketName {
 pub(crate) struct R2Prefix(String);
 
 impl R2Prefix {
+    pub(crate) fn primary() -> Self {
+        Self(PRIMARY_R2_PREFIX.to_owned())
+    }
+
     pub(crate) fn parse(value: impl Into<String>) -> Result<Self, BackupDomainError> {
         let value = value.into();
         let bytes = value.as_bytes();

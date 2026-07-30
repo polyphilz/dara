@@ -251,13 +251,14 @@ the release record requires one dedicated R2 backup set to prove:
   checkpoint in a new ownership era.
 
 The acceptance driver confines data to direct children of `app/.data/`.
-Supply the six `DARA_LITESTREAM_R2_*` variables only to the terminal running
+Supply the five required `DARA_LITESTREAM_R2_*` variables only to the terminal running
 the recovery proof; normal packaged launches deliberately remove them and must
 read credentials from the macOS Keychain.
 
-Do not point acceptance at a production backup prefix. Preserve its local
-evidence and manually delete the dedicated acceptance prefix only after the
-release record has been reviewed.
+Do not point acceptance at a production bucket. The packaged app and recovery
+command both use Dara's fixed `dara/primary` location. Preserve the local
+evidence and manually delete that location from the disposable acceptance
+bucket only after the release record has been reviewed.
 
 ## 9. Tag the successful release
 

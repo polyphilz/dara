@@ -39,6 +39,7 @@ test('off-site backup clears credentials and distinguishes syncing from recovera
   await expect(
     page.getByRole('button', { name: 'Test and enable backup' }),
   ).toBeVisible()
+  await expect(page.getByLabel('Prefix')).toHaveCount(0)
 
   const accessKey = '11111111111111111111111111111111'
   const secretKey =

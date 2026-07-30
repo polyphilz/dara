@@ -487,7 +487,6 @@ function enabledBackupStatus(): OffsiteBackupStatus {
       accountId: '0123456789abcdef0123456789abcdef',
       jurisdiction: R2Jurisdiction.Default,
       bucket: 'dara-local',
-      prefix: 'dara/primary',
     },
     credentials: CredentialAvailability.Present,
     relational: {

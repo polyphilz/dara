@@ -30,18 +30,18 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-test('starts off, explains local independence, and never implies client-side encryption', async () => {
+test('starts off without exposing the internal R2 path and never implies client-side encryption', async () => {
   const fixture = backupFixture(disabledStatus())
-  const { findByRole, findByText, getByLabelText } = renderSection(fixture.gateway)
+  const { findByRole, findByText, queryByLabelText } = renderSection(
+    fixture.gateway,
+  )
 
   expect(await findByRole('button', { name: 'Test and enable backup' })).toBeTruthy()
   expect(
     await findByText(/network or backup problem will not block normal use/i),
   ).toBeTruthy()
   expect(await findByText(/not encrypted by Dara before upload/i)).toBeTruthy()
-  expect((getByLabelText('Prefix') as HTMLInputElement).value).toBe(
-    'dara/primary',
-  )
+  expect(queryByLabelText('Prefix')).toBeNull()
   expect(fixture.gateway.backupNow).not.toHaveBeenCalled()
 })
 
@@ -86,7 +86,6 @@ test('validates locally, sends credentials once, and clears both credential fiel
       accountId: '0123456789abcdef0123456789abcdef',
       jurisdiction: R2Jurisdiction.Default,
       bucket: 'dara-local',
-      prefix: 'dara/primary',
     },
   })
   expect((getByLabelText('Access Key ID') as HTMLInputElement).value).toBe('')
@@ -460,7 +459,6 @@ function enabledStatus({ complete }: { complete: boolean }): OffsiteBackupStatus
       accountId: '0123456789abcdef0123456789abcdef',
       jurisdiction: R2Jurisdiction.Default,
       bucket: 'dara-local',
-      prefix: 'dara/primary',
     },
     credentials: CredentialAvailability.Present,
     relational: {

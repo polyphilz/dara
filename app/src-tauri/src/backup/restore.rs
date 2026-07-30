@@ -58,7 +58,6 @@ const MAX_DRILL_REPORT_BYTES: u64 = 64 * 1024;
 const ACCOUNT_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCOUNT_ID";
 const JURISDICTION_ENV: &str = "DARA_LITESTREAM_R2_JURISDICTION";
 const BUCKET_ENV: &str = "DARA_LITESTREAM_R2_BUCKET";
-const PREFIX_ENV: &str = "DARA_LITESTREAM_R2_PREFIX";
 const ACCESS_KEY_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCESS_KEY_ID";
 const SECRET_ACCESS_KEY_ENV: &str = "DARA_LITESTREAM_R2_SECRET_ACCESS_KEY";
 const RESTORE_RUNTIME_PREFIX: &str = ".dara-ls-restore-";
@@ -276,8 +275,7 @@ impl RemoteRecoveryEngine {
                 .map_err(|_| BackupErrorCode::InvalidTarget)?,
             bucket: R2BucketName::parse(required_environment(BUCKET_ENV)?)
                 .map_err(|_| BackupErrorCode::InvalidTarget)?,
-            prefix: R2Prefix::parse(required_environment(PREFIX_ENV)?)
-                .map_err(|_| BackupErrorCode::InvalidTarget)?,
+            prefix: R2Prefix::primary(),
         };
         let access_key_id = std::env::var(ACCESS_KEY_ID_ENV)
             .map_err(|_| BackupErrorCode::KeychainCredentialMissing)?;
