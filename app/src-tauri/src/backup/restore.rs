@@ -20,7 +20,7 @@ use super::{
     domain::{
         BackupErrorCode, BackupSetId, CheckpointId, CheckpointManifestV1, CheckpointPhase,
         ContentSha256, IdentityManifestV1, OffsiteMediaState, OwnerManifestV1, R2AccountId,
-        R2BucketName, R2Jurisdiction, R2Keyspace, R2Prefix, R2Target, ReplicaEpochId,
+        R2BucketName, R2Jurisdiction, R2Keyspace, R2Prefix, R2Target, ReplicaEpochId, UtcTimestamp,
         OBJECT_FORMAT_VERSION,
     },
     litestream::{
@@ -29,8 +29,8 @@ use super::{
         VerifiedLitestreamBinary,
     },
     object_store::{
-        GetObjectResult, ObjectContentType, ObjectStore, ObjectStoreErrorCode, R2ObjectStore,
-        MAX_OBJECT_BYTES,
+        GetObjectResult, ListedObject, ObjectContentType, ObjectStore, ObjectStoreErrorCode,
+        R2ObjectStore, MAX_OBJECT_BYTES,
     },
     remote_authority::map_store_error,
 };
@@ -45,7 +45,7 @@ use crate::{
 };
 
 const MAX_CHECKPOINT_MANIFEST_BYTES: u64 = 64 * 1024;
-const MAX_RETAINED_CHECKPOINT_MANIFESTS: usize = 10_000;
+const MAX_CHECKPOINT_MANIFEST_CANDIDATES: usize = 100;
 const MAX_CHECKPOINT_LIST_PAGES: usize = 100;
 const MAX_RECOVERY_CATALOG_CHECKPOINTS: usize = 20;
 const MAX_RESTORE_MEDIA_OBJECTS: usize = 100_000;
@@ -216,6 +216,12 @@ pub(crate) struct RemoteRestoreReport {
 #[derive(Clone)]
 struct RemoteCheckpoint {
     manifest: CheckpointManifestV1,
+    created_at_millis: i64,
+}
+
+struct ListedCheckpointCandidate {
+    listed: ListedObject,
+    checkpoint_id: CheckpointId,
     created_at_millis: i64,
 }
 
@@ -496,9 +502,10 @@ impl RemoteRecoveryEngine {
 
         let prefix = self.keyspace.checkpoints(owner.replica_epoch_id());
         let mut continuation = None;
-        let mut checkpoints = Vec::new();
+        let mut candidates = Vec::new();
         let mut checkpoint_id_counts = HashMap::new();
         let mut malformed_objects_ignored = 0_u64;
+        let mut listing_complete = false;
         for _ in 0..MAX_CHECKPOINT_LIST_PAGES {
             let page = self
                 .store
@@ -509,60 +516,85 @@ impl RemoteRecoveryEngine {
                     malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
                     continue;
                 }
-                let stored = match self.store.get(&listed.key) {
-                    Ok(stored) => stored,
-                    Err(error) if error.code == ObjectStoreErrorCode::NotFound => {
-                        malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
-                        continue;
-                    }
-                    Err(error) => return Err(map_store_error(error.code)),
-                };
-                let manifest = match validate_json_object(&stored).and_then(|()| {
-                    CheckpointManifestV1::from_json(&stored.bytes, &self.keyspace)
-                        .map_err(|_| BackupErrorCode::MalformedManifest)
-                }) {
-                    Ok(manifest) => manifest,
+                let candidate = match listed_checkpoint_candidate(
+                    &self.keyspace,
+                    owner.replica_epoch_id(),
+                    listed,
+                ) {
+                    Ok(candidate) => candidate,
                     Err(_) => {
                         malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
                         continue;
                     }
                 };
-                let valid = manifest.backup_set_id() == identity.backup_set_id()
-                    && manifest.replica_epoch_id() == owner.replica_epoch_id()
-                    && manifest
-                        .object_key(&self.keyspace)
-                        .is_ok_and(|expected| expected == listed.key);
-                let created_at_millis = manifest.created_at().unix_timestamp_millis();
-                if !valid || created_at_millis.is_err() {
-                    malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
-                    continue;
-                }
                 *checkpoint_id_counts
-                    .entry(manifest.checkpoint_id().clone())
+                    .entry(candidate.checkpoint_id.clone())
                     .or_insert(0_u64) += 1;
-                checkpoints.push(RemoteCheckpoint {
-                    manifest,
-                    created_at_millis: created_at_millis.expect("validated checkpoint timestamp"),
-                });
+                candidates.push(candidate);
             }
-            retain_most_recent_checkpoints(&mut checkpoints, MAX_RETAINED_CHECKPOINT_MANIFESTS);
+            retain_most_recent_checkpoint_candidates(
+                &mut candidates,
+                MAX_CHECKPOINT_MANIFEST_CANDIDATES,
+            );
             match page.next {
                 Some(next) => continuation = Some(next),
                 None => {
-                    malformed_objects_ignored = malformed_objects_ignored.saturating_add(
-                        discard_duplicate_checkpoint_ids(&mut checkpoints, &checkpoint_id_counts),
-                    );
-                    sort_checkpoints_most_recent_first(&mut checkpoints);
-                    return Ok(DiscoveredCheckpoints {
-                        checkpoints,
-                        malformed_objects_ignored,
-                        backup_set_id: identity.backup_set_id().clone(),
-                        epoch: owner.replica_epoch_id().clone(),
-                    });
+                    listing_complete = true;
+                    break;
                 }
             }
         }
-        Err(BackupErrorCode::RestoreValidationFailed)
+        if !listing_complete {
+            return Err(BackupErrorCode::RestoreValidationFailed);
+        }
+        malformed_objects_ignored = malformed_objects_ignored.saturating_add(
+            discard_duplicate_checkpoint_candidates(&mut candidates, &checkpoint_id_counts),
+        );
+        sort_checkpoint_candidates_most_recent_first(&mut candidates);
+
+        let mut checkpoints = Vec::with_capacity(candidates.len());
+        for candidate in candidates {
+            let listed = candidate.listed;
+            let stored = match self.store.get(&listed.key) {
+                Ok(stored) => stored,
+                Err(error) if error.code == ObjectStoreErrorCode::NotFound => {
+                    malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
+                    continue;
+                }
+                Err(error) => return Err(map_store_error(error.code)),
+            };
+            let manifest = match validate_json_object(&stored).and_then(|()| {
+                CheckpointManifestV1::from_json(&stored.bytes, &self.keyspace)
+                    .map_err(|_| BackupErrorCode::MalformedManifest)
+            }) {
+                Ok(manifest) => manifest,
+                Err(_) => {
+                    malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
+                    continue;
+                }
+            };
+            let valid = manifest.backup_set_id() == identity.backup_set_id()
+                && manifest.replica_epoch_id() == owner.replica_epoch_id()
+                && manifest
+                    .object_key(&self.keyspace)
+                    .is_ok_and(|expected| expected == listed.key);
+            let created_at_millis = manifest.created_at().unix_timestamp_millis();
+            if !valid || created_at_millis.is_err() {
+                malformed_objects_ignored = malformed_objects_ignored.saturating_add(1);
+                continue;
+            }
+            checkpoints.push(RemoteCheckpoint {
+                manifest,
+                created_at_millis: created_at_millis.expect("validated checkpoint timestamp"),
+            });
+        }
+        sort_checkpoints_most_recent_first(&mut checkpoints);
+        Ok(DiscoveredCheckpoints {
+            checkpoints,
+            malformed_objects_ignored,
+            backup_set_id: identity.backup_set_id().clone(),
+            epoch: owner.replica_epoch_id().clone(),
+        })
     }
 
     fn select_checkpoint(
@@ -1572,20 +1604,66 @@ fn sort_checkpoints_most_recent_first(checkpoints: &mut [RemoteCheckpoint]) {
     });
 }
 
-fn retain_most_recent_checkpoints(checkpoints: &mut Vec<RemoteCheckpoint>, maximum: usize) {
-    if checkpoints.len() <= maximum {
-        return;
+fn listed_checkpoint_candidate(
+    keyspace: &R2Keyspace,
+    epoch: &ReplicaEpochId,
+    listed: ListedObject,
+) -> Result<ListedCheckpointCandidate, BackupErrorCode> {
+    let prefix = keyspace.checkpoints(epoch);
+    let file_name = listed
+        .key
+        .as_str()
+        .strip_prefix(prefix.as_str())
+        .and_then(|value| value.strip_suffix(".json"))
+        .ok_or(BackupErrorCode::MalformedManifest)?;
+    let (basic_timestamp, checkpoint_id) = file_name
+        .split_once('-')
+        .ok_or(BackupErrorCode::MalformedManifest)?;
+    let created_at = UtcTimestamp::parse_basic_utc(basic_timestamp)
+        .map_err(|_| BackupErrorCode::MalformedManifest)?;
+    let checkpoint_id =
+        CheckpointId::parse(checkpoint_id).map_err(|_| BackupErrorCode::MalformedManifest)?;
+    let expected = keyspace
+        .checkpoint(epoch, &checkpoint_id, &created_at)
+        .map_err(|_| BackupErrorCode::MalformedManifest)?;
+    if expected != listed.key {
+        return Err(BackupErrorCode::MalformedManifest);
     }
-    sort_checkpoints_most_recent_first(checkpoints);
-    checkpoints.truncate(maximum);
+    let created_at_millis = created_at
+        .unix_timestamp_millis()
+        .map_err(|_| BackupErrorCode::MalformedManifest)?;
+    Ok(ListedCheckpointCandidate {
+        listed,
+        checkpoint_id,
+        created_at_millis,
+    })
 }
 
-fn discard_duplicate_checkpoint_ids(
-    checkpoints: &mut Vec<RemoteCheckpoint>,
+fn sort_checkpoint_candidates_most_recent_first(candidates: &mut [ListedCheckpointCandidate]) {
+    candidates.sort_by(|left, right| {
+        right
+            .created_at_millis
+            .cmp(&left.created_at_millis)
+            .then_with(|| right.checkpoint_id.cmp(&left.checkpoint_id))
+    });
+}
+
+fn retain_most_recent_checkpoint_candidates(
+    candidates: &mut Vec<ListedCheckpointCandidate>,
+    maximum: usize,
+) {
+    if candidates.len() <= maximum {
+        return;
+    }
+    sort_checkpoint_candidates_most_recent_first(candidates);
+    candidates.truncate(maximum);
+}
+
+fn discard_duplicate_checkpoint_candidates(
+    candidates: &mut Vec<ListedCheckpointCandidate>,
     counts: &HashMap<CheckpointId, u64>,
 ) -> u64 {
-    checkpoints
-        .retain(|checkpoint| counts.get(checkpoint.manifest.checkpoint_id()).copied() == Some(1));
+    candidates.retain(|candidate| counts.get(&candidate.checkpoint_id).copied() == Some(1));
     counts
         .values()
         .filter(|count| **count > 1)
@@ -1612,8 +1690,8 @@ mod tests {
             },
             litestream::{parse_sync_json, LitestreamConfig, LitestreamRuntimePaths},
             object_store::{
-                fake::FakeObjectStore, PutCondition, PutObjectOutcome, PutObjectRequest,
-                R2ObjectStore,
+                fake::{FakeObjectStore, ObjectOperation},
+                PutCondition, PutObjectOutcome, PutObjectRequest, R2ObjectStore,
             },
         },
         database::{
@@ -2803,9 +2881,11 @@ mod tests {
     #[test]
     fn recovery_catalog_validates_only_a_bounded_recent_set() {
         let fixture = rich_remote_fixture();
-        for second in 1..=MAX_RECOVERY_CATALOG_CHECKPOINTS + 5 {
+        for index in 0..MAX_CHECKPOINT_MANIFEST_CANDIDATES + 25 {
             let checkpoint_id = CheckpointId::new();
-            let created_at = UtcTimestamp::parse(format!("2099-07-29T00:00:{second:02}Z"))
+            let minute = index / 60;
+            let second = index % 60;
+            let created_at = UtcTimestamp::parse(format!("2099-07-29T00:{minute:02}:{second:02}Z"))
                 .expect("checkpoint timestamp");
             let manifest = CheckpointManifestV1::new(CheckpointManifestInput {
                 backup_set_id: fixture.manifest.backup_set_id().clone(),
@@ -2816,7 +2896,7 @@ mod tests {
                 content_revision: fixture.manifest.content_revision(),
                 main_migration_head: fixture.manifest.main_migration_head(),
                 litestream_path: fixture.keyspace.litestream(&fixture.epoch),
-                txid: format!("{:016x}", 0x100 + second),
+                txid: format!("{:016x}", 0x100 + index),
                 media_migration_head: fixture.manifest.media_migration_head(),
                 referenced_hash_count: fixture.manifest.referenced_hash_count(),
                 referenced_total_bytes: fixture.manifest.referenced_total_bytes(),
@@ -2841,12 +2921,21 @@ mod tests {
             MAX_RECOVERY_CATALOG_CHECKPOINTS
         );
         assert_eq!(
+            fixture
+                .store
+                .operations()
+                .into_iter()
+                .filter(|operation| *operation == ObjectOperation::Get)
+                .count(),
+            MAX_CHECKPOINT_MANIFEST_CANDIDATES + 2
+        );
+        assert_eq!(
             catalog
                 .checkpoints
                 .first()
                 .expect("latest checkpoint")
                 .created_at,
-            "2099-07-29T00:00:25Z"
+            "2099-07-29T00:02:04Z"
         );
     }
 
