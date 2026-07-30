@@ -25,7 +25,7 @@ test('shared controls open listbox state', async ({ page }) => {
   })
   await page.getByRole('button', { name: 'Catalog choice: Second option' }).press('Enter')
   await expect(page.getByRole('listbox', { name: 'Catalog choice' })).toBeVisible()
-  await expect(page.locator('body')).toHaveScreenshot('controls-open-listbox.png')
+  await expect(page).toHaveScreenshot('controls-open-listbox.png')
 })
 
 test('shared controls shortcut recording state', async ({ page }) => {
