@@ -345,6 +345,11 @@ Record the final run here or in a dated successor before calling the artifact re
 | Packaged R2 checkpoint and restore drill | pending |
 | New-directory remote restore and data inspection | pending |
 | Explicit takeover and new-era checkpoint | pending |
+| D1 main-window close remains resident, then automated Quit | pending |
+| D2 visible-main Cmd+Q cleanup | pending |
+| D3 menu-bar-only Cmd+Q result or documented macOS fallback | pending |
+| D4 **Quit Dara** menu-item cleanup | pending |
+| D5 active Litestream + llama-server Quit, including elapsed time | pending |
 
 Do not mark a row passed solely because a lower-level test is green. Preserve the task-specific
 directories until the release record and any failure evidence have been reviewed.
