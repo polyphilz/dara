@@ -47,6 +47,13 @@ impl AppDataLock {
     pub fn data_root(&self) -> &Path {
         &self.data_root
     }
+
+    pub(crate) fn try_clone(&self) -> Result<Self, std::io::Error> {
+        Ok(Self {
+            data_root: self.data_root.clone(),
+            _file: self._file.try_clone()?,
+        })
+    }
 }
 
 pub fn plugin<R: Runtime>() -> TauriPlugin<R> {
@@ -83,5 +90,21 @@ mod tests {
 
         drop(first);
         AppDataLock::acquire(directory.path()).expect("lock after release");
+    }
+
+    #[test]
+    fn cloned_lock_handle_keeps_the_data_directory_owned() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let first = AppDataLock::acquire(directory.path()).expect("first lock");
+        let cloned = first.try_clone().expect("cloned lock handle");
+        drop(first);
+
+        assert!(matches!(
+            AppDataLock::acquire(directory.path()),
+            Err(AppDataLockError::AlreadyLocked(_))
+        ));
+
+        drop(cloned);
+        AppDataLock::acquire(directory.path()).expect("lock after clones release");
     }
 }

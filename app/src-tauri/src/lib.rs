@@ -155,6 +155,7 @@ pub fn run() {
             external::open_external_url,
             recovery_startup::discover_remote_backups,
             recovery_startup::load_application_launch_context,
+            recovery_startup::restore_remote_backup,
             recovery_startup::start_fresh_install,
             windows::macos::dismiss_quick_add,
             windows::macos::get_spike_status,

@@ -35,6 +35,7 @@ export interface RemoteCheckpointSummary {
 export interface RemoteCheckpointCatalog {
   checkpoints: RemoteCheckpointSummary[]
   malformedObjectsIgnored: number
+  backupSetId: string
 }
 
 export interface DiscoverRemoteBackupsInput {
@@ -47,10 +48,15 @@ export interface DiscoverRemoteBackupsInput {
   }
 }
 
+export interface RestoreRemoteBackupInput {
+  checkpointId: string
+}
+
 export const RecoveryCommandErrorCode = {
   InvalidInput: 'INVALID_INPUT',
   NotFreshInstall: 'NOT_FRESH_INSTALL',
   OperationInProgress: 'OPERATION_IN_PROGRESS',
+  DiscoveryRequired: 'DISCOVERY_REQUIRED',
   BackupFailed: 'BACKUP_FAILED',
   Internal: 'INTERNAL',
 } as const

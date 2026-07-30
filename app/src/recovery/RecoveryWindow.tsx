@@ -62,6 +62,8 @@ export function RecoveryWindow({
   const [form, setForm] = useState<RecoveryForm>(emptyForm())
   const [errors, setErrors] = useState<R2ConnectionFormErrors>({})
   const [catalog, setCatalog] = useState<RemoteCheckpointCatalog | null>(null)
+  const [selectedCheckpointId, setSelectedCheckpointId] =
+    useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [operationError, setOperationError] = useState<string | null>(null)
   const accountId = useId()
@@ -101,6 +103,13 @@ export function RecoveryWindow({
         },
       })
       setCatalog(nextCatalog)
+      setSelectedCheckpointId(
+        nextCatalog.checkpoints.find(
+          (checkpoint) =>
+            checkpoint.availability ===
+            RemoteCheckpointAvailability.Restorable,
+        )?.checkpointId ?? null,
+      )
       setStep(RecoveryStep.Results)
     } catch (error) {
       setOperationError(recoveryErrorMessage(error))
@@ -110,6 +119,20 @@ export function RecoveryWindow({
         accessKeyId: '',
         secretAccessKey: '',
       }))
+      setBusy(false)
+    }
+  }
+
+  const restore = async () => {
+    if (!selectedCheckpointId) {
+      return
+    }
+    setBusy(true)
+    setOperationError(null)
+    try {
+      await gateway.restore({ checkpointId: selectedCheckpointId })
+    } catch (error) {
+      setOperationError(recoveryErrorMessage(error))
       setBusy(false)
     }
   }
@@ -288,20 +311,32 @@ export function RecoveryWindow({
                     RemoteCheckpointAvailability.Restorable
                   return (
                     <li key={checkpoint.checkpointId}>
-                      <div>
-                        <strong>{formatDate(checkpoint.createdAt)}</strong>
-                        <span>
-                          Dara {checkpoint.daraVersion} ·{' '}
-                          {formatBytes(checkpoint.referencedMediaBytes)} in{' '}
-                          {checkpoint.referencedMediaCount}{' '}
-                          {checkpoint.referencedMediaCount === 1
-                            ? 'image'
-                            : 'images'}
+                      <button
+                        aria-pressed={
+                          selectedCheckpointId === checkpoint.checkpointId
+                        }
+                        className="recovery-checkpoint"
+                        disabled={!restorable || busy}
+                        onClick={() =>
+                          setSelectedCheckpointId(checkpoint.checkpointId)
+                        }
+                        type="button"
+                      >
+                        <div>
+                          <strong>{formatDate(checkpoint.createdAt)}</strong>
+                          <span>
+                            Dara {checkpoint.daraVersion} ·{' '}
+                            {formatBytes(checkpoint.referencedMediaBytes)} in{' '}
+                            {checkpoint.referencedMediaCount}{' '}
+                            {checkpoint.referencedMediaCount === 1
+                              ? 'image'
+                              : 'images'}
+                          </span>
+                        </div>
+                        <span className={restorable ? 'ready' : 'unavailable'}>
+                          {restorable ? 'Ready to restore' : 'Unavailable'}
                         </span>
-                      </div>
-                      <span className={restorable ? 'ready' : 'unavailable'}>
-                        {restorable ? 'Ready to restore' : 'Unavailable'}
-                      </span>
+                      </button>
                     </li>
                   )
                 })}
@@ -316,15 +351,30 @@ export function RecoveryWindow({
             )}
             <div className="recovery-actions">
               <DaraButton
+                disabled={busy}
                 onClick={() => {
                   setCatalog(null)
+                  setSelectedCheckpointId(null)
                   setStep(RecoveryStep.Connect)
                 }}
                 variant={DaraButtonVariant.Ghost}
               >
                 Use different details
               </DaraButton>
+              <DaraButton
+                disabled={!selectedCheckpointId || busy}
+                onClick={() => void restore()}
+                variant={DaraButtonVariant.Accent}
+              >
+                {busy ? 'Restoring…' : 'Restore selected backup'}
+              </DaraButton>
             </div>
+            {busy && (
+              <p aria-live="polite" className="recovery-restore-progress">
+                Restoring and checking your databases and images. Dara will
+                reopen when everything is safe.
+              </p>
+            )}
           </div>
         )}
 
@@ -395,14 +445,22 @@ function recoveryErrorMessage(error: unknown): string {
       'Cloudflare rejected the R2 credentials.',
     [BackupErrorCode.AuthorizationRejected]:
       'Those credentials cannot read this R2 bucket.',
+    [BackupErrorCode.KeychainUnavailable]:
+      'Dara could not save the R2 credentials in Keychain.',
     [BackupErrorCode.CheckpointNotFound]:
       'No complete Dara backup was found in this bucket.',
     [BackupErrorCode.LitestreamUnavailable]:
       'Dara could not start its backup helper.',
+    [BackupErrorCode.ExactTxidUnavailable]:
+      'That exact database backup is no longer available in R2.',
     [BackupErrorCode.PrefixIdentityMismatch]:
       'The data under dara/primary does not belong to one consistent Dara backup.',
     [BackupErrorCode.RestoreValidationFailed]:
-      'Dara could not safely validate the available backups.',
+      'Dara could not validate and install that backup safely.',
+    [BackupErrorCode.RemoteMediaMissing]:
+      'An image required by this backup is missing from R2.',
+    [BackupErrorCode.RemoteMediaCorrupt]:
+      'An image in this backup failed its integrity check.',
   }
   return (
     (error.backupErrorCode && messages[error.backupErrorCode]) ??

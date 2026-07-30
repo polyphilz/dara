@@ -28,6 +28,7 @@ export const DaraIpcCommand = {
   RecordGrade: 'record_grade',
   RemoveOffsiteBackupCredentials: 'remove_offsite_backup_credentials',
   ReplaceOffsiteBackupCredentials: 'replace_offsite_backup_credentials',
+  RestoreRemoteBackup: 'restore_remote_backup',
   RenewMediaLease: 'renew_media_lease',
   SearchCardContent: 'search_card_content',
   SearchStatus: 'search_status',

@@ -116,6 +116,7 @@ pub(crate) struct RemoteCheckpointSummary {
 pub(crate) struct RemoteCheckpointCatalog {
     pub(crate) checkpoints: Vec<RemoteCheckpointSummary>,
     pub(crate) malformed_objects_ignored: u64,
+    pub(crate) backup_set_id: BackupSetId,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -364,6 +365,7 @@ impl RemoteRecoveryEngine {
         Ok(RemoteCheckpointCatalog {
             checkpoints,
             malformed_objects_ignored: discovered.malformed_objects_ignored,
+            backup_set_id: discovered.backup_set_id,
         })
     }
 
@@ -467,15 +469,41 @@ impl RemoteRecoveryEngine {
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         let lock = AppDataLock::acquire(&data_directory)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
-        recovery::prepare_offsite_restore_target(&lock)
+        self.restore_with_lock(&lock, selector, None)
+    }
+
+    pub(crate) fn restore_fresh_to_locked(
+        &self,
+        lock: &AppDataLock,
+        selector: &RemoteCheckpointSelector,
+        expected_backup_set_id: &BackupSetId,
+    ) -> Result<RemoteRestoreReport, BackupErrorCode> {
+        self.restore_with_lock(lock, selector, Some(expected_backup_set_id))
+    }
+
+    fn restore_with_lock(
+        &self,
+        lock: &AppDataLock,
+        selector: &RemoteCheckpointSelector,
+        expected_backup_set_id: Option<&BackupSetId>,
+    ) -> Result<RemoteRestoreReport, BackupErrorCode> {
+        let data_directory = fs::canonicalize(lock.data_root())
+            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        if expected_backup_set_id.is_some() {
+            ensure_fresh_restore_target(&data_directory)?;
+        }
+        recovery::prepare_offsite_restore_target(lock)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         let task = RestoreTask::create(&data_directory, ".dara-remote-restore-")?;
         let discovered = self.discover_checkpoints(selector.checkpoint_id())?;
+        if expected_backup_set_id.is_some_and(|expected| expected != &discovered.backup_set_id) {
+            return Err(BackupErrorCode::PrefixIdentityMismatch);
+        }
         let checkpoint = self.select_checkpoint(task.path(), &discovered, selector)?;
         let mut stages = vec![RestoreValidationStage::CheckpointDiscovered];
         let restored =
             self.reconstruct(task.path(), &discovered.epoch, &checkpoint, &mut stages)?;
-        recovery::install_offsite_snapshot(&lock, &restored.manifest_path)
+        recovery::install_offsite_snapshot(lock, &restored.manifest_path)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         Ok(RemoteRestoreReport {
             checkpoint_id: checkpoint.manifest.checkpoint_id().clone(),
@@ -716,6 +744,18 @@ impl RemoteRecoveryEngine {
         )
         .map_err(|_| BackupErrorCode::RestoreValidationFailed)
     }
+}
+
+fn ensure_fresh_restore_target(data_directory: &Path) -> Result<(), BackupErrorCode> {
+    let paths = crate::database::DatabasePaths::new(data_directory);
+    for database_path in [&paths.main, &paths.media] {
+        match fs::symlink_metadata(database_path) {
+            Ok(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+        }
+    }
+    Ok(())
 }
 
 fn required_environment(name: &'static str) -> Result<String, BackupErrorCode> {
@@ -1738,6 +1778,19 @@ mod tests {
     };
 
     const MEDIA_LEASE_ID: &str = "01980c8e-6c00-7000-8000-000000000901";
+
+    #[test]
+    fn fresh_install_restore_refuses_any_existing_database_file() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        ensure_fresh_restore_target(directory.path()).expect("empty target");
+        fs::write(directory.path().join("dara.sqlite3"), b"existing")
+            .expect("existing main database");
+
+        assert_eq!(
+            ensure_fresh_restore_target(directory.path()),
+            Err(BackupErrorCode::RestoreValidationFailed)
+        );
+    }
 
     struct FakeRelationalRestore {
         main_source: PathBuf,
