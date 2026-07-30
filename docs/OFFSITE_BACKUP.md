@@ -114,16 +114,36 @@ message: it proves that Dara can read and assemble the stored backup.
 
 ## Recover after losing the Mac
 
-1. Install the same or a newer compatible Dara release on the replacement Mac.
-2. Open the recovery flow and enter the same R2 account, bucket, and
-   jurisdiction. The R2 credentials must be entered again because Keychain
-   credentials are machine-local and are intentionally not backed up.
-3. Inspect and restore the latest complete checkpoint.
-4. Check important cards and media before deleting or changing any old backup
+R2 credentials are machine-local Keychain data and are intentionally not part
+of the backup. Keep the account ID, bucket name, and jurisdiction somewhere
+outside Dara. If the original API token is unavailable, create another R2
+Object Read & Write token restricted to the same bucket.
+
+On a Mac with no existing Dara library:
+
+1. Install the same or a newer compatible Dara release and open it.
+2. On **How would you like to begin?**, choose **Restore from backup** instead
+   of **Start fresh**.
+3. Enter the R2 account ID, jurisdiction, bucket, Access Key ID, and Secret
+   Access Key, then choose **Find backups**. Dara automatically looks under
+   its private `dara/primary` location; there is no folder or prefix to enter.
+4. Select a checkpoint marked **Ready to restore**, then choose **Restore
+   selected backup**. Dara reconstructs and validates both databases and every
+   required image before installing anything. An incompatible or incomplete
+   checkpoint is not selectable.
+5. Dara reopens with a warning that it was restored from an off-site backup.
+   Check important cards and media before deleting or changing any old backup
    data.
-5. If the old installation is permanently gone, explicitly **Take over backup
-   ownership**. Dara creates a new ownership era before the replacement Mac can
-   publish new checkpoints.
+6. Open the warning's **Review backup settings** action. Once the old Dara
+   installation is permanently gone or will no longer write this backup,
+   choose **Take over restored backup** and confirm **Take over backup**.
+   Dara creates a new ownership era and begins building a new complete
+   checkpoint from this Mac.
+
+A successful restore saves the supplied R2 credentials in this Mac's Keychain.
+Until takeover, the restored library works normally but new off-site backups
+remain paused. Dara never uses this flow to overwrite a live local library; the
+first-launch choice is offered only when no Dara databases exist.
 
 The takeover step prevents two Macs from silently writing incompatible backup
 histories to the same backup location. Do not take over merely to move between two
