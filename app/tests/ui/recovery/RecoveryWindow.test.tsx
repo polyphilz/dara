@@ -4,6 +4,7 @@ import {
   waitFor,
 } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
+import { R2Jurisdiction } from '../../../src/backup/index.ts'
 import { RecoveryWindow } from '../../../src/recovery/RecoveryWindow.tsx'
 import {
   RemoteCheckpointAvailability,
@@ -83,7 +84,7 @@ test('clears credentials and displays complete remote checkpoints after discover
   expect(await findByText(/3 images/)).toBeTruthy()
   expect(gateway.discover).toHaveBeenCalledWith({
     accountId: ACCOUNT_ID,
-    jurisdiction: 'DEFAULT',
+    jurisdiction: R2Jurisdiction.Default,
     bucket: 'dara-backups',
     credentials: {
       accessKeyId: ACCESS_KEY_ID,
