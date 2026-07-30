@@ -790,12 +790,14 @@ fn resume_restore(
     sync_directory(&rollback)?;
 
     if intent.fresh_target_required {
-        install_once_exclusive(
+        if let Err(error) = link_once_exclusive(
             &stage_media,
             &paths.media,
-            &intent.expected.media.sha256,
             "installing the restored media database",
-        )?;
+        ) {
+            abort_installing_fresh_restore(paths, intent)?;
+            return Err(error);
+        }
     } else {
         move_once(
             &stage_media,
@@ -805,12 +807,14 @@ fn resume_restore(
     }
     interrupt_if(RestoreFailpoint::MediaInstalled, failpoint)?;
     if intent.fresh_target_required {
-        install_once_exclusive(
+        if let Err(error) = link_once_exclusive(
             &stage_main,
             &paths.main,
-            &intent.expected.main.sha256,
             "installing the restored main database",
-        )?;
+        ) {
+            abort_installing_fresh_restore(paths, intent)?;
+            return Err(error);
+        }
     } else {
         move_once(
             &stage_main,
@@ -824,9 +828,13 @@ fn resume_restore(
     if let Err(error) =
         snapshot::validate_snapshot_pair_files(&intent.expected, &paths.main, &paths.media)
     {
-        intent.phase = RestorePhase::RollingBack;
-        write_restore_intent(paths, intent)?;
-        complete_rollback(paths, intent)?;
+        if intent.fresh_target_required {
+            abort_installing_fresh_restore(paths, intent)?;
+        } else {
+            intent.phase = RestorePhase::RollingBack;
+            write_restore_intent(paths, intent)?;
+            complete_rollback(paths, intent)?;
+        }
         return Err(error.into());
     }
 
@@ -850,6 +858,29 @@ fn abort_staged_fresh_restore(
         ));
     }
     remove_directory_if_exists(&restore_subdirectory(paths, &intent.stage_directory)?)?;
+    remove_directory_if_exists(&restore_subdirectory(paths, &intent.rollback_directory)?)?;
+    remove_file_if_exists(&restore_intent_path(paths))?;
+    remove_file_if_exists(&restore_intent_temp_path(paths))?;
+    sync_directory(paths.root())
+}
+
+fn abort_installing_fresh_restore(
+    paths: &DatabasePaths,
+    intent: &RestoreIntent,
+) -> Result<(), RecoveryError> {
+    if intent.phase != RestorePhase::Installing
+        || !intent.fresh_target_required
+        || !intent.rollback_files.is_empty()
+        || intent.safety_snapshot.is_some()
+    {
+        return Err(RecoveryError::InvalidRestoreJournal(
+            "cannot abort a non-fresh installing restore".into(),
+        ));
+    }
+    let stage = restore_subdirectory(paths, &intent.stage_directory)?;
+    remove_link_if_owned(&stage.join(RestoreFile::Main.file_name()), &paths.main)?;
+    remove_link_if_owned(&stage.join(RestoreFile::Media.file_name()), &paths.media)?;
+    remove_directory_if_exists(&stage)?;
     remove_directory_if_exists(&restore_subdirectory(paths, &intent.rollback_directory)?)?;
     remove_file_if_exists(&restore_intent_path(paths))?;
     remove_file_if_exists(&restore_intent_temp_path(paths))?;
@@ -1087,26 +1118,24 @@ fn move_once(source: &Path, destination: &Path, operation: &str) -> Result<(), R
     }
 }
 
-fn install_once_exclusive(
+fn link_once_exclusive(
     source: &Path,
     destination: &Path,
-    expected_hash: &str,
     operation: &str,
 ) -> Result<(), RecoveryError> {
     match (source.exists(), destination.exists()) {
         (true, false) => match fs::hard_link(source, destination) {
-            Ok(()) => remove_file_if_exists(source),
+            Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                validate_exclusive_install_destination(destination, expected_hash)?;
-                remove_file_if_exists(source)
+                validate_exclusive_install_destination(source, destination)
             }
             Err(error) => Err(error.into()),
         },
-        (true, true) => {
-            validate_exclusive_install_destination(destination, expected_hash)?;
-            remove_file_if_exists(source)
-        }
-        (false, true) => validate_exclusive_install_destination(destination, expected_hash),
+        (true, true) => validate_exclusive_install_destination(source, destination),
+        (false, true) => Err(RecoveryError::InvalidRestoreJournal(format!(
+            "{operation}: staged source {} is missing",
+            source.display()
+        ))),
         (false, false) => Err(RecoveryError::InvalidRestoreJournal(format!(
             "{operation}: neither {} nor {} exists",
             source.display(),
@@ -1116,11 +1145,42 @@ fn install_once_exclusive(
 }
 
 fn validate_exclusive_install_destination(
+    source: &Path,
     destination: &Path,
-    expected_hash: &str,
 ) -> Result<(), RecoveryError> {
-    snapshot::validate_recorded_hash(destination, expected_hash)
-        .map_err(|_| RecoveryError::InvalidRestoreTarget)
+    if paths_refer_to_same_file(source, destination)? {
+        Ok(())
+    } else {
+        Err(RecoveryError::InvalidRestoreTarget)
+    }
+}
+
+fn remove_link_if_owned(source: &Path, destination: &Path) -> Result<(), RecoveryError> {
+    match fs::symlink_metadata(destination) {
+        Ok(_) if paths_refer_to_same_file(source, destination)? => {
+            remove_file_if_exists(destination)
+        }
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(unix)]
+fn paths_refer_to_same_file(left: &Path, right: &Path) -> Result<bool, RecoveryError> {
+    use std::os::unix::fs::MetadataExt;
+
+    let left = fs::symlink_metadata(left)?;
+    let right = fs::symlink_metadata(right)?;
+    Ok(left.file_type().is_file()
+        && right.file_type().is_file()
+        && left.dev() == right.dev()
+        && left.ino() == right.ino())
+}
+
+#[cfg(not(unix))]
+fn paths_refer_to_same_file(_left: &Path, _right: &Path) -> Result<bool, RecoveryError> {
+    Ok(false)
 }
 
 fn remove_file_if_exists(path: &Path) -> Result<(), RecoveryError> {
@@ -1603,12 +1663,7 @@ mod tests {
         fs::write(&destination, b"external database").expect("external database");
 
         assert!(matches!(
-            install_once_exclusive(
-                &source.main_path,
-                &destination,
-                &source.manifest.main.sha256,
-                "test installation",
-            ),
+            link_once_exclusive(&source.main_path, &destination, "test installation",),
             Err(RecoveryError::InvalidRestoreTarget)
         ));
         assert_eq!(
@@ -1616,6 +1671,56 @@ mod tests {
             b"external database"
         );
         assert!(source.main_path.exists());
+    }
+
+    #[test]
+    fn fresh_restore_rolls_back_its_partial_install_when_main_is_claimed() {
+        let (_source_directory, _source_paths, manifest_path) = snapshot_fixture();
+        let source = snapshot::load_and_validate_snapshot(&manifest_path).expect("source");
+        let target_directory = tempfile::tempdir().expect("target directory");
+        let target_paths = DatabasePaths::new(target_directory.path());
+
+        assert!(matches!(
+            prepare_restore_with_offsite_takeover(
+                &target_paths,
+                source,
+                true,
+                Some(RestoreFailpoint::IntentWritten),
+            ),
+            Err(RecoveryError::InjectedInterruption)
+        ));
+        let mut intent = load_restore_intent(&target_paths)
+            .expect("restore intent")
+            .expect("staged restore");
+        let stage =
+            restore_subdirectory(&target_paths, &intent.stage_directory).expect("stage directory");
+        let rollback = restore_subdirectory(&target_paths, &intent.rollback_directory)
+            .expect("rollback directory");
+
+        assert!(matches!(
+            resume_restore(
+                &target_paths,
+                &mut intent,
+                Some(RestoreFailpoint::MediaInstalled),
+            ),
+            Err(RecoveryError::InjectedInterruption)
+        ));
+        assert!(target_paths.media.exists());
+        assert!(stage.join(RestoreFile::Media.file_name()).exists());
+        fs::write(&target_paths.main, b"external main").expect("external main");
+
+        assert!(matches!(
+            recover_interrupted_restore(&target_paths),
+            Err(RecoveryError::InvalidRestoreTarget)
+        ));
+        assert_eq!(
+            fs::read(&target_paths.main).expect("preserved main"),
+            b"external main"
+        );
+        assert!(!target_paths.media.exists());
+        assert!(!restore_intent_path(&target_paths).exists());
+        assert!(!stage.exists());
+        assert!(!rollback.exists());
     }
 
     #[test]

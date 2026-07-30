@@ -14,7 +14,9 @@ use zeroize::Zeroize;
 use crate::{
     app_lock::AppDataLock,
     backup::{
-        credentials::{CredentialStore, MacOsKeychainCredentialStore, R2Credentials},
+        credentials::{
+            CredentialError, CredentialStore, MacOsKeychainCredentialStore, R2Credentials,
+        },
         domain::{
             BackupErrorCode, BackupSetId, CheckpointId, R2AccountId, R2BucketName, R2Jurisdiction,
             R2Prefix, R2Target,
@@ -479,17 +481,30 @@ fn restore_session(
             session,
         }));
     }
-    // Keep any existing canonical credentials untouched until the restore journal
-    // durably records an installed, validated database pair. A crash during remote
-    // reconstruction therefore cannot destroy credentials used by another Dara
-    // data directory. A post-install Keychain failure is recoverable from Settings:
-    // restored backups remain paused until the user explicitly takes ownership.
-    if let Err(error) =
-        MacOsKeychainCredentialStore.save(&session.backup_set_id, &session.credentials)
-    {
+    // Discovery credentials may be read-only. Preserve any canonical credentials
+    // already saved for this backup set so an explicit takeover can still write.
+    // A post-install Keychain failure is recoverable from Settings: restored
+    // backups remain paused until the user explicitly takes ownership.
+    if let Err(error) = save_restore_credentials_if_missing(
+        &MacOsKeychainCredentialStore,
+        &session.backup_set_id,
+        &session.credentials,
+    ) {
         log::warn!("restored Dara data but could not save its R2 credentials: {error}");
     }
     Ok(())
+}
+
+fn save_restore_credentials_if_missing(
+    store: &impl CredentialStore,
+    backup_set_id: &BackupSetId,
+    credentials: &R2Credentials,
+) -> Result<(), CredentialError> {
+    match store.load(backup_set_id) {
+        Ok(_) => Ok(()),
+        Err(CredentialError::Missing) => store.save(backup_set_id, credentials),
+        Err(error) => Err(error),
+    }
 }
 
 fn parse_connection(
@@ -518,6 +533,62 @@ fn parse_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXISTING_ACCESS_KEY: &str = "11111111111111111111111111111111";
+    const EXISTING_SECRET_KEY: &str =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    const RECOVERY_ACCESS_KEY: &str = "22222222222222222222222222222222";
+    const RECOVERY_SECRET_KEY: &str =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+
+    #[derive(Clone, Copy)]
+    enum TestCredentialState {
+        Existing,
+        Missing,
+        Unavailable,
+    }
+
+    struct TestCredentialStore {
+        state: TestCredentialState,
+        saved_access_keys: Mutex<Vec<String>>,
+    }
+
+    impl TestCredentialStore {
+        fn new(state: TestCredentialState) -> Self {
+            Self {
+                state,
+                saved_access_keys: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl CredentialStore for TestCredentialStore {
+        fn save(
+            &self,
+            _backup_set_id: &BackupSetId,
+            credentials: &R2Credentials,
+        ) -> Result<(), CredentialError> {
+            self.saved_access_keys
+                .lock()
+                .expect("saved credentials")
+                .push(credentials.access_key_id().to_owned());
+            Ok(())
+        }
+
+        fn load(&self, _backup_set_id: &BackupSetId) -> Result<R2Credentials, CredentialError> {
+            match self.state {
+                TestCredentialState::Existing => {
+                    R2Credentials::new(EXISTING_ACCESS_KEY, EXISTING_SECRET_KEY)
+                }
+                TestCredentialState::Missing => Err(CredentialError::Missing),
+                TestCredentialState::Unavailable => Err(CredentialError::Unavailable),
+            }
+        }
+
+        fn remove(&self, _backup_set_id: &BackupSetId) -> Result<(), CredentialError> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn empty_directory_enters_recovery_without_creating_databases() {
@@ -609,5 +680,60 @@ mod tests {
 
         drop(operation);
         state.begin_operation().expect("operation after release");
+    }
+
+    #[test]
+    fn restore_preserves_existing_write_credentials() {
+        let store = TestCredentialStore::new(TestCredentialState::Existing);
+        let backup_set_id = BackupSetId::new();
+        let recovery_credentials =
+            R2Credentials::new(RECOVERY_ACCESS_KEY, RECOVERY_SECRET_KEY).expect("credentials");
+
+        save_restore_credentials_if_missing(&store, &backup_set_id, &recovery_credentials)
+            .expect("preserve credentials");
+
+        assert!(store
+            .saved_access_keys
+            .lock()
+            .expect("saved credentials")
+            .is_empty());
+    }
+
+    #[test]
+    fn restore_saves_credentials_when_none_exist() {
+        let store = TestCredentialStore::new(TestCredentialState::Missing);
+        let backup_set_id = BackupSetId::new();
+        let recovery_credentials =
+            R2Credentials::new(RECOVERY_ACCESS_KEY, RECOVERY_SECRET_KEY).expect("credentials");
+
+        save_restore_credentials_if_missing(&store, &backup_set_id, &recovery_credentials)
+            .expect("save credentials");
+
+        assert_eq!(
+            store
+                .saved_access_keys
+                .lock()
+                .expect("saved credentials")
+                .as_slice(),
+            [RECOVERY_ACCESS_KEY]
+        );
+    }
+
+    #[test]
+    fn restore_does_not_overwrite_credentials_when_keychain_is_unavailable() {
+        let store = TestCredentialStore::new(TestCredentialState::Unavailable);
+        let backup_set_id = BackupSetId::new();
+        let recovery_credentials =
+            R2Credentials::new(RECOVERY_ACCESS_KEY, RECOVERY_SECRET_KEY).expect("credentials");
+
+        assert!(matches!(
+            save_restore_credentials_if_missing(&store, &backup_set_id, &recovery_credentials),
+            Err(CredentialError::Unavailable)
+        ));
+        assert!(store
+            .saved_access_keys
+            .lock()
+            .expect("saved credentials")
+            .is_empty());
     }
 }

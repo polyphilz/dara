@@ -490,7 +490,7 @@ impl RemoteRecoveryEngine {
         let data_directory = fs::canonicalize(lock.data_root())
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         if expected_backup_set_id.is_some() {
-            ensure_fresh_restore_target(&data_directory)?;
+            prepare_fresh_restore_target(&data_directory)?;
         }
         recovery::prepare_offsite_restore_target(lock)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
@@ -751,13 +751,36 @@ impl RemoteRecoveryEngine {
     }
 }
 
-fn ensure_fresh_restore_target(data_directory: &Path) -> Result<(), BackupErrorCode> {
+fn prepare_fresh_restore_target(data_directory: &Path) -> Result<(), BackupErrorCode> {
     let paths = crate::database::DatabasePaths::new(data_directory);
+    let mut removed_placeholder = false;
     for database_path in [&paths.main, &paths.media] {
+        match connection::inspect_file(database_path)
+            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?
+        {
+            FileState::Existing => return Err(BackupErrorCode::RestoreValidationFailed),
+            FileState::Fresh => {}
+        }
         match fs::symlink_metadata(database_path) {
+            Ok(metadata) if metadata.file_type().is_file() && metadata.len() == 0 => {
+                fs::remove_file(database_path)
+                    .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+                removed_placeholder = true;
+            }
             Ok(_) => return Err(BackupErrorCode::RestoreValidationFailed),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+        }
+    }
+    if removed_placeholder {
+        File::open(data_directory)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+    }
+    for database_path in [&paths.main, &paths.media] {
+        match fs::symlink_metadata(database_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) | Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
         }
     }
     Ok(())
@@ -1787,14 +1810,27 @@ mod tests {
     #[test]
     fn fresh_install_restore_refuses_any_existing_database_file() {
         let directory = tempfile::tempdir().expect("temporary directory");
-        ensure_fresh_restore_target(directory.path()).expect("empty target");
+        prepare_fresh_restore_target(directory.path()).expect("empty target");
         fs::write(directory.path().join("dara.sqlite3"), b"existing")
             .expect("existing main database");
 
         assert_eq!(
-            ensure_fresh_restore_target(directory.path()),
+            prepare_fresh_restore_target(directory.path()),
             Err(BackupErrorCode::RestoreValidationFailed)
         );
+    }
+
+    #[test]
+    fn fresh_install_restore_removes_zero_length_database_placeholders() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let paths = DatabasePaths::new(directory.path());
+        fs::write(&paths.main, []).expect("empty main placeholder");
+        fs::write(&paths.media, []).expect("empty media placeholder");
+
+        prepare_fresh_restore_target(directory.path()).expect("fresh target");
+
+        assert!(!paths.main.exists());
+        assert!(!paths.media.exists());
     }
 
     struct FakeRelationalRestore {
