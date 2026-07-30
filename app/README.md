@@ -9,8 +9,10 @@ pnpm install
 pnpm tauri dev
 ```
 
-The application launches with its main window open and Quick Add hidden until summoned, and
-stays resident behind its menu-bar icon once that window is closed. Development
+Opening the application deliberately, from the Dock or Spotlight, shows its main window; Quick
+Add stays hidden until summoned. A launch-at-login start instead passes `--autostart` and stays
+resident behind the menu-bar icon without taking the foreground, as does closing the main
+window. Development
 data is isolated under `.data/local/`, including `dara.sqlite3`, `media.sqlite3`, and backups.
 Installed builds continue to use the platform application-data directory.
 

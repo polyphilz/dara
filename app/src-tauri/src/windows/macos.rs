@@ -33,6 +33,10 @@ use crate::{
     recovery_startup::{ApplicationLaunchContext, ApplicationLaunchMode},
 };
 
+/// Passed to the binary by the launch-at-login entry, and by nothing else, so a sign-in
+/// launch can be told apart from someone opening Dara from the Dock or Spotlight.
+pub const AUTOSTART_ARGUMENT: &str = "--autostart";
+
 const MAIN_LABEL: &str = "main";
 const QUICK_ADD_LABEL: &str = "quick-add";
 const TRAY_ID: &str = "dara-tray";
@@ -230,14 +234,47 @@ pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     register_shortcuts(app.handle(), &settings.keyboard_bindings);
     install_clock_change_observers(app.handle());
 
-    // Dara carries a Dock icon, so launching it opens its window like any other application.
-    // The policy is already Regular by this point, before macOS activates the launching
-    // process, which is the ordering that lets the window arrive owning the menu bar.
-    if let Err(error) = activate_main_window(app.handle()) {
+    refresh_autostart_registration(app.handle());
+    if launched_by_autostart() {
+        // Signing in is not a request to use Dara. Leave the window closed and hand the
+        // foreground straight back, so launch-at-login stays a residency setting.
+        log::info!("started by launch-at-login; staying resident without a window");
+        enter_resident_mode();
+    } else if let Err(error) = activate_main_window(app.handle()) {
+        // Opening Dara deliberately, from the Dock or Spotlight, opens its window like any
+        // other application. The policy is already Regular by this point, before macOS
+        // activates the launching process, which is the ordering that lets the window arrive
+        // owning the menu bar.
         log::error!("failed to show the main window on launch: {error}");
     }
 
     Ok(())
+}
+
+fn launched_by_autostart() -> bool {
+    arguments_request_autostart(std::env::args())
+}
+
+fn arguments_request_autostart<I: IntoIterator<Item = String>>(arguments: I) -> bool {
+    arguments
+        .into_iter()
+        .any(|argument| argument == AUTOSTART_ARGUMENT)
+}
+
+/// Rewrites an enabled launch-at-login entry so it carries [`AUTOSTART_ARGUMENT`]. An entry
+/// registered before that argument existed names the binary alone, and would keep opening
+/// Dara into the foreground at every sign-in.
+fn refresh_autostart_registration(app: &AppHandle) {
+    let manager = app.autolaunch();
+    match manager.is_enabled() {
+        Ok(true) => {
+            if let Err(error) = manager.enable() {
+                log::error!("failed to refresh the launch-at-login entry: {error}");
+            }
+        }
+        Ok(false) => {}
+        Err(error) => log::error!("failed to read the launch-at-login entry: {error}"),
+    }
 }
 
 pub fn setup_recovery(app: &mut App) -> tauri::Result<()> {
@@ -1175,9 +1212,22 @@ pub(crate) fn log_application_quit_context(app: &AppHandle) {
 #[cfg(test)]
 mod focus_tests {
     use super::{
-        load_tray_icon, main_window_close_action, ApplicationLaunchMode, FocusContext,
-        MainWindowCloseAction,
+        arguments_request_autostart, load_tray_icon, main_window_close_action,
+        ApplicationLaunchMode, FocusContext, MainWindowCloseAction, AUTOSTART_ARGUMENT,
     };
+
+    #[test]
+    fn only_the_autostart_argument_marks_a_sign_in_launch() {
+        let launched = |arguments: &[&str]| {
+            arguments_request_autostart(arguments.iter().map(|value| (*value).to_string()))
+        };
+
+        assert!(launched(&["/Applications/Dara.app", AUTOSTART_ARGUMENT]));
+        assert!(!launched(&["/Applications/Dara.app"]));
+        // macOS appends a process serial number to Finder and Spotlight launches.
+        assert!(!launched(&["/Applications/Dara.app", "-psn_0_770091"]));
+        assert!(!launched(&["/Applications/Dara.app", "--autostart-later"]));
+    }
 
     #[test]
     fn tray_icon_is_a_transparent_template_image() {

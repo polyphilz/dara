@@ -159,7 +159,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![windows::macos::AUTOSTART_ARGUMENT]),
         ))
         .invoke_handler(tauri::generate_handler![
             backup::commands::change_offsite_backup_target,
