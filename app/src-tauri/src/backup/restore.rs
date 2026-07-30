@@ -64,6 +64,7 @@ const ACCESS_KEY_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCESS_KEY_ID";
 const SECRET_ACCESS_KEY_ENV: &str = "DARA_LITESTREAM_R2_SECRET_ACCESS_KEY";
 const RESTORE_RUNTIME_PREFIX: &str = ".dara-ls-restore-";
 const RESTORE_RUNTIME_CREATE_ATTEMPTS: usize = 8;
+const FRESH_PLACEHOLDER_QUARANTINE_PREFIX: &str = ".dara-recovery-quarantine-";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RemoteCheckpointSelector {
@@ -116,6 +117,7 @@ pub(crate) struct RemoteCheckpointSummary {
 pub(crate) struct RemoteCheckpointCatalog {
     pub(crate) checkpoints: Vec<RemoteCheckpointSummary>,
     pub(crate) malformed_objects_ignored: u64,
+    pub(crate) backup_set_id: BackupSetId,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -364,6 +366,7 @@ impl RemoteRecoveryEngine {
         Ok(RemoteCheckpointCatalog {
             checkpoints,
             malformed_objects_ignored: discovered.malformed_objects_ignored,
+            backup_set_id: discovered.backup_set_id,
         })
     }
 
@@ -467,16 +470,47 @@ impl RemoteRecoveryEngine {
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         let lock = AppDataLock::acquire(&data_directory)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
-        recovery::prepare_offsite_restore_target(&lock)
+        self.restore_with_lock(&lock, selector, None)
+    }
+
+    pub(crate) fn restore_fresh_to_locked(
+        &self,
+        lock: &AppDataLock,
+        selector: &RemoteCheckpointSelector,
+        expected_backup_set_id: &BackupSetId,
+    ) -> Result<RemoteRestoreReport, BackupErrorCode> {
+        self.restore_with_lock(lock, selector, Some(expected_backup_set_id))
+    }
+
+    fn restore_with_lock(
+        &self,
+        lock: &AppDataLock,
+        selector: &RemoteCheckpointSelector,
+        expected_backup_set_id: Option<&BackupSetId>,
+    ) -> Result<RemoteRestoreReport, BackupErrorCode> {
+        let data_directory = fs::canonicalize(lock.data_root())
+            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        if expected_backup_set_id.is_some() {
+            prepare_fresh_restore_target(&data_directory)?;
+        }
+        recovery::prepare_offsite_restore_target(lock)
             .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
         let task = RestoreTask::create(&data_directory, ".dara-remote-restore-")?;
         let discovered = self.discover_checkpoints(selector.checkpoint_id())?;
+        if expected_backup_set_id.is_some_and(|expected| expected != &discovered.backup_set_id) {
+            return Err(BackupErrorCode::PrefixIdentityMismatch);
+        }
         let checkpoint = self.select_checkpoint(task.path(), &discovered, selector)?;
         let mut stages = vec![RestoreValidationStage::CheckpointDiscovered];
         let restored =
             self.reconstruct(task.path(), &discovered.epoch, &checkpoint, &mut stages)?;
-        recovery::install_offsite_snapshot(&lock, &restored.manifest_path)
-            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        if expected_backup_set_id.is_some() {
+            recovery::install_fresh_offsite_snapshot(lock, &restored.manifest_path)
+                .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        } else {
+            recovery::install_offsite_snapshot(lock, &restored.manifest_path)
+                .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        }
         Ok(RemoteRestoreReport {
             checkpoint_id: checkpoint.manifest.checkpoint_id().clone(),
             checkpoint_created_at: checkpoint.manifest.created_at().as_str().to_owned(),
@@ -716,6 +750,104 @@ impl RemoteRecoveryEngine {
         )
         .map_err(|_| BackupErrorCode::RestoreValidationFailed)
     }
+}
+
+fn prepare_fresh_restore_target(data_directory: &Path) -> Result<(), BackupErrorCode> {
+    let paths = crate::database::DatabasePaths::new(data_directory);
+    let mut quarantine = None;
+    for database_path in [&paths.main, &paths.media] {
+        match connection::inspect_file(database_path)
+            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?
+        {
+            FileState::Existing => return Err(BackupErrorCode::RestoreValidationFailed),
+            FileState::Fresh => {}
+        }
+        match fs::symlink_metadata(database_path) {
+            Ok(metadata) if metadata.file_type().is_file() && metadata.len() == 0 => {
+                if quarantine.is_none() {
+                    quarantine = Some(FreshPlaceholderQuarantine::create(data_directory)?);
+                }
+                quarantine
+                    .as_ref()
+                    .expect("fresh placeholder quarantine was initialized")
+                    .capture(database_path)?;
+            }
+            Ok(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+        }
+    }
+    recovery::ensure_fresh_offsite_restore_target(&paths)
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)
+}
+
+struct FreshPlaceholderQuarantine {
+    path: PathBuf,
+}
+
+impl FreshPlaceholderQuarantine {
+    fn create(data_directory: &Path) -> Result<Self, BackupErrorCode> {
+        let path = data_directory.join(format!(
+            "{FRESH_PLACEHOLDER_QUARANTINE_PREFIX}{}",
+            Uuid::now_v7()
+        ));
+        create_private_directory(&path)?;
+        sync_restore_directory(data_directory)?;
+        Ok(Self { path })
+    }
+
+    fn capture(&self, database_path: &Path) -> Result<(), BackupErrorCode> {
+        let file_name = database_path
+            .file_name()
+            .ok_or(BackupErrorCode::RestoreValidationFailed)?;
+        let quarantined_path = self.path.join(file_name);
+        match fs::rename(database_path, &quarantined_path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+        }
+        sync_restore_directory(&self.path)?;
+        sync_restore_directory(
+            database_path
+                .parent()
+                .ok_or(BackupErrorCode::RestoreValidationFailed)?,
+        )?;
+
+        let metadata = fs::symlink_metadata(&quarantined_path)
+            .map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        if metadata.file_type().is_file() && metadata.len() == 0 {
+            return Ok(());
+        }
+
+        if metadata.file_type().is_file() {
+            match fs::hard_link(&quarantined_path, database_path) {
+                Ok(()) => sync_restore_directory(
+                    database_path
+                        .parent()
+                        .ok_or(BackupErrorCode::RestoreValidationFailed)?,
+                )?,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    log::warn!(
+                        "could not relink a changed recovery placeholder; preserved it at {}: \
+                         {error}",
+                        quarantined_path.display()
+                    );
+                }
+            }
+        }
+        log::warn!(
+            "a recovery placeholder changed while it was being quarantined; preserved it at {}",
+            quarantined_path.display()
+        );
+        Err(BackupErrorCode::RestoreValidationFailed)
+    }
+}
+
+fn sync_restore_directory(path: &Path) -> Result<(), BackupErrorCode> {
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .map_err(|_| BackupErrorCode::RestoreValidationFailed)
 }
 
 fn required_environment(name: &'static str) -> Result<String, BackupErrorCode> {
@@ -1739,6 +1871,99 @@ mod tests {
 
     const MEDIA_LEASE_ID: &str = "01980c8e-6c00-7000-8000-000000000901";
 
+    #[test]
+    fn fresh_install_restore_refuses_any_existing_database_file() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        prepare_fresh_restore_target(directory.path()).expect("empty target");
+        fs::write(directory.path().join("dara.sqlite3"), b"existing")
+            .expect("existing main database");
+
+        assert_eq!(
+            prepare_fresh_restore_target(directory.path()),
+            Err(BackupErrorCode::RestoreValidationFailed)
+        );
+    }
+
+    #[test]
+    fn fresh_install_restore_quarantines_zero_length_database_placeholders() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let paths = DatabasePaths::new(directory.path());
+        fs::write(&paths.main, []).expect("empty main placeholder");
+        fs::write(&paths.media, []).expect("empty media placeholder");
+
+        prepare_fresh_restore_target(directory.path()).expect("fresh target");
+
+        assert!(!paths.main.exists());
+        assert!(!paths.media.exists());
+        let quarantines = fs::read_dir(directory.path())
+            .expect("quarantine entries")
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(FRESH_PLACEHOLDER_QUARANTINE_PREFIX)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(quarantines.len(), 1);
+        assert_eq!(
+            fs::read(
+                quarantines[0]
+                    .path()
+                    .join(paths.main.file_name().expect("main file name")),
+            )
+            .expect("quarantined main"),
+            Vec::<u8>::new()
+        );
+        assert_eq!(
+            fs::read(
+                quarantines[0]
+                    .path()
+                    .join(paths.media.file_name().expect("media file name")),
+            )
+            .expect("quarantined media"),
+            Vec::<u8>::new()
+        );
+    }
+
+    #[test]
+    fn changed_placeholder_is_preserved_and_rejected_after_atomic_quarantine() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let paths = DatabasePaths::new(directory.path());
+        let quarantine = FreshPlaceholderQuarantine::create(directory.path()).expect("quarantine");
+        fs::write(&paths.main, b"database").expect("changed placeholder");
+
+        assert_eq!(
+            quarantine.capture(&paths.main),
+            Err(BackupErrorCode::RestoreValidationFailed)
+        );
+        assert_eq!(
+            fs::read(&paths.main).expect("relinked database"),
+            b"database"
+        );
+        assert_eq!(
+            fs::read(
+                quarantine
+                    .path
+                    .join(paths.main.file_name().expect("main file name")),
+            )
+            .expect("preserved database"),
+            b"database"
+        );
+    }
+
+    #[test]
+    fn fresh_install_restore_rejects_sqlite_companions() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        fs::write(directory.path().join("dara.sqlite3-wal"), b"existing")
+            .expect("existing main WAL");
+
+        assert_eq!(
+            prepare_fresh_restore_target(directory.path()),
+            Err(BackupErrorCode::RestoreValidationFailed)
+        );
+    }
+
     struct FakeRelationalRestore {
         main_source: PathBuf,
         unavailable: Mutex<HashSet<u64>>,
@@ -2721,6 +2946,30 @@ mod tests {
         assert!(recovery::restored_offsite_takeover_required(&paths)
             .expect("off-site takeover requirement"));
         recovery::confirm_restored_launch(&paths).expect("launch confirmation");
+    }
+
+    #[test]
+    fn fresh_install_restore_uses_the_exclusive_install_path() {
+        let fixture = rich_remote_fixture();
+        let target = tempfile::tempdir().expect("restore parent");
+        let data_root = target.path().join("restored");
+        fs::create_dir(&data_root).expect("fresh data root");
+        let lock = AppDataLock::acquire(&data_root).expect("data lock");
+
+        fixture
+            .engine
+            .restore_fresh_to_locked(
+                &lock,
+                &RemoteCheckpointSelector::Latest,
+                fixture.manifest.backup_set_id(),
+            )
+            .expect("fresh remote restore");
+
+        let paths = DatabasePaths::new(&data_root);
+        connection::open_read_only(&paths.main, DatabaseKind::Main).expect("installed main");
+        connection::open_read_only(&paths.media, DatabaseKind::Media).expect("installed media");
+        assert!(recovery::restored_offsite_takeover_required(&paths)
+            .expect("off-site takeover requirement"));
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::{
     io,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -14,9 +14,14 @@ use zeroize::Zeroize;
 use crate::{
     app_lock::AppDataLock,
     backup::{
-        credentials::R2Credentials,
-        domain::{BackupErrorCode, R2AccountId, R2BucketName, R2Jurisdiction, R2Prefix, R2Target},
-        restore::{RemoteCheckpointCatalog, RemoteRecoveryEngine},
+        credentials::{
+            CredentialError, CredentialStore, MacOsKeychainCredentialStore, R2Credentials,
+        },
+        domain::{
+            BackupErrorCode, BackupSetId, CheckpointId, R2AccountId, R2BucketName, R2Jurisdiction,
+            R2Prefix, R2Target,
+        },
+        restore::{RemoteCheckpointCatalog, RemoteCheckpointSelector, RemoteRecoveryEngine},
     },
     database::{
         self,
@@ -124,6 +129,18 @@ pub(crate) struct FreshInstallRecoveryState {
 
 struct RecoveryStateInner {
     operation_active: AtomicBool,
+    session: Mutex<Option<RecoverySession>>,
+}
+
+struct RecoverySession {
+    target: R2Target,
+    credentials: R2Credentials,
+    backup_set_id: BackupSetId,
+}
+
+struct RestoreSessionFailure {
+    error: RecoveryCommandError,
+    session: RecoverySession,
 }
 
 impl Default for FreshInstallRecoveryState {
@@ -131,6 +148,7 @@ impl Default for FreshInstallRecoveryState {
         Self {
             inner: Arc::new(RecoveryStateInner {
                 operation_active: AtomicBool::new(false),
+                session: Mutex::new(None),
             }),
         }
     }
@@ -144,6 +162,31 @@ impl FreshInstallRecoveryState {
         Ok(RecoveryOperationGuard {
             state: self.clone(),
         })
+    }
+
+    fn replace_session(&self, session: RecoverySession) {
+        *self
+            .inner
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(session);
+    }
+
+    fn clear_session(&self) {
+        *self
+            .inner
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
+    }
+
+    fn take_session(&self) -> Result<RecoverySession, RecoveryCommandError> {
+        self.inner
+            .session
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+            .ok_or_else(RecoveryCommandError::discovery_required)
     }
 }
 
@@ -171,6 +214,12 @@ pub(crate) struct DiscoverRemoteBackupsInput {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct RestoreRemoteBackupInput {
+    checkpoint_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct RecoveryCredentialsInput {
     access_key_id: String,
     secret_access_key: String,
@@ -189,6 +238,7 @@ pub(crate) enum RecoveryCommandErrorCode {
     InvalidInput,
     NotFreshInstall,
     OperationInProgress,
+    DiscoveryRequired,
     BackupFailed,
     Internal,
 }
@@ -226,11 +276,19 @@ impl RecoveryCommandError {
         }
     }
 
+    fn discovery_required() -> Self {
+        Self {
+            code: RecoveryCommandErrorCode::DiscoveryRequired,
+            backup_error_code: None,
+            message: "Find the available R2 backups again before restoring.".to_owned(),
+        }
+    }
+
     fn backup(error: BackupErrorCode) -> Self {
         Self {
             code: RecoveryCommandErrorCode::BackupFailed,
             backup_error_code: Some(error),
-            message: "Dara could not inspect that R2 backup.".to_owned(),
+            message: "Dara could not safely use that R2 backup.".to_owned(),
         }
     }
 
@@ -255,10 +313,12 @@ pub(crate) fn start_fresh_install(
     app: AppHandle,
     context: State<'_, ApplicationLaunchContext>,
     data_lock: State<'_, AppDataLock>,
+    state: State<'_, FreshInstallRecoveryState>,
 ) -> Result<(), RecoveryCommandError> {
     if context.mode != ApplicationLaunchMode::Recovery {
         return Err(RecoveryCommandError::not_fresh_install());
     }
+    let _operation = state.begin_operation()?;
     let paths = DatabasePaths::new(data_lock.data_root());
     if inspect_database_pair(&paths).map_err(|error| {
         RecoveryCommandError::internal(format!("Could not inspect Dara data: {error}"))
@@ -297,6 +357,7 @@ pub(crate) async fn discover_remote_backups(
     }
     let state = state.inner().clone();
     let operation = state.begin_operation()?;
+    state.clear_session();
     let resource_dir = app.path().resource_dir().map_err(|error| {
         RecoveryCommandError::internal(format!("Could not find Dara resources: {error}"))
     })?;
@@ -313,12 +374,143 @@ pub(crate) async fn discover_remote_backups(
         let catalog = engine
             .list_checkpoints()
             .map_err(RecoveryCommandError::backup)?;
-        Ok::<_, RecoveryCommandError>(catalog)
+        let session = RecoverySession {
+            target,
+            credentials,
+            backup_set_id: catalog.backup_set_id.clone(),
+        };
+        Ok::<_, RecoveryCommandError>((catalog, session))
     })
     .await
     .map_err(|_| RecoveryCommandError::internal("The recovery task stopped unexpectedly."))?;
     drop(operation);
-    result
+    let (catalog, session) = result?;
+    state.replace_session(session);
+    Ok(catalog)
+}
+
+#[tauri::command]
+pub(crate) async fn restore_remote_backup(
+    app: AppHandle,
+    context: State<'_, ApplicationLaunchContext>,
+    state: State<'_, FreshInstallRecoveryState>,
+    data_lock: State<'_, AppDataLock>,
+    input: RestoreRemoteBackupInput,
+) -> Result<(), RecoveryCommandError> {
+    if context.mode != ApplicationLaunchMode::Recovery {
+        return Err(RecoveryCommandError::not_fresh_install());
+    }
+    let state = state.inner().clone();
+    let operation = state.begin_operation()?;
+    let paths = DatabasePaths::new(data_lock.data_root());
+    let selector = CheckpointId::parse(input.checkpoint_id)
+        .map(RemoteCheckpointSelector::Checkpoint)
+        .map_err(|_| RecoveryCommandError::invalid_input())?;
+    let resource_dir = app.path().resource_dir().map_err(|error| {
+        RecoveryCommandError::internal(format!("Could not find Dara resources: {error}"))
+    })?;
+    let data_lock = data_lock.try_clone().map_err(|error| {
+        RecoveryCommandError::internal(format!("Could not retain the Dara data lock: {error}"))
+    })?;
+    request_show_main_after_restart(&paths).map_err(|error| {
+        RecoveryCommandError::internal(format!(
+            "Could not prepare Dara to show the restored library: {error}"
+        ))
+    })?;
+    let session = state.take_session()?;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        restore_session(&data_lock, &resource_dir, &selector, session)
+    })
+    .await
+    .map_err(|_| RecoveryCommandError::internal("The restore task stopped unexpectedly."))?;
+    drop(operation);
+    match result {
+        Ok(()) => app.restart(),
+        Err(failure) => {
+            let RestoreSessionFailure { error, session } = *failure;
+            state.replace_session(session);
+            Err(error)
+        }
+    }
+}
+
+fn restore_session(
+    data_lock: &AppDataLock,
+    resource_dir: &std::path::Path,
+    selector: &RemoteCheckpointSelector,
+    session: RecoverySession,
+) -> Result<(), Box<RestoreSessionFailure>> {
+    let paths = DatabasePaths::new(data_lock.data_root());
+    match inspect_database_pair(&paths) {
+        Ok(DatabasePairState::Fresh) => {}
+        Ok(DatabasePairState::Existing) => {
+            return Err(Box::new(RestoreSessionFailure {
+                error: RecoveryCommandError::not_fresh_install(),
+                session,
+            }));
+        }
+        Err(error) => {
+            return Err(Box::new(RestoreSessionFailure {
+                error: RecoveryCommandError::internal(format!(
+                    "Could not inspect Dara data: {error}"
+                )),
+                session,
+            }));
+        }
+    }
+    let engine_credentials = match session.credentials.try_clone() {
+        Ok(credentials) => credentials,
+        Err(_) => {
+            return Err(Box::new(RestoreSessionFailure {
+                error: RecoveryCommandError::invalid_input(),
+                session,
+            }));
+        }
+    };
+    let engine = match RemoteRecoveryEngine::system(
+        session.target.clone(),
+        engine_credentials,
+        resource_dir,
+    ) {
+        Ok(engine) => engine,
+        Err(error) => {
+            return Err(Box::new(RestoreSessionFailure {
+                error: RecoveryCommandError::backup(error),
+                session,
+            }));
+        }
+    };
+    if let Err(error) = engine.restore_fresh_to_locked(data_lock, selector, &session.backup_set_id)
+    {
+        return Err(Box::new(RestoreSessionFailure {
+            error: RecoveryCommandError::backup(error),
+            session,
+        }));
+    }
+    // Discovery credentials may be read-only. Preserve any canonical credentials
+    // already saved for this backup set so an explicit takeover can still write.
+    // A post-install Keychain failure is recoverable from Settings: restored
+    // backups remain paused until the user explicitly takes ownership.
+    if let Err(error) = save_restore_credentials_if_missing(
+        &MacOsKeychainCredentialStore,
+        &session.backup_set_id,
+        &session.credentials,
+    ) {
+        log::warn!("restored Dara data but could not save its R2 credentials: {error}");
+    }
+    Ok(())
+}
+
+fn save_restore_credentials_if_missing(
+    store: &impl CredentialStore,
+    backup_set_id: &BackupSetId,
+    credentials: &R2Credentials,
+) -> Result<(), CredentialError> {
+    match store.load(backup_set_id) {
+        Ok(_) => Ok(()),
+        Err(CredentialError::Missing) => store.save(backup_set_id, credentials),
+        Err(error) => Err(error),
+    }
 }
 
 fn parse_connection(
@@ -347,6 +539,62 @@ fn parse_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const EXISTING_ACCESS_KEY: &str = "11111111111111111111111111111111";
+    const EXISTING_SECRET_KEY: &str =
+        "1111111111111111111111111111111111111111111111111111111111111111";
+    const RECOVERY_ACCESS_KEY: &str = "22222222222222222222222222222222";
+    const RECOVERY_SECRET_KEY: &str =
+        "2222222222222222222222222222222222222222222222222222222222222222";
+
+    #[derive(Clone, Copy)]
+    enum TestCredentialState {
+        Existing,
+        Missing,
+        Unavailable,
+    }
+
+    struct TestCredentialStore {
+        state: TestCredentialState,
+        saved_access_keys: Mutex<Vec<String>>,
+    }
+
+    impl TestCredentialStore {
+        fn new(state: TestCredentialState) -> Self {
+            Self {
+                state,
+                saved_access_keys: Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl CredentialStore for TestCredentialStore {
+        fn save(
+            &self,
+            _backup_set_id: &BackupSetId,
+            credentials: &R2Credentials,
+        ) -> Result<(), CredentialError> {
+            self.saved_access_keys
+                .lock()
+                .expect("saved credentials")
+                .push(credentials.access_key_id().to_owned());
+            Ok(())
+        }
+
+        fn load(&self, _backup_set_id: &BackupSetId) -> Result<R2Credentials, CredentialError> {
+            match self.state {
+                TestCredentialState::Existing => {
+                    R2Credentials::new(EXISTING_ACCESS_KEY, EXISTING_SECRET_KEY)
+                }
+                TestCredentialState::Missing => Err(CredentialError::Missing),
+                TestCredentialState::Unavailable => Err(CredentialError::Unavailable),
+            }
+        }
+
+        fn remove(&self, _backup_set_id: &BackupSetId) -> Result<(), CredentialError> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn empty_directory_enters_recovery_without_creating_databases() {
@@ -413,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn start_fresh_restart_request_is_consumed_once() {
+    fn show_main_after_restart_request_is_consumed_once() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let paths = DatabasePaths::new(directory.path());
 
@@ -438,5 +686,60 @@ mod tests {
 
         drop(operation);
         state.begin_operation().expect("operation after release");
+    }
+
+    #[test]
+    fn restore_preserves_existing_write_credentials() {
+        let store = TestCredentialStore::new(TestCredentialState::Existing);
+        let backup_set_id = BackupSetId::new();
+        let recovery_credentials =
+            R2Credentials::new(RECOVERY_ACCESS_KEY, RECOVERY_SECRET_KEY).expect("credentials");
+
+        save_restore_credentials_if_missing(&store, &backup_set_id, &recovery_credentials)
+            .expect("preserve credentials");
+
+        assert!(store
+            .saved_access_keys
+            .lock()
+            .expect("saved credentials")
+            .is_empty());
+    }
+
+    #[test]
+    fn restore_saves_credentials_when_none_exist() {
+        let store = TestCredentialStore::new(TestCredentialState::Missing);
+        let backup_set_id = BackupSetId::new();
+        let recovery_credentials =
+            R2Credentials::new(RECOVERY_ACCESS_KEY, RECOVERY_SECRET_KEY).expect("credentials");
+
+        save_restore_credentials_if_missing(&store, &backup_set_id, &recovery_credentials)
+            .expect("save credentials");
+
+        assert_eq!(
+            store
+                .saved_access_keys
+                .lock()
+                .expect("saved credentials")
+                .as_slice(),
+            [RECOVERY_ACCESS_KEY]
+        );
+    }
+
+    #[test]
+    fn restore_does_not_overwrite_credentials_when_keychain_is_unavailable() {
+        let store = TestCredentialStore::new(TestCredentialState::Unavailable);
+        let backup_set_id = BackupSetId::new();
+        let recovery_credentials =
+            R2Credentials::new(RECOVERY_ACCESS_KEY, RECOVERY_SECRET_KEY).expect("credentials");
+
+        assert!(matches!(
+            save_restore_credentials_if_missing(&store, &backup_set_id, &recovery_credentials),
+            Err(CredentialError::Unavailable)
+        ));
+        assert!(store
+            .saved_access_keys
+            .lock()
+            .expect("saved credentials")
+            .is_empty());
     }
 }

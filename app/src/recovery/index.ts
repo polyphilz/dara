@@ -11,4 +11,5 @@ export {
   type RecoveryCommandError,
   type RemoteCheckpointCatalog,
   type RemoteCheckpointSummary,
+  type RestoreRemoteBackupInput,
 } from './types.ts'

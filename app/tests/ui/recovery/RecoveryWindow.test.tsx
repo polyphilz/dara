@@ -62,6 +62,7 @@ test('clears credentials and displays complete remote checkpoints after discover
       },
     ],
     malformedObjectsIgnored: 0,
+    backupSetId: '019f547b-6200-7000-8000-000000000010',
   })
   const { getByLabelText, getByRole, findByText } = render(
     <RecoveryWindow gateway={gateway} />,
@@ -84,6 +85,11 @@ test('clears credentials and displays complete remote checkpoints after discover
 
   expect(await findByText('Ready to restore')).toBeTruthy()
   expect(await findByText(/3 images/)).toBeTruthy()
+  expect(
+    getByRole('button', { name: /ready to restore/i }).classList.contains(
+      'dara-button',
+    ),
+  ).toBe(true)
   expect(gateway.discover).toHaveBeenCalledWith({
     accountId: ACCOUNT_ID,
     jurisdiction: R2Jurisdiction.Default,
@@ -103,10 +109,59 @@ test('clears credentials and displays complete remote checkpoints after discover
   })
 })
 
+test('restores only the explicitly selected restorable checkpoint', async () => {
+  const gateway = gatewayFixture()
+  gateway.discover.mockResolvedValueOnce({
+    checkpoints: [
+      {
+        checkpointId: '019f547b-6200-7000-8000-000000000001',
+        createdAt: '2026-07-29T18:00:00Z',
+        daraVersion: '0.1.0',
+        txid: '000000000000000a',
+        mainMigrationHead: 9,
+        mediaMigrationHead: 8,
+        referencedMediaCount: 1,
+        referencedMediaBytes: 2048,
+        availability: RemoteCheckpointAvailability.Restorable,
+      },
+    ],
+    malformedObjectsIgnored: 0,
+    backupSetId: '019f547b-6200-7000-8000-000000000010',
+  })
+  gateway.restore.mockImplementationOnce(() => new Promise(() => {}))
+  const { getByLabelText, getByRole, findByText } = render(
+    <RecoveryWindow gateway={gateway} />,
+  )
+
+  fireEvent.click(getByRole('button', { name: /restore from backup/i }))
+  for (const [label, value] of [
+    ['R2 account ID', ACCOUNT_ID],
+    ['Bucket', 'dara-backups'],
+    ['Access Key ID', ACCESS_KEY_ID],
+    ['Secret Access Key', SECRET_ACCESS_KEY],
+  ] as const) {
+    fireEvent.change(getByLabelText(label), { target: { value } })
+  }
+  fireEvent.click(getByRole('button', { name: 'Find backups' }))
+  await findByText('Ready to restore')
+
+  fireEvent.click(
+    getByRole('button', { name: 'Restore selected backup' }),
+  )
+
+  expect(gateway.restore).toHaveBeenCalledWith({
+    checkpointId: '019f547b-6200-7000-8000-000000000001',
+  })
+  expect(
+    await findByText(/restoring and checking your databases and images/i),
+  ).toBeTruthy()
+})
+
 function gatewayFixture() {
   return {
     loadLaunchContext: vi.fn(),
     startFresh: vi.fn(),
     discover: vi.fn(),
+    restore: vi.fn(),
   } satisfies FreshInstallRecoveryGateway
 }
