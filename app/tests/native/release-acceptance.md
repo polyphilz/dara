@@ -10,7 +10,9 @@ This procedure owns three release-level claims that unit, browser, and e2e build
 2. the same packaged app upgrades a rich previous-head database pair only after preserving a
    valid, restorable pre-migration snapshot; and
 3. the packaged app can publish a complete checkpoint to a private R2 backup set, prove that it
-   restores, restore it into a separate installation, and safely take over future backups.
+   restores, restore it into a separate installation, and safely take over future backups; and
+4. every genuine application Quit stops Dara and its bundled helpers, removes their runtime
+   markers, and releases the data-directory lock within a bounded time.
 
 The driver inspects durable files and database state after Dara has quit. UI observations remain
 explicit below; a file check does not claim that a user interaction worked.
@@ -31,6 +33,10 @@ explicit below; a file check does not claim that a user interaction worked.
 - The `launch` command directly starts the packaged executable with `DARA_DATA_DIR` set to the
   selected test directory. It removes all model, sidecar, device, and GPU-layer development
   overrides from the child environment.
+- `quit-and-check` targets the exact PID recorded by `launch` and asks macOS to terminate it
+  normally. It does not send `SIGKILL`. It allows up to 130 seconds for Dara's final off-site
+  checkpoint and helper cleanup, then fails if Dara, Litestream, llama-server, a runtime marker,
+  or the data lock remains.
 
 Use unique names in place of the examples below.
 
@@ -254,6 +260,71 @@ process.
 Preserve both local directories and the generated evidence until the release record is reviewed.
 Then disable backup for both test installations, remove their test credentials if they are no
 longer useful, and delete `dara/primary` from the disposable acceptance bucket in Cloudflare.
+
+## D. Application shutdown matrix
+
+Use an initialized acceptance directory from section A or C. Each `launch` writes an exact
+packaged-app PID record. These checks never target another Tauri app or a development Dara.
+
+### D1. Closing the main window keeps Dara resident
+
+Launch Dara, open its main window, and click the red window-close control. Confirm the window
+disappears but Dara's brain remains in the macOS menu bar. Then run:
+
+```sh
+pnpm release:acceptance check-running release-clean-20260727
+pnpm release:acceptance quit-and-check release-clean-20260727
+```
+
+`check-running` proves that closing the window did not quit the process. `quit-and-check` then
+sends macOS's normal application terminate request to that exact resident PID and proves complete
+cleanup.
+
+### D2. Cmd+Q with the main window visible
+
+Launch Dara again, open the main window, press Cmd+Q, and run:
+
+```sh
+pnpm release:acceptance check-stopped release-clean-20260727
+```
+
+The check must report no Dara or helper process, no helper PID marker, and a released data lock.
+
+### D3. Cmd+Q in menu-bar-only mode
+
+Launch Dara, close the main window, click Dara's brain in the menu bar, and press Cmd+Q while Dara's
+menu is active. Then run:
+
+```sh
+pnpm release:acceptance check-stopped release-clean-20260727
+```
+
+If the macOS version does not route Cmd+Q while a status-item menu is open, record that observation
+and use the visible-main Cmd+Q case plus the automated resident-mode case from D1. Do not claim
+that another foreground application's Cmd+Q tested Dara.
+
+### D4. Quit Dara from the menu-bar icon
+
+Launch Dara, choose **Quit Dara** from the brain-icon menu, and run:
+
+```sh
+pnpm release:acceptance check-stopped release-clean-20260727
+```
+
+### D5. Quit while both bundled helpers are active
+
+Use the off-site acceptance directory from section C with backup enabled. Perform a semantic
+search so `llama-server` is active, wait until Settings shows relational replication as running,
+leave the main window visible, and run:
+
+```sh
+pnpm release:acceptance quit-and-check release-offsite-20260728
+```
+
+The generated `.release-acceptance-launch.json` records the normal macOS terminate event, elapsed
+shutdown time, the 130-second bound, helper cleanup, marker cleanup, and data-lock release. Inspect
+the packaged Dara log if the bound is exceeded; shutdown entries identify the window context and
+the time spent stopping each managed service.
 
 ## Release record
 

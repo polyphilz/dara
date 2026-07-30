@@ -18,6 +18,7 @@ use std::{
         Arc,
     },
     thread,
+    time::Instant,
 };
 
 use tauri::{Emitter, Manager, RunEvent};
@@ -51,19 +52,59 @@ impl ExitShutdownState {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ManagedShutdownService {
+    OffsiteCheckpoint,
+    OffsiteMedia,
+    SemanticSearch,
+    Litestream,
+}
+
+impl ManagedShutdownService {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::OffsiteCheckpoint => "off-site checkpoint coordinator",
+            Self::OffsiteMedia => "off-site media coordinator",
+            Self::SemanticSearch => "semantic-search service and llama-server",
+            Self::Litestream => "Litestream supervisor and daemon",
+        }
+    }
+}
+
 fn shutdown_managed_services(app: &tauri::AppHandle) {
+    let shutdown_started = Instant::now();
+    log::info!("application shutdown started");
     if let Some(service) = app.try_state::<backup::checkpoint::CheckpointCoordinator>() {
-        service.shutdown();
+        shutdown_service(ManagedShutdownService::OffsiteCheckpoint, || {
+            service.shutdown()
+        });
     }
     if let Some(service) = app.try_state::<backup::media_reconciliation::MediaBackupCoordinator>() {
-        service.shutdown();
+        shutdown_service(ManagedShutdownService::OffsiteMedia, || service.shutdown());
     }
     if let Some(service) = app.try_state::<search::SearchService>() {
-        service.shutdown();
+        shutdown_service(ManagedShutdownService::SemanticSearch, || {
+            service.shutdown()
+        });
     }
     if let Some(service) = app.try_state::<backup::litestream_runtime::LitestreamRuntimeService>() {
-        service.shutdown();
+        shutdown_service(ManagedShutdownService::Litestream, || service.shutdown());
     }
+    log::info!(
+        "application shutdown completed in {} ms",
+        shutdown_started.elapsed().as_millis()
+    );
+}
+
+fn shutdown_service(service: ManagedShutdownService, shutdown: impl FnOnce()) {
+    let started = Instant::now();
+    let name = service.label();
+    log::info!("application shutdown stopping {name}");
+    shutdown();
+    log::info!(
+        "application shutdown stopped {name} in {} ms",
+        started.elapsed().as_millis()
+    );
 }
 
 fn finish_exit_after_shutdown(
@@ -279,6 +320,7 @@ pub fn run() {
                 if exit_shutdown.should_prevent_exit() {
                     api.prevent_exit();
                     if exit_shutdown.start_once() {
+                        windows::macos::log_application_quit_context(app);
                         finish_exit_after_shutdown(
                             app,
                             code.unwrap_or_default(),
@@ -290,7 +332,12 @@ pub fn run() {
             // On macOS, choosing Quit can move directly to LoopDestroyed without
             // first emitting ExitRequested. The event loop cannot be held open at
             // this point, so synchronously stop owned helpers before it returns.
-            RunEvent::Exit => finish_exit_during_loop_destroyed(app, &exit_shutdown),
+            RunEvent::Exit => {
+                if exit_shutdown.should_prevent_exit() {
+                    windows::macos::log_application_quit_context(app);
+                }
+                finish_exit_during_loop_destroyed(app, &exit_shutdown);
+            }
             _ => {}
         }
     });
