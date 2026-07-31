@@ -4,8 +4,8 @@ A personal spaced-repetition app for macOS. Built to replace Anki after 6–7 ye
 
 ## Principles
 
-- **Fast and resident.** Lives in the menu bar (Docker-style), launches instantly, costs ~nothing at idle.
-- **Capture in five seconds.** A global hotkey shows an ephemeral Quick Add window over the current workspace and puts the caret in the editor. Dara remains a menu-bar-only Accessory app with no Dock icon or application menu. Save or cancel and keyboard control returns immediately to the app and window you were using.
+- **Fast and resident.** Lives in the menu bar (Docker-style), launches instantly, costs ~nothing at idle. Closing the window leaves Dara running behind its menu-bar icon rather than quitting. Dara does keep a Dock icon while it runs: macOS grants the menu bar only to a Regular application, and only at the moment that application is activated, so a Dock-less menu-bar process can never own the menu bar it is activated from.
+- **Capture in five seconds.** A global hotkey shows an ephemeral Quick Add window over the current workspace and puts the caret in the editor. Save or cancel and keyboard control returns immediately to the app and window you were using.
 - **Keyboard-first everywhere.** Reviews, editing, search, occlusion editing — time off the keyboard is the enemy.
 - **Local-first.** One relational SQLite database plus one blob-only media database. No server, sync, or required account. Capture, review, and lexical search work immediately offline; semantic search runs locally after a background model download. Optional R2 backup is the only networked personal-v1 feature.
 - **AI stays advisory.** If the deferred mistake-explainer is added later, it may explain *why you got a card wrong*. It will never write cards or touch scheduling.

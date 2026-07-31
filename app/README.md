@@ -9,13 +9,16 @@ pnpm install
 pnpm tauri dev
 ```
 
-The application launches as a menu-bar resident app with both native windows hidden. Development
+Opening the application deliberately, from the Dock or Spotlight, shows its main window; Quick
+Add stays hidden until summoned. A launch-at-login start instead passes `--autostart` and stays
+resident behind the menu-bar icon without taking the foreground, as does closing the main
+window. Development
 data is isolated under `.data/local/`, including `dara.sqlite3`, `media.sqlite3`, and backups.
 Installed builds continue to use the platform application-data directory.
 
 ## Shortcuts
 
-- `⌃⌥⌘D` activates the frameless Quick Add window while Dara remains in menu-bar-only Accessory mode.
+- `⌃⌥⌘D` activates the frameless Quick Add window and restores the prior app on dismiss.
 - `⌃⌥⌘R` activates dara and opens the ordinary main window.
 - `Esc` cancels quick add; `⌘↵` saves a BASIC card.
 - `⌘B`, `⌘I`, and `⌘K` apply bold, italic, and link formatting in card editors.

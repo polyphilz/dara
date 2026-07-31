@@ -159,7 +159,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
-            None,
+            Some(vec![windows::macos::AUTOSTART_ARGUMENT]),
         ))
         .invoke_handler(tauri::generate_handler![
             backup::commands::change_offsite_backup_target,
@@ -316,6 +316,18 @@ pub fn run() {
             }
         }
         match event {
+            // Clicking the Dock icon of an application whose windows are all hidden reaches
+            // the process only as a reopen request; nothing else brings the window back.
+            RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } => {
+                if !has_visible_windows {
+                    if let Err(error) = windows::macos::show_main(app.clone()) {
+                        log::error!("failed to show Dara from its Dock icon: {error}");
+                    }
+                }
+            }
             RunEvent::ExitRequested { code, api, .. } => {
                 if exit_shutdown.should_prevent_exit() {
                     api.prevent_exit();
