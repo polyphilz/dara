@@ -7,13 +7,38 @@ import {
 import { basename, extname, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
+import {
+  readDistributionSigningPolicy,
+  verifyDeveloperIdSignature,
+} from './distribution-signing.mjs'
+
+const PackageSignatureMode = Object.freeze({
+  AdHoc: 'ad-hoc',
+  DeveloperId: 'developer-id',
+})
+
 const appPath = resolve(
   process.argv[2] ?? 'src-tauri/target/release/bundle/macos/Dara.app',
 )
+const signatureMode = process.argv[3] ?? PackageSignatureMode.AdHoc
+assert(
+  Object.values(PackageSignatureMode).includes(signatureMode),
+  `unknown package signature mode: ${signatureMode}`,
+)
+const distributionPolicy =
+  signatureMode === PackageSignatureMode.DeveloperId
+    ? readDistributionSigningPolicy()
+    : undefined
 const resources = resolve(appPath, 'Contents/Resources')
 const appBinary = resolve(appPath, 'Contents/MacOS/dara')
 const sidecar = resolve(resources, 'bin/llama-server')
 const litestream = resolve(resources, 'bin/litestream')
+const stagedSidecar = resolve(
+  'src-tauri/resources/release/bin/llama-server',
+)
+const stagedLitestream = resolve(
+  'src-tauri/resources/release/bin/litestream',
+)
 const releaseManifestPath = resolve(resources, 'release/llama-server.json')
 const releaseManifest = JSON.parse(readFileSync(releaseManifestPath, 'utf8'))
 const applicationIdentities = JSON.parse(
@@ -53,41 +78,57 @@ assert(
   'bundled Litestream is not executable',
 )
 
-assertEqual(
-  sha256File(sidecar),
-  releaseManifest.binary.sha256,
-  'bundled llama-server SHA-256',
-)
-assertEqual(
-  sha256File('src-tauri/resources/release/bin/llama-server'),
-  releaseManifest.binary.sha256,
-  'staged llama-server SHA-256',
-)
-assertEqual(
-  lstatSync(sidecar).size,
-  releaseManifest.binary.size,
-  'bundled llama-server size',
-)
+if (signatureMode === PackageSignatureMode.AdHoc) {
+  assertEqual(
+    sha256File(sidecar),
+    releaseManifest.binary.sha256,
+    'bundled llama-server SHA-256',
+  )
+  assertEqual(
+    sha256File(stagedSidecar),
+    releaseManifest.binary.sha256,
+    'staged llama-server SHA-256',
+  )
+  assertEqual(
+    lstatSync(sidecar).size,
+    releaseManifest.binary.size,
+    'bundled llama-server size',
+  )
+} else {
+  assertEqual(
+    sha256File(sidecar),
+    sha256File(stagedSidecar),
+    'Developer ID signed llama-server copy',
+  )
+}
 assertEqual(
   litestreamManifest,
   litestreamPin,
   'bundled Litestream release manifest',
 )
-assertEqual(
-  sha256File(litestream),
-  litestreamPin.binary.sha256,
-  'bundled Litestream SHA-256',
-)
-assertEqual(
-  sha256File('src-tauri/resources/release/bin/litestream'),
-  litestreamPin.binary.sha256,
-  'staged Litestream SHA-256',
-)
-assertEqual(
-  lstatSync(litestream).size,
-  litestreamPin.binary.size,
-  'bundled Litestream size',
-)
+if (signatureMode === PackageSignatureMode.AdHoc) {
+  assertEqual(
+    sha256File(litestream),
+    litestreamPin.binary.sha256,
+    'bundled Litestream SHA-256',
+  )
+  assertEqual(
+    sha256File(stagedLitestream),
+    litestreamPin.binary.sha256,
+    'staged Litestream SHA-256',
+  )
+  assertEqual(
+    lstatSync(litestream).size,
+    litestreamPin.binary.size,
+    'bundled Litestream size',
+  )
+} else {
+  assertEqual(
+    sha256File(litestream),
+    sha256File(stagedLitestream),
+    'Developer ID signed Litestream copy',
+  )
+}
 assertEqual(
   sha256File(resolve(resources, 'embedding-indexes/jina-v1.json')),
   releaseManifest.verification.embeddingManifest.sha256,
@@ -156,7 +197,25 @@ assertEqual(
   productionIdentity.identifier,
   'signed application identifier',
 )
-assertEqual(signatureField(signature, 'Signature'), 'adhoc', 'app signature')
+if (signatureMode === PackageSignatureMode.AdHoc) {
+  assertEqual(signatureField(signature, 'Signature'), 'adhoc', 'app signature')
+} else {
+  verifyDeveloperIdSignature(
+    appPath,
+    distributionPolicy,
+    productionIdentity.identifier,
+  )
+  for (const [key, path] of [
+    ['llamaServer', sidecar],
+    ['litestream', litestream],
+  ]) {
+    verifyDeveloperIdSignature(
+      path,
+      distributionPolicy,
+      distributionPolicy.sidecars[key].identifier,
+    )
+  }
+}
 assertEqual(
   run('/usr/libexec/PlistBuddy', [
     '-c',
@@ -227,8 +286,12 @@ for (const path of packagedResourceFiles) {
   }
 }
 
+const signatureDescription =
+  signatureMode === PackageSignatureMode.AdHoc
+    ? 'ad-hoc signed with exact upstream sidecar hashes'
+    : `Developer ID signed by ${distributionPolicy.application.teamIdentifier} with hardened sidecars`
 console.info(
-  `Packaged app passed: ${appPath}, ad-hoc signed arm64 macOS ${pin.target.minimumSystemVersion}+, pinned llama-server ${releaseManifest.binary.sha256}, pinned Litestream ${litestreamPin.binary.sha256}.`,
+  `Packaged app passed: ${appPath}, ${signatureDescription}, arm64 macOS ${pin.target.minimumSystemVersion}+, pinned llama-server inputs and Litestream ${litestreamPin.binary.sha256}.`,
 )
 
 function sha256File(path) {

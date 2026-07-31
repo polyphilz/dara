@@ -750,6 +750,8 @@ fn map_litestream_start_error(error: LitestreamError) -> RuntimeFailure {
             RuntimeFailure::new(BackupErrorCode::LitestreamFailed, false)
         }
         LitestreamError::InvalidEmbeddedManifest(_)
+        | LitestreamError::InvalidEmbeddedDistributionSigningPolicy(_)
+        | LitestreamError::UnsafeDistributionSigningPolicy
         | LitestreamError::MissingReleaseManifest(_)
         | LitestreamError::ReleaseManifestMismatch
         | LitestreamError::MissingBinary(_)

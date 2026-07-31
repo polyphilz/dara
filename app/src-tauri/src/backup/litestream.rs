@@ -17,6 +17,7 @@ use thiserror::Error;
 use super::credentials::R2Credentials;
 
 const EMBEDDED_MANIFEST: &str = include_str!("../../resources/sidecars/litestream-v1.json");
+const EMBEDDED_DISTRIBUTION_SIGNING_POLICY: &str = include_str!("../../distribution-signing.json");
 const DEVELOPMENT_BINARY_OVERRIDE_ENV: &str = "DARA_LITESTREAM_PATH";
 const ACCESS_KEY_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCESS_KEY_ID";
 const SECRET_ACCESS_KEY_ENV: &str = "DARA_LITESTREAM_R2_SECRET_ACCESS_KEY";
@@ -41,6 +42,10 @@ pub(crate) fn configure_credentials_environment(
 pub(crate) enum LitestreamError {
     #[error("the Litestream source manifest is invalid")]
     InvalidEmbeddedManifest(#[source] serde_json::Error),
+    #[error("the Dara distribution signing policy is invalid")]
+    InvalidEmbeddedDistributionSigningPolicy(#[source] serde_json::Error),
+    #[error("the Dara distribution signing policy does not authorize Litestream")]
+    UnsafeDistributionSigningPolicy,
     #[error("the bundled Litestream release manifest is unavailable")]
     MissingReleaseManifest(#[source] std::io::Error),
     #[error("the bundled Litestream release manifest does not match the application pin")]
@@ -119,6 +124,34 @@ struct ProtocolVerification {
     required_l0_retention: String,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DistributionSigningPolicy {
+    application: DistributionApplicationSigning,
+    sidecars: DistributionSidecarSigningPolicies,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DistributionApplicationSigning {
+    signing_identity: String,
+    team_identifier: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DistributionSidecarSigningPolicies {
+    litestream: DistributionSidecarSigning,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DistributionSidecarSigning {
+    component: String,
+    identifier: String,
+    bundle_path: String,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct VerifiedLitestreamBinary {
     path: PathBuf,
@@ -145,7 +178,7 @@ impl VerifiedLitestreamBinary {
             verify_release_manifest(resource_dir, &manifest)?;
             resource_dir.join(&manifest.binary.bundle_path)
         };
-        verify_binary(&path, &manifest.binary)?;
+        verify_binary(&path, &manifest)?;
         Ok(Self { path })
     }
 
@@ -153,7 +186,7 @@ impl VerifiedLitestreamBinary {
     pub(crate) fn resolve_staged_for_test(path: &Path) -> Result<Self, LitestreamError> {
         let manifest = embedded_manifest()?;
         validate_protocol_manifest(&manifest)?;
-        verify_binary(path, &manifest.binary)?;
+        verify_binary(path, &manifest)?;
         Ok(Self {
             path: path.to_owned(),
         })
@@ -197,14 +230,11 @@ fn verify_release_manifest(
     Ok(())
 }
 
-fn verify_binary(path: &Path, manifest: &BinaryManifest) -> Result<(), LitestreamError> {
+fn verify_binary(path: &Path, manifest: &SourceManifest) -> Result<(), LitestreamError> {
     let symlink_metadata =
         fs::symlink_metadata(path).map_err(|_| LitestreamError::MissingBinary(path.to_owned()))?;
     if symlink_metadata.file_type().is_symlink() || !symlink_metadata.is_file() {
         return Err(LitestreamError::BinaryNotRegular);
-    }
-    if symlink_metadata.len() != manifest.size {
-        return Err(LitestreamError::BinarySizeMismatch);
     }
     #[cfg(unix)]
     {
@@ -214,6 +244,29 @@ fn verify_binary(path: &Path, manifest: &BinaryManifest) -> Result<(), Litestrea
         }
     }
 
+    let size_matches = symlink_metadata.len() == manifest.binary.size;
+    let checksum_matches = size_matches && sha256_file(path)? == manifest.binary.sha256;
+    if size_matches && checksum_matches {
+        return Ok(());
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let signing_policy = embedded_distribution_signing_policy()?;
+        validate_distribution_signing_policy(&signing_policy, manifest)?;
+        if verify_distribution_signature(path, &signing_policy) {
+            return Ok(());
+        }
+    }
+
+    if !size_matches {
+        Err(LitestreamError::BinarySizeMismatch)
+    } else {
+        Err(LitestreamError::BinaryChecksumMismatch)
+    }
+}
+
+fn sha256_file(path: &Path) -> Result<String, LitestreamError> {
     let mut file = File::open(path).map_err(|_| LitestreamError::MissingBinary(path.to_owned()))?;
     let mut hasher = Sha256::new();
     let mut buffer = [0_u8; 64 * 1024];
@@ -226,11 +279,78 @@ fn verify_binary(path: &Path, manifest: &BinaryManifest) -> Result<(), Litestrea
         }
         hasher.update(&buffer[..read]);
     }
-    let actual = format!("{:x}", hasher.finalize());
-    if actual != manifest.sha256 {
-        return Err(LitestreamError::BinaryChecksumMismatch);
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+#[cfg(target_os = "macos")]
+fn embedded_distribution_signing_policy() -> Result<DistributionSigningPolicy, LitestreamError> {
+    serde_json::from_str(EMBEDDED_DISTRIBUTION_SIGNING_POLICY)
+        .map_err(LitestreamError::InvalidEmbeddedDistributionSigningPolicy)
+}
+
+#[cfg(target_os = "macos")]
+fn validate_distribution_signing_policy(
+    policy: &DistributionSigningPolicy,
+    manifest: &SourceManifest,
+) -> Result<(), LitestreamError> {
+    let sidecar = &policy.sidecars.litestream;
+    if !policy
+        .application
+        .signing_identity
+        .starts_with("Developer ID Application: ")
+        || policy.application.team_identifier.len() != 10
+        || !policy
+            .application
+            .team_identifier
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        || sidecar.component != manifest.component
+        || sidecar.bundle_path != manifest.binary.bundle_path
+        || !is_bundle_identifier(&sidecar.identifier)
+    {
+        return Err(LitestreamError::UnsafeDistributionSigningPolicy);
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn verify_distribution_signature(path: &Path, policy: &DistributionSigningPolicy) -> bool {
+    let requirement = distribution_code_requirement(policy);
+    Command::new("/usr/bin/codesign")
+        .args(["--verify", "--strict", &format!("-R={requirement}")])
+        .arg(path)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "macos")]
+fn distribution_code_requirement(policy: &DistributionSigningPolicy) -> String {
+    let application = &policy.application;
+    let sidecar = &policy.sidecars.litestream;
+    format!(
+        "identifier {} and anchor apple generic and certificate leaf[subject.OU] = {} and certificate leaf[subject.CN] = {}",
+        requirement_string_literal(&sidecar.identifier),
+        requirement_string_literal(&application.team_identifier),
+        requirement_string_literal(&application.signing_identity),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn requirement_string_literal(value: &str) -> String {
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+#[cfg(target_os = "macos")]
+fn is_bundle_identifier(value: &str) -> bool {
+    value.split('.').count() >= 2
+        && value.split('.').all(|segment| {
+            !segment.is_empty()
+                && segment
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1116,5 +1236,18 @@ mod tests {
     fn embedded_manifest_records_the_compaction_discovery() {
         let manifest = embedded_manifest().expect("embedded manifest");
         validate_protocol_manifest(&manifest).expect("safe protocol manifest");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn distribution_policy_authorizes_only_the_pinned_litestream_identity() {
+        let manifest = embedded_manifest().expect("embedded manifest");
+        let policy = embedded_distribution_signing_policy().expect("distribution signing policy");
+        validate_distribution_signing_policy(&policy, &manifest)
+            .expect("safe distribution signing policy");
+        assert_eq!(
+            distribution_code_requirement(&policy),
+            "identifier \"com.silo77.dara.sidecar.litestream\" and anchor apple generic and certificate leaf[subject.OU] = \"PMZH6ULML8\" and certificate leaf[subject.CN] = \"Developer ID Application: SILO77 LLC (PMZH6ULML8)\"",
+        );
     }
 }

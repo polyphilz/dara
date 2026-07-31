@@ -11,6 +11,7 @@ target/
 .env
 .env.*
 !.env.example
+!app/.env.notarization.example
 
 # local model weights (llama.cpp GGUF, ONNX)
 models/
@@ -29,4 +30,3 @@ backups/
 # misc
 .plans/
 assets/
-

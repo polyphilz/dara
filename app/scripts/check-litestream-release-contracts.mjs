@@ -7,12 +7,14 @@ const noticePath = 'src-tauri/resources/sidecars/litestream-NOTICE'
 const releaseConfigPath = 'src-tauri/tauri.release.conf.json'
 const packagePath = 'package.json'
 const rustContractPath = 'src-tauri/src/backup/litestream.rs'
+const distributionSigningPath = 'src-tauri/distribution-signing.json'
 const canaryWorkflowPath = '../.github/workflows/litestream-r2-canary.yml'
 
 const pin = readJson(pinPath)
 const releaseConfig = readJson(releaseConfigPath)
 const packageJson = readJson(packagePath)
 const rustContract = readFileSync(rustContractPath, 'utf8')
+const distributionSigning = readJson(distributionSigningPath)
 const canaryWorkflow = readFileSync(canaryWorkflowPath, 'utf8')
 const notice = readFileSync(noticePath, 'utf8')
 
@@ -68,6 +70,21 @@ assertEqual(
   pin.target.minimumSystemVersion,
   'packaged minimum macOS version',
 )
+assertEqual(
+  distributionSigning.sidecars.litestream.bundlePath,
+  pin.binary.bundlePath,
+  'Developer ID Litestream bundle path',
+)
+assertEqual(
+  distributionSigning.sidecars.litestream.component,
+  pin.component,
+  'Developer ID Litestream component',
+)
+assertEqual(
+  distributionSigning.sidecars.litestream.identifier,
+  'com.silo77.dara.sidecar.litestream',
+  'Developer ID Litestream requirement identifier',
+)
 
 assert(
   packageJson.scripts['release:stage-sidecars'].includes(
@@ -99,6 +116,8 @@ for (const contract of [
   'verify-compaction: true',
   'DARA_LITESTREAM_R2_ACCESS_KEY_ID',
   'DARA_LITESTREAM_R2_SECRET_ACCESS_KEY',
+  'EMBEDDED_DISTRIBUTION_SIGNING_POLICY',
+  'verify_distribution_signature',
 ]) {
   assert(rustContract.includes(contract), `Rust Litestream contract omits ${contract}`)
 }
@@ -142,6 +161,11 @@ for (const path of tracked) {
   assert(
     !normalized.endsWith('/.env.local') && !normalized.endsWith('.env.local'),
     `a local secret environment file is tracked: ${path}`,
+  )
+  assert(
+    !normalized.endsWith('/.env.notarization') &&
+      !normalized.endsWith('.env.notarization'),
+    `a local Apple notarization environment file is tracked: ${path}`,
   )
   assert(
     !normalized.startsWith('app/src-tauri/resources/release/'),

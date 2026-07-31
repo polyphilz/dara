@@ -38,6 +38,22 @@ that build.
 - exact embedding manifest, golden fixture, release manifest, and llama.cpp license resources;
 - no GGUF, browser/native test, Playwright, WDIO, or E2E resource.
 
+The public distribution path is a separate, stricter superset of these gates.
+`pnpm release:build:distribution` first verifies the exact unsigned sidecar
+hashes above, then signs the app and both sidecars with SILO77's Developer ID
+identity and hardened runtime. Because an Apple signature changes the Mach-O
+bytes, the installed Litestream runtime accepts either the exact upstream hash
+or its exact Dara sidecar identifier signed by the pinned SILO77 certificate
+and team. The command notarizes and staples both the app and final DMG, mounts
+the DMG, and runs the package, stapler, and Gatekeeper checks against the copy
+users will install.
+
+The distribution command owns Apple submission polling rather than delegating
+an uninterruptible wait to Tauri. It records each submission ID and exact
+upload SHA-256 beneath the ignored release bundle directory. Transient status
+and stapling failures are retried, and `pnpm release:resume:distribution`
+continues those saved submissions without rebuilding or uploading again.
+
 ## Isolated runtime smoke
 
 The packaged app was launched against

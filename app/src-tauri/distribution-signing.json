@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "application": {
+    "bundleIdentifier": "com.silo77.dara",
+    "signingIdentity": "Developer ID Application: SILO77 LLC (PMZH6ULML8)",
+    "teamIdentifier": "PMZH6ULML8"
+  },
+  "sidecars": {
+    "llamaServer": {
+      "component": "llama-server",
+      "identifier": "com.silo77.dara.sidecar.llama-server",
+      "stagingPath": "src-tauri/resources/release/bin/llama-server",
+      "bundlePath": "bin/llama-server",
+      "pinManifestPath": "src-tauri/resources/release/llama-server.json"
+    },
+    "litestream": {
+      "component": "litestream",
+      "identifier": "com.silo77.dara.sidecar.litestream",
+      "stagingPath": "src-tauri/resources/release/bin/litestream",
+      "bundlePath": "bin/litestream",
+      "pinManifestPath": "src-tauri/resources/sidecars/litestream-v1.json"
+    }
+  }
+}

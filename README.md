@@ -126,15 +126,24 @@ The staged files are explicit Tauri resources. Build the ad-hoc `.app` from `app
 pnpm release:build:app
 ```
 
+After configuring the Apple credentials described in
+[`docs/RELEASE.md`](docs/RELEASE.md), build the Developer ID signed, hardened,
+notarized, and stapled public DMG with:
+
+```sh
+pnpm release:build:distribution
+```
+
 See [`docs/RELEASE.md`](docs/RELEASE.md) for the complete versioning, build,
 installation, smoke-check, and tagging procedure.
 
 See [`docs/OFFSITE_BACKUP.md`](docs/OFFSITE_BACKUP.md) for plain-language R2
 setup, privacy, recovery, and decommissioning guidance.
 
-This personal-v1 command targets arm64 macOS 14 or newer. It intentionally rebuilds and rechecks
-the sidecar before packaging. The GGUF remains outside the `.app` and is downloaded and verified
-under Dara's data directory on first semantic use.
+Both release commands target arm64 macOS 14 or newer and intentionally rebuild
+and recheck the sidecars before packaging. The GGUF remains outside the `.app`
+and is downloaded and verified under Dara's data directory on first semantic
+use.
 
 ### Compatibility check
 
