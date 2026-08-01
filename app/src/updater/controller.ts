@@ -10,6 +10,12 @@ const UPDATE_DISMISSAL_STORAGE_KEY = 'dara.updater.dismissal.v1'
 const AUTOMATIC_CHECK_INITIAL_DELAY_MS = 5_000
 const AUTOMATIC_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1_000
 const DISMISSAL_DURATION_MS = 24 * 60 * 60 * 1_000
+const CHECK_BLOCKING_PHASES: ReadonlySet<UpdatePhase> = new Set([
+  UpdatePhase.Checking,
+  UpdatePhase.Available,
+  UpdatePhase.Downloading,
+  UpdatePhase.Installing,
+])
 
 interface DismissalRecord {
   version: string
@@ -139,10 +145,9 @@ export class UpdateController {
           ...progress,
         })
       })
-      if (operationId !== this.operationId) {
-        return
+      if (operationId === this.operationId) {
+        this.publish({ phase: UpdatePhase.Installing, update })
       }
-      this.publish({ phase: UpdatePhase.Installing, update })
       await this.gateway.relaunch()
     } catch (error) {
       if (operationId === this.operationId) {
@@ -152,11 +157,7 @@ export class UpdateController {
   }
 
   private async check(origin: UpdateCheckOrigin): Promise<void> {
-    if (
-      this.state.phase === UpdatePhase.Checking ||
-      this.state.phase === UpdatePhase.Downloading ||
-      this.state.phase === UpdatePhase.Installing
-    ) {
+    if (CHECK_BLOCKING_PHASES.has(this.state.phase)) {
       return
     }
     const operationId = ++this.operationId

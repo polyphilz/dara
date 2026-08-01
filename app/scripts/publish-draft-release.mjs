@@ -28,7 +28,6 @@ const artifactPaths = [
 for (const artifactPath of artifactPaths) {
   assert(existsSync(artifactPath), `release artifact is missing: ${artifactPath}`)
 }
-verifyReleaseMetadata(releaseRoot, version)
 
 assert(
   run('git', ['status', '--porcelain'], { capture: true }).length === 0,
@@ -38,11 +37,13 @@ assert(
   run('git', ['branch', '--show-current'], { capture: true }) === 'main',
   'draft releases must be created from main',
 )
+const sourceCommit = run('git', ['rev-parse', 'HEAD'], { capture: true })
 assert(
-  run('git', ['rev-parse', 'HEAD'], { capture: true }) ===
+  sourceCommit ===
     run('git', ['rev-parse', 'origin/main'], { capture: true }),
   'main must match origin/main before creating a draft release',
 )
+verifyReleaseMetadata(releaseRoot, version, sourceCommit)
 assert(
   run('git', ['tag', '--list', tag], { capture: true }) === tag,
   `${tag} must exist locally before creating the draft release`,
@@ -53,7 +54,7 @@ assert(
 )
 assert(
   run('git', ['rev-list', '-n', '1', tag], { capture: true }) ===
-    run('git', ['rev-parse', 'HEAD'], { capture: true }),
+    sourceCommit,
   `${tag} must point to the current main commit`,
 )
 const remoteTag = run('git', [
@@ -63,7 +64,7 @@ const remoteTag = run('git', [
   `refs/tags/${tag}^{}`,
 ], { capture: true }).split(/\s/u)[0]
 assert(
-  remoteTag === run('git', ['rev-parse', 'HEAD'], { capture: true }),
+  remoteTag === sourceCommit,
   `${tag} must be pushed to origin at the current main commit`,
 )
 
@@ -84,12 +85,20 @@ console.info(
   `Draft ${tag} created with ${artifactPaths.map(basename).join(', ')}.`,
 )
 
-function verifyReleaseMetadata(root, expectedVersion) {
+function verifyReleaseMetadata(root, expectedVersion, expectedSourceCommit) {
   const archiveName = `Dara_${expectedVersion}_aarch64.app.tar.gz`
   const signature = readFileSync(resolve(root, `${archiveName}.sig`), 'utf8').trim()
   const manifest = JSON.parse(readFileSync(resolve(root, 'latest.json'), 'utf8'))
   const platform = manifest.platforms?.['darwin-aarch64']
   assert(manifest.version === expectedVersion, 'latest.json has the wrong version')
+  assert(
+    manifest.source?.commit === expectedSourceCommit,
+    'release artifacts were built from a different source commit',
+  )
+  assert(
+    manifest.source?.dirty === false,
+    'release artifacts were built from a dirty worktree',
+  )
   assert(platform?.signature === signature, 'latest.json has the wrong signature')
   assert(
     platform?.url ===

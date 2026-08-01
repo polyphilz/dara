@@ -14,6 +14,9 @@ const releaseConfigPath = 'src-tauri/tauri.release.conf.json'
 const packagePath = 'package.json'
 const rustContractPath = 'src-tauri/src/backup/litestream.rs'
 const distributionBuildPath = 'scripts/build-notarized-distribution.mjs'
+const releaseArtifactPath = 'scripts/create-release-artifacts.mjs'
+const draftReleasePath = 'scripts/publish-draft-release.mjs'
+const updaterSigningPath = 'scripts/updater-signing.mjs'
 const canaryWorkflowPath = '../.github/workflows/litestream-r2-canary.yml'
 
 const pin = readJson(pinPath)
@@ -22,6 +25,9 @@ const releaseConfig = readJson(releaseConfigPath)
 const packageJson = readJson(packagePath)
 const rustContract = readFileSync(rustContractPath, 'utf8')
 const distributionBuild = readFileSync(distributionBuildPath, 'utf8')
+const releaseArtifacts = readFileSync(releaseArtifactPath, 'utf8')
+const draftRelease = readFileSync(draftReleasePath, 'utf8')
+const updaterSigning = readFileSync(updaterSigningPath, 'utf8')
 const distributionSigning = readDistributionSigningPolicy()
 const litestreamSigningPolicy =
   distributionSigning.sidecars[DistributionSidecarKey.Litestream]
@@ -39,6 +45,21 @@ assertEqual(
   pin.verification.requiredL0Retention,
   '720h',
   'exact-TXID retention',
+)
+assert(
+  updaterSigning.includes("'verify-updater-signature'") &&
+    updaterSigning.includes('verifyUpdaterSigningCredentials'),
+  'release artifacts do not verify the updater signature',
+)
+assert(
+  packageJson.scripts['release:build:app'].includes(
+    'release:stage-provenance',
+  ) &&
+    distributionBuild.includes('release:stage-provenance') &&
+    releaseArtifacts.includes('readPackagedSourceProvenance') &&
+    draftRelease.includes('manifest.source?.commit') &&
+    draftRelease.includes('manifest.source?.dirty === false'),
+  'release artifacts are not bound to a clean source commit',
 )
 for (const [name, value] of Object.entries(pin.verification)) {
   if (typeof value === 'boolean') {
@@ -115,13 +136,14 @@ for (const command of [
   )
 }
 assert(
-  packageJson.scripts['release:build:app'].includes(
-    'VITE_DARA_UPDATER_ENABLED=true',
+  !packageJson.scripts['release:build:app'].includes(
+    'VITE_DARA_UPDATER_ENABLED',
   ),
-  'release application build does not enable the updater frontend',
+  'ad-hoc release application unexpectedly enables the updater frontend',
 )
 assert(
-  distributionBuild.includes("VITE_DARA_UPDATER_ENABLED: 'true'"),
+  distributionBuild.includes('release:verify-updater-signing') &&
+    distributionBuild.includes("VITE_DARA_UPDATER_ENABLED: 'true'"),
   'notarized distribution build does not enable the updater frontend',
 )
 assert(

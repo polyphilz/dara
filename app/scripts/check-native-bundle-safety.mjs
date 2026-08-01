@@ -85,6 +85,7 @@ const requiredResources = {
   'resources/release/bin/litestream': 'bin/litestream',
   'resources/release/llama-server.json': 'release/llama-server.json',
   'resources/release/litestream.json': 'release/litestream.json',
+  'resources/release/source.json': 'release/source.json',
   'resources/release/licenses/llama.cpp-LICENSE':
     'licenses/llama.cpp-LICENSE',
   'resources/release/licenses/litestream-LICENSE':
@@ -162,8 +163,10 @@ if (
 for (const command of [
   'release:verify-contracts',
   'release:stage-sidecars',
+  'release:stage-provenance',
   'release:verify-resources',
   'release:sign-sidecars',
+  'release:verify-updater-signing',
   'release:verify-distribution',
 ]) {
   const scripts = JSON.stringify(packageJson.scripts)

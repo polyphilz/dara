@@ -1,31 +1,25 @@
 import { createHash } from 'node:crypto'
 import {
-  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
-  realpathSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, relative, resolve, sep } from 'node:path'
+import { basename, dirname, resolve } from 'node:path'
 
 import { assert, assertEqual, run } from './distribution-signing.mjs'
 import { readReleaseVersion } from './release-version.mjs'
+import {
+  preflightUpdaterCredentials,
+  signUpdaterArchive,
+  takeUpdaterEnvironment,
+  verifyUpdaterArchiveSignature,
+} from './updater-signing.mjs'
 
-const UpdaterEnvironmentVariable = Object.freeze({
-  PrivateKeyPassword: 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
-  PrivateKeyPath: 'TAURI_SIGNING_PRIVATE_KEY_PATH',
-})
-const updaterEnvironmentPath = resolve('.env.updater')
-const repositoryRoot = resolve('..')
 const releaseRoot = resolve('src-tauri/target/release/bundle/release')
-
-if (existsSync(updaterEnvironmentPath)) {
-  process.loadEnvFile(updaterEnvironmentPath)
-}
+const tauriConfigPath = resolve('src-tauri/tauri.conf.json')
 
 const scriptArguments = process.argv.slice(2)
 if (scriptArguments[0] === '--') {
@@ -66,9 +60,15 @@ const checksumsPath = resolve(releaseRoot, 'SHA256SUMS')
 copyFileSync(diskImagePath, diskImageReleasePath)
 createUpdaterArchive(applicationPath, updaterArchivePath)
 signUpdaterArchive(updaterArchivePath, updaterCredentials)
+verifyUpdaterArchiveSignature(
+  updaterArchivePath,
+  updaterSignaturePath,
+  tauriConfigPath,
+)
 
 const signature = readFileSync(updaterSignaturePath, 'utf8').trim()
 assert(signature.length > 0, 'the updater signature is empty')
+const source = readPackagedSourceProvenance(applicationPath)
 writeFileSync(
   manifestPath,
   `${JSON.stringify(
@@ -76,6 +76,7 @@ writeFileSync(
       version,
       notes: `See the Dara v${version} release notes on GitHub.`,
       pub_date: new Date().toISOString(),
+      source,
       platforms: {
         'darwin-aarch64': {
           signature,
@@ -105,54 +106,12 @@ writeFileSync(
 
 console.info(`Release artifacts passed: ${releaseRoot}`)
 
-function takeUpdaterEnvironment() {
-  const values = Object.fromEntries(
-    Object.values(UpdaterEnvironmentVariable).map((name) => [
-      name,
-      process.env[name]?.trim(),
-    ]),
-  )
-  for (const name of Object.values(UpdaterEnvironmentVariable)) {
-    delete process.env[name]
-  }
-  const value = (name) => {
-    const result = values[name]
-    assert(
-      result,
-      `${name} is required; copy .env.updater.example to .env.updater`,
-    )
-    return result
-  }
-  return {
-    privateKeyPassword: value(
-      UpdaterEnvironmentVariable.PrivateKeyPassword,
-    ),
-    privateKeyPath: resolve(value(UpdaterEnvironmentVariable.PrivateKeyPath)),
-  }
-}
-
 function preflight(applicationPath_, diskImagePath_, credentials) {
   assert(process.platform === 'darwin', 'release artifacts require macOS')
   assert(process.arch === 'arm64', 'release artifacts require arm64 macOS')
   assert(existsSync(applicationPath_), `application is missing: ${applicationPath_}`)
   assert(existsSync(diskImagePath_), `disk image is missing: ${diskImagePath_}`)
-  assert(
-    existsSync(credentials.privateKeyPath),
-    `updater private key is missing: ${credentials.privateKeyPath}`,
-  )
-  assert(
-    statSync(credentials.privateKeyPath).isFile(),
-    'updater private key is not a regular file',
-  )
-  const privateKeyPath = realpathSync(credentials.privateKeyPath)
-  const relativeKeyPath = relative(realpathSync(repositoryRoot), privateKeyPath)
-  assert(
-    relativeKeyPath === '..' || relativeKeyPath.startsWith(`..${sep}`),
-    'updater private key must be stored outside the Dara repository',
-  )
-  if ((statSync(privateKeyPath).mode & 0o077) !== 0) {
-    chmodSync(privateKeyPath, 0o600)
-  }
+  preflightUpdaterCredentials(credentials)
   assertEqual(
     run('/usr/libexec/PlistBuddy', [
       '-c',
@@ -186,27 +145,25 @@ function createUpdaterArchive(applicationPath_, archivePath) {
   )
 }
 
-function signUpdaterArchive(archivePath, credentials) {
-  run('pnpm', [
-    'exec',
-    'tauri',
-    'signer',
-    'sign',
-    '--private-key-path',
-    credentials.privateKeyPath,
-    archivePath,
-  ], {
-    env: {
-      ...process.env,
-      [UpdaterEnvironmentVariable.PrivateKeyPassword]:
-        credentials.privateKeyPassword,
-    },
-    stdio: 'inherit',
-  })
-  assert(
-    existsSync(`${archivePath}.sig`),
-    `updater signature was not created: ${archivePath}.sig`,
+function readPackagedSourceProvenance(applicationPath_) {
+  const provenancePath = resolve(
+    applicationPath_,
+    'Contents/Resources/release/source.json',
   )
+  assert(
+    existsSync(provenancePath),
+    `packaged release provenance is missing: ${provenancePath}`,
+  )
+  const provenance = JSON.parse(readFileSync(provenancePath, 'utf8'))
+  assert(
+    /^[a-f0-9]{40}$/u.test(provenance.commit),
+    'packaged source commit is invalid',
+  )
+  assert(
+    typeof provenance.dirty === 'boolean',
+    'packaged source dirty state is invalid',
+  )
+  return provenance
 }
 
 function sha256File(path) {

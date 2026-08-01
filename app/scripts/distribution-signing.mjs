@@ -116,10 +116,11 @@ export function signatureFields(signature, field) {
 }
 
 export function run(command, arguments_, options = {}) {
+  const { capture = false, ...spawnOptions } = options
   const result = spawnSync(command, arguments_, {
     encoding: 'utf8',
-    stdio: options.capture ? 'pipe' : undefined,
-    ...options,
+    stdio: capture ? 'pipe' : undefined,
+    ...spawnOptions,
   })
   if (result.error) {
     throw result.error
@@ -135,7 +136,9 @@ export function run(command, arguments_, options = {}) {
       `${command} failed with exit code ${result.status ?? 'unknown'}`,
     )
   }
-  return `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
+  return capture
+    ? `${result.stdout ?? ''}`.trim()
+    : `${result.stdout ?? ''}${result.stderr ?? ''}`.trim()
 }
 
 export function assertEqual(actual, expected, label) {

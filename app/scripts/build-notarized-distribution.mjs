@@ -57,6 +57,7 @@ assert(
 const resume = arguments_.includes(ResumeArgument)
 const policy = readDistributionSigningPolicy()
 const notarization = takeNotarizationEnvironment()
+run('pnpm', ['release:verify-updater-signing'], { stdio: 'inherit' })
 preflight(notarization, policy)
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
@@ -157,6 +158,7 @@ console.info(`Notarized distribution passed: ${dmgPath}`)
 function buildSignedApplication(signingPolicy) {
   run('pnpm', ['release:verify-contracts'], { stdio: 'inherit' })
   run('pnpm', ['release:stage-sidecars'], { stdio: 'inherit' })
+  run('pnpm', ['release:stage-provenance'], { stdio: 'inherit' })
   run('pnpm', ['release:verify-resources'], { stdio: 'inherit' })
   run('pnpm', ['release:sign-sidecars'], { stdio: 'inherit' })
 

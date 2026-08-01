@@ -279,7 +279,9 @@ pnpm release:build:distribution
 ```
 
 The command performs the normal pin, license, CPU, Metal, and resource checks
-before any signing. It then:
+before any signing. It validates the updater private-key path, password, and
+match with Dara's embedded public key before starting the expensive build or
+submitting anything to Apple. It then:
 
 1. signs `llama-server` and Litestream with fixed Dara sidecar identifiers,
    the SILO77 Developer ID identity, secure timestamps, and hardened runtime;
@@ -325,6 +327,12 @@ The updater archive is deliberately created after Apple accepts and Dara
 staples the application. Never substitute an earlier Tauri-generated archive:
 Apple signing and stapling modify the bundle, so an archive made before those
 steps is not the final application users should install.
+
+Artifact creation verifies the updater archive and signature with the exact
+public key embedded in Dara. It also records the source commit and whether the
+worktree was dirty in `latest.json`. Draft publication rejects artifacts from
+a different commit or a dirty build, preventing an old same-version bundle
+from being attached to a newer source tag.
 
 Submission state is kept beneath
 `app/src-tauri/target/release/bundle/notarization/`. Status checks retry
@@ -524,7 +532,8 @@ that exact recovery.
 Only artifacts produced by `pnpm release:build:distribution` are supported for
 public distribution or automatic updates. The faster
 `pnpm release:build:app` output remains ad-hoc signed and is for local
-installation and acceptance only.
+installation and acceptance only; its updater frontend is disabled so it
+cannot replace itself with a published production build.
 
 The distribution command deliberately composes with, rather than replaces,
 the existing sidecar and model-verification gates. GitHub Actions may continue

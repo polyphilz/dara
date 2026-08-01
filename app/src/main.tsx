@@ -37,11 +37,13 @@ async function bootstrap() {
   }
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
-      <AppUpdater />
       {context.mode === ApplicationLaunchMode.Recovery ? (
         <RecoveryWindow />
       ) : (
-        <MainWindow history={mainWindowHistory} />
+        <>
+          <AppUpdater />
+          <MainWindow history={mainWindowHistory} />
+        </>
       )}
     </StrictMode>,
   )

@@ -108,6 +108,43 @@ test('installs the checked update and relaunches after download', async () => {
   })
 })
 
+test('relaunches after an installed update even when the controller stops', async () => {
+  let finishInstallation: (() => void) | undefined
+  gateway.check.mockResolvedValue(availableUpdate)
+  gateway.downloadAndInstall.mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        finishInstallation = resolve
+      }),
+  )
+  const controller = new UpdateController(gateway)
+
+  await controller.checkManually()
+  const installation = controller.installAndRestart()
+  controller.stop()
+  finishInstallation?.()
+  await installation
+
+  expect(gateway.relaunch).toHaveBeenCalledTimes(1)
+})
+
+test('automatic checks preserve an available update prompt', async () => {
+  gateway.check.mockResolvedValueOnce(availableUpdate)
+  const controller = new UpdateController(gateway)
+
+  await controller.checkManually()
+  gateway.check.mockRejectedValue(new Error('GitHub is unavailable'))
+  controller.start()
+  await act(async () => vi.advanceTimersByTimeAsync(5_000))
+
+  expect(gateway.check).toHaveBeenCalledTimes(1)
+  expect(controller.getSnapshot()).toEqual({
+    phase: UpdatePhase.Available,
+    update: availableUpdate,
+  })
+  controller.stop()
+})
+
 test('automatic failures stay quiet while manual failures are actionable', async () => {
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
   gateway.check.mockRejectedValue(new Error('GitHub is unavailable'))
