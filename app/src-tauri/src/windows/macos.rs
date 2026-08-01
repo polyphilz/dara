@@ -27,8 +27,9 @@ use crate::{
     database::{
         commands::{run_writer, CommandError, CommandResult},
         validate_complete_bindings, AdoptLegacyZoomInput, DaraCommand, Database, KeyboardBinding,
-        SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
-        DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
+        SetAppearanceInput, SetAutomaticUpdateChecksInput, SetKeyboardBindingsInput,
+        SetZoomPercentInput, StoredSettings, DEFAULT_HOME_ACCELERATOR,
+        DEFAULT_QUICK_ADD_ACCELERATOR,
     },
     recovery_startup::{ApplicationLaunchContext, ApplicationLaunchMode},
 };
@@ -705,6 +706,19 @@ pub async fn set_appearance(
 ) -> CommandResult<SettingsSnapshot> {
     let client = database.client();
     let stored = run_writer(move || client.set_appearance(input)).await?;
+    let snapshot = settings_snapshot(&app, stored);
+    emit_settings(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn set_automatic_update_checks(
+    app: AppHandle,
+    database: State<'_, Database>,
+    input: SetAutomaticUpdateChecksInput,
+) -> CommandResult<SettingsSnapshot> {
+    let client = database.client();
+    let stored = run_writer(move || client.set_automatic_update_checks(input)).await?;
     let snapshot = settings_snapshot(&app, stored);
     emit_settings(&app, &snapshot);
     Ok(snapshot)

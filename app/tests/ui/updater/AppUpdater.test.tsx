@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   listen: vi.fn(),
+  loadSettings: vi.fn(),
   tauriEnvironment: false,
 }))
 
@@ -14,8 +15,17 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: mocks.listen,
 }))
 
+vi.mock('../../../src/settings/index.ts', () => ({
+  tauriSettingsGateway: {
+    loadSettings: mocks.loadSettings,
+  },
+}))
+
 beforeEach(() => {
   mocks.listen.mockResolvedValue(vi.fn())
+  mocks.loadSettings.mockResolvedValue({
+    automaticUpdateChecksEnabled: true,
+  })
 })
 
 afterEach(() => {
@@ -37,7 +47,8 @@ test('registers manual update listeners in Tauri when automatic updates are disa
 
   render(<AppUpdater />)
 
-  await waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(1))
+  await waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(2))
+  expect(mocks.loadSettings).toHaveBeenCalledTimes(1)
 })
 
 test('enables updates only for an explicitly marked Tauri release', async () => {

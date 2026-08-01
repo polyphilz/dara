@@ -144,6 +144,36 @@ test('launch-at-login applies through the system-backed settings command', async
   })
 })
 
+test('explains and persists the automatic update schedule', async () => {
+  const fixture = settingsFixture()
+  const { findByRole, getByText } = renderSettings(
+    fixture.gateway,
+    schedulerFixture(fixture),
+  )
+
+  const toggle = await findByRole('switch', {
+    name: 'Automatically check for updates',
+  })
+  expect((toggle as HTMLButtonElement).getAttribute('aria-checked')).toBe('true')
+  expect(
+    getByText(
+      /asks GitHub for the latest release shortly after launch and every 6 hours/u,
+    ),
+  ).toBeTruthy()
+
+  fireEvent.click(toggle)
+
+  await waitFor(() => {
+    expect(fixture.gateway.setAutomaticUpdateChecks).toHaveBeenCalledWith(
+      1,
+      false,
+    )
+    expect((toggle as HTMLButtonElement).getAttribute('aria-checked')).toBe(
+      'false',
+    )
+  })
+})
+
 test('disables sibling settings for the full backup operation', async () => {
   const fixture = settingsFixture()
   const schedulerGateway = schedulerFixture(fixture)
@@ -287,6 +317,7 @@ type MockBackupGateway = OffsiteBackupGateway & {
 function settingsFixture(): SettingsFixture {
   const current: SettingsSnapshot = {
     appearance: Appearance.System,
+    automaticUpdateChecksEnabled: true,
     desiredRetention: 0.9,
     keyboardBindings: [
       {
@@ -309,6 +340,13 @@ function settingsFixture(): SettingsFixture {
     adoptLegacyZoom: vi.fn(),
     loadSettings: vi.fn(async () => structuredClone(current)),
     setAppearance: vi.fn(),
+    setAutomaticUpdateChecks: vi.fn(
+      async (_expectedRevision: number, enabled: boolean) => {
+        current.automaticUpdateChecksEnabled = enabled
+        current.revision += 1
+        return structuredClone(current)
+      },
+    ),
     setKeyboardBindings: vi.fn(),
     setLaunchAtLogin: vi.fn(async (enabled: boolean) => {
       current.launchAtLogin = enabled

@@ -11,6 +11,8 @@ const pinPath = 'src-tauri/resources/sidecars/litestream-v1.json'
 const noticePath = 'src-tauri/resources/sidecars/litestream-NOTICE'
 const baseConfigPath = 'src-tauri/tauri.conf.json'
 const releaseConfigPath = 'src-tauri/tauri.release.conf.json'
+const mainCapabilityPath = 'src-tauri/capabilities/main.json'
+const updaterCapabilityPath = 'src-tauri/capabilities/main-updater.json'
 const packagePath = 'package.json'
 const rustContractPath = 'src-tauri/src/backup/litestream.rs'
 const distributionBuildPath = 'scripts/build-notarized-distribution.mjs'
@@ -22,6 +24,8 @@ const canaryWorkflowPath = '../.github/workflows/litestream-r2-canary.yml'
 const pin = readJson(pinPath)
 const baseConfig = readJson(baseConfigPath)
 const releaseConfig = readJson(releaseConfigPath)
+const mainCapability = readJson(mainCapabilityPath)
+const updaterCapability = readJson(updaterCapabilityPath)
 const packageJson = readJson(packagePath)
 const rustContract = readFileSync(rustContractPath, 'utf8')
 const distributionBuild = readFileSync(distributionBuildPath, 'utf8')
@@ -47,7 +51,7 @@ assertEqual(
   'exact-TXID retention',
 )
 assert(
-  updaterSigning.includes("'verify-updater-signature'") &&
+  updaterSigning.includes('verifyUpdaterArchiveSignature') &&
     updaterSigning.includes('verifyUpdaterSigningCredentials'),
   'release artifacts do not verify the updater signature',
 )
@@ -143,8 +147,44 @@ assert(
 )
 assert(
   distributionBuild.includes('release:verify-updater-signing') &&
-    distributionBuild.includes("VITE_DARA_UPDATER_ENABLED: 'true'"),
+    distributionBuild.includes("VITE_DARA_UPDATER_ENABLED: 'true'") &&
+    distributionBuild.includes("'main-updater'"),
   'notarized distribution build does not enable the updater frontend',
+)
+for (const permission of [
+  'process:allow-restart',
+  'updater:allow-check',
+  'updater:allow-download-and-install',
+]) {
+  assert(
+    !mainCapability.permissions.includes(permission),
+    `ordinary main-window capability grants production updater permission: ${permission}`,
+  )
+  assert(
+    updaterCapability.permissions.includes(permission),
+    `production updater capability omits ${permission}`,
+  )
+}
+assert(
+  !baseConfig.app.security.capabilities.includes('main-updater'),
+  'ordinary builds unexpectedly grant the production updater capability',
+)
+for (const contract of [
+  "COPYFILE_DISABLE: '1'",
+  "'--no-mac-metadata'",
+  'verifyExtractedUpdaterArchive',
+  "'/usr/bin/codesign'",
+  "'/usr/sbin/spctl'",
+]) {
+  assert(
+    releaseArtifacts.includes(contract),
+    `updater archive validation omits ${contract}`,
+  )
+}
+assert(
+  updaterSigning.includes('scripts/updater-signature-verifier/Cargo.toml') &&
+    !updaterSigning.includes("'src-tauri/Cargo.toml'"),
+  'updater signature verification is not isolated from the application crate',
 )
 assert(
   typeof baseConfig.plugins?.updater?.pubkey === 'string' &&
@@ -225,7 +265,7 @@ for (const path of tracked) {
     `a local updater signing environment file is tracked: ${path}`,
   )
   assert(
-    !/\.(?:key|p8|p12|pfx|certsigningrequest)$/u.test(normalized),
+    !/\.(?:key|mobileprovision|p8|p12|pem|pfx|certsigningrequest)$/u.test(normalized),
     `a private signing credential is tracked: ${path}`,
   )
   assert(

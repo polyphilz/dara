@@ -16,6 +16,10 @@ const CHECK_BLOCKING_PHASES: ReadonlySet<UpdatePhase> = new Set([
   UpdatePhase.Downloading,
   UpdatePhase.Installing,
 ])
+const AUTOMATIC_CHECK_PRESERVED_PHASES: ReadonlySet<UpdatePhase> = new Set([
+  UpdatePhase.Current,
+  UpdatePhase.Error,
+])
 
 interface DismissalRecord {
   version: string
@@ -36,6 +40,7 @@ interface TimerScheduler {
 }
 
 export interface UpdateControllerOptions {
+  automaticChecksEnabled?: boolean
   enabled?: boolean
   now?: () => number
   scheduler?: TimerScheduler
@@ -52,15 +57,18 @@ export class UpdateController {
   private readonly now: () => number
   private readonly scheduler: TimerScheduler
   private readonly storage: UpdateStorage
+  private automaticChecksEnabled: boolean
   private initialCheckTimer: number | null = null
   private recurringCheckTimer: number | null = null
   private operationId = 0
+  private started = false
 
   constructor(
     gateway: UpdateGateway,
     options: UpdateControllerOptions = {},
   ) {
     this.gateway = gateway
+    this.automaticChecksEnabled = options.automaticChecksEnabled ?? true
     this.enabled = options.enabled ?? true
     this.now = options.now ?? Date.now
     this.scheduler = options.scheduler ?? window
@@ -75,12 +83,28 @@ export class UpdateController {
   }
 
   start(): () => void {
-    if (
-      !this.enabled ||
-      this.initialCheckTimer !== null ||
-      this.recurringCheckTimer !== null
-    ) {
+    if (!this.enabled || this.started) {
       return () => this.stop()
+    }
+    this.started = true
+    this.scheduleAutomaticChecks()
+    return () => this.stop()
+  }
+
+  setAutomaticChecksEnabled(enabled: boolean): void {
+    if (enabled === this.automaticChecksEnabled) {
+      return
+    }
+    this.automaticChecksEnabled = enabled
+    this.clearAutomaticCheckTimers()
+    if (this.started) {
+      this.scheduleAutomaticChecks()
+    }
+  }
+
+  private scheduleAutomaticChecks(): void {
+    if (!this.automaticChecksEnabled) {
+      return
     }
     this.initialCheckTimer = this.scheduler.setTimeout(() => {
       this.initialCheckTimer = null
@@ -89,10 +113,15 @@ export class UpdateController {
     this.recurringCheckTimer = this.scheduler.setInterval(() => {
       void this.check(UpdateCheckOrigin.Automatic)
     }, AUTOMATIC_CHECK_INTERVAL_MS)
-    return () => this.stop()
   }
 
   stop(): void {
+    this.started = false
+    this.clearAutomaticCheckTimers()
+    this.operationId += 1
+  }
+
+  private clearAutomaticCheckTimers(): void {
     if (this.initialCheckTimer !== null) {
       this.scheduler.clearTimeout(this.initialCheckTimer)
       this.initialCheckTimer = null
@@ -101,7 +130,6 @@ export class UpdateController {
       this.scheduler.clearInterval(this.recurringCheckTimer)
       this.recurringCheckTimer = null
     }
-    this.operationId += 1
   }
 
   async checkManually(): Promise<void> {
@@ -116,6 +144,9 @@ export class UpdateController {
   }
 
   dismiss(): void {
+    if (this.state.phase === UpdatePhase.Checking) {
+      this.operationId += 1
+    }
     if (this.state.phase === UpdatePhase.Available) {
       this.writeDismissal(this.state.update.version)
     }
@@ -157,7 +188,11 @@ export class UpdateController {
   }
 
   private async check(origin: UpdateCheckOrigin): Promise<void> {
-    if (CHECK_BLOCKING_PHASES.has(this.state.phase)) {
+    if (
+      CHECK_BLOCKING_PHASES.has(this.state.phase) ||
+      (origin === UpdateCheckOrigin.Automatic &&
+        AUTOMATIC_CHECK_PRESERVED_PHASES.has(this.state.phase))
+    ) {
       return
     }
     const operationId = ++this.operationId
@@ -206,7 +241,11 @@ export class UpdateController {
       return false
     }
     if (dismissal.until <= this.now()) {
-      this.storage.removeItem(UPDATE_DISMISSAL_STORAGE_KEY)
+      try {
+        this.storage.removeItem(UPDATE_DISMISSAL_STORAGE_KEY)
+      } catch {
+        // A stale dismissal should never prevent a new update notification.
+      }
       return false
     }
     return dismissal.version === update.version
@@ -229,13 +268,17 @@ export class UpdateController {
   }
 
   private writeDismissal(version: string): void {
-    this.storage.setItem(
-      UPDATE_DISMISSAL_STORAGE_KEY,
-      JSON.stringify({
-        version,
-        until: this.now() + DISMISSAL_DURATION_MS,
-      } satisfies DismissalRecord),
-    )
+    try {
+      this.storage.setItem(
+        UPDATE_DISMISSAL_STORAGE_KEY,
+        JSON.stringify({
+          version,
+          until: this.now() + DISMISSAL_DURATION_MS,
+        } satisfies DismissalRecord),
+      )
+    } catch {
+      console.warn('Could not remember the dismissed Dara update')
+    }
   }
 
   private fail(error: unknown): void {

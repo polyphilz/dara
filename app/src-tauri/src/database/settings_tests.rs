@@ -4,8 +4,9 @@ use super::{
     initialize,
     settings::{Appearance, KeyboardBindingInput},
     AdoptLegacyZoomInput, DaraCommand, Database, DatabaseError, DatabasePaths,
-    InitializationOptions, SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput,
-    DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
+    InitializationOptions, SetAppearanceInput, SetAutomaticUpdateChecksInput,
+    SetKeyboardBindingsInput, SetZoomPercentInput, DEFAULT_HOME_ACCELERATOR,
+    DEFAULT_QUICK_ADD_ACCELERATOR,
 };
 
 fn test_database() -> (TempDir, Database) {
@@ -28,6 +29,7 @@ fn settings_defaults_are_complete_and_typed() {
 
     assert_eq!(settings.revision, 1);
     assert_eq!(settings.appearance, Appearance::System);
+    assert!(settings.automatic_update_checks_enabled);
     assert_eq!(settings.zoom_percent, 100);
     assert!(!settings.legacy_zoom_migrated);
     assert_eq!(settings.desired_retention, 0.9);
@@ -54,6 +56,14 @@ fn scalar_settings_advance_the_revision_and_reject_stale_writes() {
     assert_eq!(dark.revision, initial.revision + 1);
     assert_eq!(dark.appearance, Appearance::Dark);
 
+    let automatic_checks_disabled = database
+        .set_automatic_update_checks(SetAutomaticUpdateChecksInput {
+            expected_revision: dark.revision,
+            enabled: false,
+        })
+        .expect("disable automatic update checks");
+    assert!(!automatic_checks_disabled.automatic_update_checks_enabled);
+
     let stale = database.set_zoom_percent(SetZoomPercentInput {
         expected_revision: initial.revision,
         zoom_percent: 120,
@@ -66,7 +76,7 @@ fn scalar_settings_advance_the_revision_and_reject_stale_writes() {
 
     let zoomed = database
         .set_zoom_percent(SetZoomPercentInput {
-            expected_revision: dark.revision,
+            expected_revision: automatic_checks_disabled.revision,
             zoom_percent: 120,
         })
         .expect("zoom update");

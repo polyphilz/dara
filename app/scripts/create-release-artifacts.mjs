@@ -3,11 +3,13 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs'
-import { basename, dirname, resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
 
 import { assert, assertEqual, run } from './distribution-signing.mjs'
 import { readReleaseVersion } from './release-version.mjs'
@@ -127,14 +129,22 @@ function createUpdaterArchive(applicationPath_, archivePath) {
   mkdirSync(dirname(archivePath), { recursive: true })
   rmSync(archivePath, { force: true })
   rmSync(`${archivePath}.sig`, { force: true })
-  run('tar', [
+  const archiveEnvironment = {
+    ...process.env,
+    COPYFILE_DISABLE: '1',
+  }
+  run('/usr/bin/tar', [
+    '--no-mac-metadata',
     '-czf',
     archivePath,
     '-C',
     dirname(applicationPath_),
     basename(applicationPath_),
-  ], { stdio: 'inherit' })
-  const entries = run('tar', ['-tzf', archivePath], { capture: true })
+  ], { env: archiveEnvironment, stdio: 'inherit' })
+  const entries = run('/usr/bin/tar', [
+    '-tzf',
+    archivePath,
+  ], { capture: true, env: archiveEnvironment })
     .split(/\r?\n/u)
     .filter(Boolean)
   const root = `${basename(applicationPath_)}/`
@@ -143,6 +153,56 @@ function createUpdaterArchive(applicationPath_, archivePath) {
     entries.every((entry) => entry === basename(applicationPath_) || entry.startsWith(root)),
     'the updater archive contains a path outside Dara.app',
   )
+  assert(
+    entries.every(
+      (entry) => !entry.split('/').some((component) => component.startsWith('._')),
+    ),
+    'the updater archive contains macOS AppleDouble metadata',
+  )
+  verifyExtractedUpdaterArchive(archivePath, applicationPath_, archiveEnvironment)
+}
+
+function verifyExtractedUpdaterArchive(
+  archivePath,
+  applicationPath_,
+  archiveEnvironment,
+) {
+  const extractionDirectory = mkdtempSync(
+    join(tmpdir(), 'dara-updater-extraction-'),
+  )
+  const extractedApplicationPath = join(
+    extractionDirectory,
+    basename(applicationPath_),
+  )
+  try {
+    run('/usr/bin/tar', [
+      '--no-mac-metadata',
+      '-xzf',
+      archivePath,
+      '-C',
+      extractionDirectory,
+    ], { env: archiveEnvironment, stdio: 'inherit' })
+    assert(
+      existsSync(extractedApplicationPath),
+      'the updater archive did not extract Dara.app',
+    )
+    run('/usr/bin/codesign', [
+      '--verify',
+      '--deep',
+      '--strict',
+      '--verbose=2',
+      extractedApplicationPath,
+    ], { stdio: 'inherit' })
+    run('/usr/sbin/spctl', [
+      '--assess',
+      '--type',
+      'execute',
+      '--verbose=4',
+      extractedApplicationPath,
+    ], { stdio: 'inherit' })
+  } finally {
+    rmSync(extractionDirectory, { recursive: true, force: true })
+  }
 }
 
 function readPackagedSourceProvenance(applicationPath_) {

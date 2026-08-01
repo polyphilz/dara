@@ -44,3 +44,26 @@ test('uses Dara buttons for installing or deferring an update', async () => {
   )
   expect(queryByRole('alert')).toBeNull()
 })
+
+test('formats gigabyte-scale update progress clearly', () => {
+  const controller = new UpdateController({
+    check: vi.fn().mockResolvedValue(null),
+    downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+    relaunch: vi.fn().mockResolvedValue(undefined),
+  })
+  const { getByRole } = render(
+    <UpdateNotification
+      controller={controller}
+      state={{
+        phase: UpdatePhase.Downloading,
+        update: availableUpdate,
+        downloadedBytes: 1_073_741_824,
+        totalBytes: 2_147_483_648,
+      }}
+    />,
+  )
+
+  expect(getByRole('status').textContent).toContain(
+    '50% · 1.0 GB of 2.0 GB',
+  )
+})

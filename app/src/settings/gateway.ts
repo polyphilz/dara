@@ -10,6 +10,10 @@ export interface SettingsGateway {
   adoptLegacyZoom(expectedRevision: number, zoomPercent: number): Promise<SettingsSnapshot>
   loadSettings(): Promise<SettingsSnapshot>
   setAppearance(expectedRevision: number, appearance: Appearance): Promise<SettingsSnapshot>
+  setAutomaticUpdateChecks(
+    expectedRevision: number,
+    enabled: boolean,
+  ): Promise<SettingsSnapshot>
   setKeyboardBindings(
     expectedRevision: number,
     keyboardBindings: KeyboardBinding[],
@@ -27,6 +31,10 @@ export const tauriSettingsGateway: SettingsGateway = {
   setAppearance: (expectedRevision, appearance) =>
     invoke<SettingsSnapshot>(DaraIpcCommand.SetAppearance, {
       input: { appearance, expectedRevision },
+    }),
+  setAutomaticUpdateChecks: (expectedRevision, enabled) =>
+    invoke<SettingsSnapshot>(DaraIpcCommand.SetAutomaticUpdateChecks, {
+      input: { enabled, expectedRevision },
     }),
   setKeyboardBindings: (expectedRevision, keyboardBindings) =>
     invoke<SettingsSnapshot>(DaraIpcCommand.SetKeyboardBindings, {

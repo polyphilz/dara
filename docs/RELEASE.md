@@ -35,10 +35,13 @@ Tauri configuration does not stage and verify the production sidecars.
 ## What existing users see
 
 A packaged production build checks the latest published GitHub Release five
-seconds after launch and every six hours while it remains open. A newer version
-appears as a small notification in the bottom-left corner with **Install and
-restart** and **Not now**. Deferring hides that version for 24 hours. Automatic
-network failures remain silent.
+seconds after launch and every six hours while it remains open. This behavior
+is on by default and is explained by the **Automatically check for updates**
+toggle in Settings. Turning it off stops the scheduled requests to GitHub but
+does not remove manual update checks. A newer version appears as a small
+notification in the bottom-left corner with **Install and restart** and **Not
+now**. Deferring hides that version for 24 hours. Automatic network failures
+remain silent.
 
 Users can also choose **Check for Updates…** from either the Dara application
 menu or the brain menu-bar icon. Manual checks report whether Dara is current
@@ -237,9 +240,11 @@ Back up `dara-updater.key` and its password. Losing that private key prevents
 future Dara versions from updating installations that trust its paired public
 key. The generated `.pub` file is intentionally public: copy its complete
 contents into `plugins.updater.pubkey` in
-`src-tauri/tauri.conf.json`. The public configuration is shared so the native
-plugin can initialize in every build, but only official release commands set
-the frontend marker that permits network update checks.
+`src-tauri/tauri.conf.json`. The public key and endpoint are safe to share, but
+ordinary local and ad-hoc builds do not receive the native updater capability.
+The official distribution command grants that capability and sets the frontend
+marker together, so a local renderer cannot invoke the production updater even
+if its frontend code is compromised.
 
 Copy the safe template and fill in the issuer ID, key ID, and absolute path to
 that external key file:
@@ -292,7 +297,10 @@ submitting anything to Apple. It then:
    records its submission ID, and staples its ticket;
 5. mounts the exact DMG and rechecks its resources and Developer ID chain; and
 6. asks Gatekeeper to assess both the disk image and the installed app;
-7. archives that final notarized application for the Tauri updater;
+7. archives that final notarized application for the Tauri updater without
+   macOS AppleDouble metadata, extracts it into a clean temporary directory,
+   and repeats strict code-signature and Gatekeeper verification on the exact
+   extracted app;
 8. signs the updater archive with the separate local updater key; and
 9. produces the exact GitHub Release assets and checksums.
 
@@ -333,6 +341,10 @@ public key embedded in Dara. It also records the source commit and whether the
 worktree was dirty in `latest.json`. Draft publication rejects artifacts from
 a different commit or a dirty build, preventing an old same-version bundle
 from being attached to a newer source tag.
+
+Updater signature verification uses a deliberately small standalone Rust
+crate under `scripts/updater-signature-verifier/`; it does not compile Dara's
+application dependency tree during the early credential preflight.
 
 Submission state is kept beneath
 `app/src-tauri/target/release/bundle/notarization/`. Status checks retry
@@ -532,8 +544,9 @@ that exact recovery.
 Only artifacts produced by `pnpm release:build:distribution` are supported for
 public distribution or automatic updates. The faster
 `pnpm release:build:app` output remains ad-hoc signed and is for local
-installation and acceptance only; its updater frontend is disabled so it
-cannot replace itself with a published production build.
+installation and acceptance only; it has neither the updater frontend marker
+nor the native updater capability, so it cannot replace itself with a
+published production build.
 
 The distribution command deliberately composes with, rather than replaces,
 the existing sidecar and model-verification gates. GitHub Actions may continue

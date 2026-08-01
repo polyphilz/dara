@@ -122,16 +122,24 @@ describe('Tauri gateway contracts', () => {
       command: DaraIpcCommand.SetAppearance,
       payload: { input: { appearance: Appearance.Dark, expectedRevision: 8 } },
     })
+    expect(
+      await captureInvocation(() =>
+        tauriSettingsGateway.setAutomaticUpdateChecks(9, false),
+      ),
+    ).toEqual({
+      command: DaraIpcCommand.SetAutomaticUpdateChecks,
+      payload: { input: { enabled: false, expectedRevision: 9 } },
+    })
     const keyboardBindings = [
       { accelerator: 'control+alt+super+KeyD', command: DaraCommand.QuickAdd },
     ]
     expect(
       await captureInvocation(() =>
-        tauriSettingsGateway.setKeyboardBindings(9, keyboardBindings),
+        tauriSettingsGateway.setKeyboardBindings(10, keyboardBindings),
       ),
     ).toEqual({
       command: DaraIpcCommand.SetKeyboardBindings,
-      payload: { input: { expectedRevision: 9, keyboardBindings } },
+      payload: { input: { expectedRevision: 10, keyboardBindings } },
     })
     expect(
       await captureInvocation(() => tauriSettingsGateway.setLaunchAtLogin(true)),
@@ -140,10 +148,10 @@ describe('Tauri gateway contracts', () => {
       payload: { input: { enabled: true } },
     })
     expect(
-      await captureInvocation(() => tauriSettingsGateway.setZoomPercent(10, 130)),
+      await captureInvocation(() => tauriSettingsGateway.setZoomPercent(11, 130)),
     ).toEqual({
       command: DaraIpcCommand.SetZoomPercent,
-      payload: { input: { expectedRevision: 10, zoomPercent: 130 } },
+      payload: { input: { expectedRevision: 11, zoomPercent: 130 } },
     })
   })
 

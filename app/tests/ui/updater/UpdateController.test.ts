@@ -50,6 +50,24 @@ test('checks quietly after launch and every six hours', async () => {
   stop()
 })
 
+test('keeps automatic checks off until the persisted setting enables them', async () => {
+  const controller = new UpdateController(gateway, {
+    automaticChecksEnabled: false,
+  })
+  controller.start()
+
+  await act(async () => vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1_000))
+  expect(gateway.check).not.toHaveBeenCalled()
+
+  controller.setAutomaticChecksEnabled(true)
+  await act(async () => vi.advanceTimersByTimeAsync(5_000))
+  expect(gateway.check).toHaveBeenCalledTimes(1)
+
+  controller.setAutomaticChecksEnabled(false)
+  await act(async () => vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1_000))
+  expect(gateway.check).toHaveBeenCalledTimes(1)
+})
+
 test('manual checks report when Dara is current', async () => {
   const controller = new UpdateController(gateway)
 
@@ -155,6 +173,64 @@ test('automatic checks preserve an available update prompt', async () => {
     update: availableUpdate,
   })
   controller.stop()
+})
+
+test.each([UpdatePhase.Current, UpdatePhase.Error])(
+  'automatic checks preserve a visible %s result',
+  async (phase) => {
+    const controller = new UpdateController(gateway)
+    if (phase === UpdatePhase.Current) {
+      await controller.checkManually()
+    } else {
+      gateway.check.mockRejectedValueOnce(new Error('GitHub is unavailable'))
+      await controller.checkManually()
+    }
+    const visibleState = controller.getSnapshot()
+    gateway.check.mockResolvedValue(null)
+
+    controller.start()
+    await act(async () => vi.advanceTimersByTimeAsync(5_000))
+
+    expect(gateway.check).toHaveBeenCalledTimes(1)
+    expect(controller.getSnapshot()).toEqual(visibleState)
+  },
+)
+
+test('dismisses a pending manual check without letting its result reappear', async () => {
+  let finishCheck: ((update: AvailableUpdate | null) => void) | undefined
+  gateway.check.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finishCheck = resolve
+      }),
+  )
+  const controller = new UpdateController(gateway)
+
+  const check = controller.checkManually()
+  controller.dismiss()
+  finishCheck?.(availableUpdate)
+  await check
+
+  expect(controller.getSnapshot()).toEqual({ phase: UpdatePhase.Idle })
+})
+
+test('dismisses an available update even when storage is unavailable', async () => {
+  const consoleWarning = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+  gateway.check.mockResolvedValue(availableUpdate)
+  const controller = new UpdateController(gateway, {
+    storage: {
+      getItem: () => null,
+      removeItem: () => undefined,
+      setItem: () => {
+        throw new Error('storage is unavailable')
+      },
+    },
+  })
+
+  await controller.checkManually()
+  expect(() => controller.dismiss()).not.toThrow()
+  expect(controller.getSnapshot()).toEqual({ phase: UpdatePhase.Idle })
+  consoleWarning.mockRestore()
 })
 
 test('automatic failures stay quiet while manual failures are actionable', async () => {

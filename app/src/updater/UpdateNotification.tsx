@@ -57,7 +57,7 @@ export function UpdateNotification({
             Try again
           </DaraButton>
         )}
-        {!busy && state.phase !== UpdatePhase.Checking && (
+        {!busy && (
           <DaraButton
             onClick={() => controller.dismiss()}
             size={DaraButtonSize.Compact}
@@ -134,6 +134,9 @@ function formatBytes(bytes: number): string {
   }
   if (bytes < 1_048_576) {
     return `${Math.round(bytes / 1_024)} KB`
+  }
+  if (bytes >= 1_073_741_824) {
+    return `${(bytes / 1_073_741_824).toFixed(1)} GB`
   }
   return `${(bytes / 1_048_576).toFixed(1)} MB`
 }

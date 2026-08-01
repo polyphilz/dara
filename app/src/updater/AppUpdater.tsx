@@ -2,6 +2,10 @@ import { isTauri } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { DaraEvent } from '../lib/tauri-contracts.ts'
+import {
+  tauriSettingsGateway,
+  type SettingsSnapshot,
+} from '../settings/index.ts'
 import { updaterIsEnabled } from './contracts.ts'
 import { UpdateController } from './controller.ts'
 import { tauriUpdateGateway } from './gateway.ts'
@@ -16,6 +20,7 @@ export function AppUpdater() {
   const controller = useMemo(
     () =>
       new UpdateController(tauriUpdateGateway, {
+        automaticChecksEnabled: false,
         enabled,
       }),
     [enabled],
@@ -26,6 +31,44 @@ export function AppUpdater() {
   )
 
   useEffect(() => controller.start(), [controller])
+
+  useEffect(() => {
+    if (!tauriEnvironment) {
+      return
+    }
+    let disposed = false
+    let stopListening: (() => void) | undefined
+    const applySettings = (settings: SettingsSnapshot) => {
+      controller.setAutomaticChecksEnabled(
+        settings.automaticUpdateChecksEnabled,
+      )
+    }
+    void tauriSettingsGateway
+      .loadSettings()
+      .then((settings) => {
+        if (!disposed) {
+          applySettings(settings)
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('Could not load automatic update settings', error)
+      })
+    void listen<SettingsSnapshot>(DaraEvent.SettingsChanged, (event) => {
+      if (!disposed) {
+        applySettings(event.payload)
+      }
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten()
+      } else {
+        stopListening = unlisten
+      }
+    })
+    return () => {
+      disposed = true
+      stopListening?.()
+    }
+  }, [controller, tauriEnvironment])
 
   useEffect(() => {
     if (!tauriEnvironment) {

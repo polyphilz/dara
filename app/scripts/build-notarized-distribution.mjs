@@ -173,6 +173,11 @@ function buildSignedApplication(signingPolicy) {
     distributionConfigPath,
     `${JSON.stringify(
       {
+        app: {
+          security: {
+            capabilities: ['main', 'quick-add', 'main-updater'],
+          },
+        },
         bundle: {
           targets: ['app'],
           macOS: {

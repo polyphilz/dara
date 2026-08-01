@@ -13,6 +13,13 @@ target/
 !.env.example
 !app/.env.notarization.example
 !app/.env.updater.example
+*.key
+*.mobileprovision
+*.p8
+*.p12
+*.pem
+*.pfx
+*.certSigningRequest
 
 # local model weights (llama.cpp GGUF, ONNX)
 models/

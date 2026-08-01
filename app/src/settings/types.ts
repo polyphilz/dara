@@ -20,6 +20,7 @@ export interface KeyboardBinding {
 
 export interface SettingsSnapshot {
   appearance: Appearance
+  automaticUpdateChecksEnabled: boolean
   desiredRetention: number
   keyboardBindings: KeyboardBinding[]
   launchAtLogin: boolean

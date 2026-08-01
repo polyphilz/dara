@@ -34,6 +34,7 @@ export const DaraIpcCommand = {
   SearchStatus: 'search_status',
   SelectNextReviewCard: 'select_next_review_card',
   SetAppearance: 'set_appearance',
+  SetAutomaticUpdateChecks: 'set_automatic_update_checks',
   SetCardContentSuspended: 'set_card_content_suspended',
   SetKeyboardBindings: 'set_keyboard_bindings',
   SetLaunchAtLogin: 'set_launch_at_login',

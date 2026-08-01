@@ -956,13 +956,11 @@ dependencies = [
 name = "dara"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "block2",
  "image",
  "keyring",
  "libc",
  "log",
- "minisign-verify",
  "objc2",
  "objc2-app-kit",
  "objc2-foundation",

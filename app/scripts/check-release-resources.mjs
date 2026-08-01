@@ -57,7 +57,7 @@ assertEqual(
 assertEqual(
   sourceProvenance,
   {
-    commit: run('git', ['rev-parse', 'HEAD']),
+    commit: run('git', ['rev-parse', 'HEAD'], { capture: true }),
     dirty: run('git', ['status', '--porcelain']).length > 0,
   },
   'release source provenance',
