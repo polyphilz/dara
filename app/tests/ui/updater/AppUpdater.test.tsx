@@ -1,17 +1,25 @@
-import { render } from '@testing-library/react'
-import { afterEach, expect, test, vi } from 'vitest'
+import { render, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 
-const listen = vi.fn()
+const mocks = vi.hoisted(() => ({
+  listen: vi.fn(),
+  tauriEnvironment: false,
+}))
 
 vi.mock('@tauri-apps/api/core', () => ({
-  isTauri: () => false,
+  isTauri: () => mocks.tauriEnvironment,
 }))
 
 vi.mock('@tauri-apps/api/event', () => ({
-  listen,
+  listen: mocks.listen,
 }))
 
+beforeEach(() => {
+  mocks.listen.mockResolvedValue(vi.fn())
+})
+
 afterEach(() => {
+  mocks.tauriEnvironment = false
   vi.clearAllMocks()
 })
 
@@ -20,7 +28,16 @@ test('does not register native update listeners outside Tauri', async () => {
 
   render(<AppUpdater />)
 
-  expect(listen).not.toHaveBeenCalled()
+  expect(mocks.listen).not.toHaveBeenCalled()
+})
+
+test('registers manual update listeners in Tauri when automatic updates are disabled', async () => {
+  mocks.tauriEnvironment = true
+  const { AppUpdater } = await import('../../../src/updater/AppUpdater.tsx')
+
+  render(<AppUpdater />)
+
+  await waitFor(() => expect(mocks.listen).toHaveBeenCalledTimes(1))
 })
 
 test('enables updates only for an explicitly marked Tauri release', async () => {

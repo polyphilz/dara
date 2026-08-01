@@ -8,8 +8,9 @@ import { tauriUpdateGateway } from './gateway.ts'
 import { UpdateNotification } from './UpdateNotification.tsx'
 
 export function AppUpdater() {
+  const tauriEnvironment = isTauri()
   const enabled = updaterIsEnabled(
-    isTauri(),
+    tauriEnvironment,
     import.meta.env.VITE_DARA_UPDATER_ENABLED,
   )
   const controller = useMemo(
@@ -27,7 +28,7 @@ export function AppUpdater() {
   useEffect(() => controller.start(), [controller])
 
   useEffect(() => {
-    if (!enabled) {
+    if (!tauriEnvironment) {
       return
     }
     let disposed = false
@@ -44,7 +45,7 @@ export function AppUpdater() {
       disposed = true
       void listener.then((unlisten) => unlisten?.())
     }
-  }, [controller, enabled])
+  }, [controller, tauriEnvironment])
 
   return <UpdateNotification controller={controller} state={state} />
 }

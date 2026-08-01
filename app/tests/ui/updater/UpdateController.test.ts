@@ -58,6 +58,18 @@ test('manual checks report when Dara is current', async () => {
   expect(controller.getSnapshot()).toEqual({ phase: UpdatePhase.Current })
 })
 
+test('manual checks explain when updates are unavailable in this build', async () => {
+  const controller = new UpdateController(gateway, { enabled: false })
+
+  await controller.checkManually()
+
+  expect(gateway.check).not.toHaveBeenCalled()
+  expect(controller.getSnapshot()).toEqual({
+    phase: UpdatePhase.Error,
+    message: 'Update checks are available in packaged Dara releases.',
+  })
+})
+
 test('offers an update and dismisses that version for one day', async () => {
   const now = 1_000_000
   gateway.check.mockResolvedValue(availableUpdate)
