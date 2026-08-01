@@ -22,6 +22,7 @@ const DEVELOPMENT_BINARY_OVERRIDE_ENV: &str = "DARA_LITESTREAM_PATH";
 const ACCESS_KEY_ID_ENV: &str = "DARA_LITESTREAM_R2_ACCESS_KEY_ID";
 const SECRET_ACCESS_KEY_ENV: &str = "DARA_LITESTREAM_R2_SECRET_ACCESS_KEY";
 const REQUIRED_L0_RETENTION: &str = "720h";
+const DISTRIBUTION_SIGNING_POLICY_FORMAT_VERSION: u32 = 1;
 const MAX_CONTROL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_RESTORE_PLAN_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RESTORE_FILES: usize = 100_000;
@@ -127,6 +128,7 @@ struct ProtocolVerification {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct DistributionSigningPolicy {
+    format_version: u32,
     application: DistributionApplicationSigning,
     sidecars: DistributionSidecarSigningPolicies,
 }
@@ -294,10 +296,11 @@ fn validate_distribution_signing_policy(
     manifest: &SourceManifest,
 ) -> Result<(), LitestreamError> {
     let sidecar = &policy.sidecars.litestream;
-    if !policy
-        .application
-        .signing_identity
-        .starts_with("Developer ID Application: ")
+    if policy.format_version != DISTRIBUTION_SIGNING_POLICY_FORMAT_VERSION
+        || !policy
+            .application
+            .signing_identity
+            .starts_with("Developer ID Application: ")
         || policy.application.team_identifier.len() != 10
         || !policy
             .application
@@ -1249,5 +1252,19 @@ mod tests {
             distribution_code_requirement(&policy),
             "identifier \"com.silo77.dara.sidecar.litestream\" and anchor apple generic and certificate leaf[subject.OU] = \"PMZH6ULML8\" and certificate leaf[subject.CN] = \"Developer ID Application: SILO77 LLC (PMZH6ULML8)\"",
         );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn distribution_policy_rejects_unsupported_format_versions() {
+        let manifest = embedded_manifest().expect("embedded manifest");
+        let mut policy =
+            embedded_distribution_signing_policy().expect("distribution signing policy");
+        policy.format_version = DISTRIBUTION_SIGNING_POLICY_FORMAT_VERSION + 1;
+
+        assert!(matches!(
+            validate_distribution_signing_policy(&policy, &manifest),
+            Err(LitestreamError::UnsafeDistributionSigningPolicy)
+        ));
     }
 }
