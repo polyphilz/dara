@@ -22,7 +22,10 @@ test('offers only start-fresh and restore choices on a fresh installation', () =
     <RecoveryWindow gateway={gateway} />,
   )
 
-  expect(getByText('This Mac does not have any Dara data yet.')).toBeTruthy()
+  expect(
+    getByText('dara', { selector: '.recovery-brand-wordmark' }),
+  ).toBeTruthy()
+  expect(getByText('This device does not have any Dara data yet.')).toBeTruthy()
   const startFresh = getByRole('button', { name: /start fresh/i })
   const restore = getByRole('button', { name: /restore from backup/i })
   expect(startFresh.className).toContain('dara-button')

@@ -152,7 +152,10 @@ export function RecoveryWindow({
         className="recovery-card"
       >
         <header className="recovery-header">
-          <span>WELCOME TO DARA</span>
+          <div className="recovery-brand">
+            <span aria-hidden="true" className="recovery-brand-mark" />
+            <span className="recovery-brand-wordmark">dara</span>
+          </div>
           <h1 id="fresh-install-title">
             {step === RecoveryStep.Choose
               ? 'How would you like to begin?'
@@ -162,7 +165,7 @@ export function RecoveryWindow({
           </h1>
           <p>
             {step === RecoveryStep.Choose
-              ? 'This Mac does not have any Dara data yet.'
+              ? 'This device does not have any Dara data yet.'
               : step === RecoveryStep.Connect
                 ? 'Enter the Cloudflare R2 details that own your Dara backup.'
                 : 'Dara found these complete checkpoints under its private backup location.'}

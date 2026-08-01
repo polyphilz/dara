@@ -125,7 +125,6 @@ body {
   border-radius: 10px;
   color: var(--ink);
   background: color-mix(in srgb, var(--surface) 96%, transparent);
-  box-shadow: 0 16px 38px rgba(30, 24, 20, 0.16);
 }
 
 .update-notification > div:first-child {
@@ -240,7 +239,6 @@ body {
   border: 1px solid var(--line);
   border-radius: 11px;
   background: color-mix(in srgb, var(--surface) 88%, transparent);
-  box-shadow: 0 9px 28px rgba(48, 37, 25, 0.035);
 }
 
 .setting-row,
@@ -308,7 +306,6 @@ body {
   height: 14px;
   border-radius: 50%;
   background: var(--muted);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
   transition:
     left 120ms ease,
     background 120ms ease;
@@ -581,9 +578,6 @@ body {
   border-radius: 13px;
   color: var(--ink);
   background: color-mix(in srgb, var(--surface) 96%, #fff);
-  box-shadow:
-    0 25px 70px rgba(20, 17, 14, 0.28),
-    0 5px 15px rgba(20, 17, 14, 0.12);
 }
 
 .settings-dialog h2 {
@@ -941,7 +935,6 @@ body {
   border-radius: 12px;
   text-align: left;
   background: var(--surface);
-  box-shadow: 0 16px 40px rgba(63, 39, 14, 0.06);
 }
 
 .main-window .home-review-card:hover:not(:disabled) {
@@ -1137,7 +1130,6 @@ body {
   border-radius: 13px;
   background: var(--surface);
   font-size: 11px;
-  box-shadow: 0 18px 50px rgba(24, 23, 22, 0.06);
 }
 
 .card-browser-sidebar {
@@ -1536,7 +1528,6 @@ body {
   color: #a63232;
   background: var(--surface);
   font-size: 10px;
-  box-shadow: 0 5px 20px rgba(24, 23, 22, 0.08);
 }
 
 @media (max-width: 640px) {
