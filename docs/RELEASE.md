@@ -262,8 +262,8 @@ pnpm release:verify-distribution -- <app> <dmg>
 ```
 
 That standalone form compares the supplied app with the app mounted from the
-DMG and does not read submission state left by a different build in the current
-checkout.
+DMG, authenticates and Gatekeeper-assesses both copies, and does not read
+submission state left by a different build in the current checkout.
 
 ## 5. Archive the exact candidate
 

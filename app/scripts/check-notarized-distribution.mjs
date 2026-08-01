@@ -52,7 +52,9 @@ const expectedSidecarSha256 = applicationSubmissionPath
       ),
     )
   : signedSidecarSha256(appPath)
-verifySignedSidecarHashes(appPath)
+const expectedApplicationCodeDirectoryHash = verifyNotarizedApplication(
+  appPath,
+)
 
 run('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', dmgPath])
 const dmgSignature = run('/usr/bin/codesign', [
@@ -100,20 +102,11 @@ try {
     existsSync(mountedAppPath),
     'notarized disk image does not contain Dara.app',
   )
-  verifySignedSidecarHashes(mountedAppPath)
-  run('node', [
-    'scripts/check-packaged-app.mjs',
-    mountedAppPath,
-    'developer-id',
-  ])
-  run('xcrun', ['stapler', 'validate', mountedAppPath])
-  run('/usr/sbin/spctl', [
-    '--assess',
-    '--type',
-    'execute',
-    '--verbose=4',
-    mountedAppPath,
-  ])
+  assertEqual(
+    verifyNotarizedApplication(mountedAppPath),
+    expectedApplicationCodeDirectoryHash,
+    'mounted application code directory hash',
+  )
 } finally {
   if (attached) {
     run('hdiutil', ['detach', mountPoint])
@@ -138,6 +131,31 @@ function verifySignedSidecarHashes(applicationPath) {
       `${policy.sidecars[key].component} signed bytes from the submitted application`,
     )
   }
+}
+
+function verifyNotarizedApplication(applicationPath) {
+  verifySignedSidecarHashes(applicationPath)
+  run('node', [
+    'scripts/check-packaged-app.mjs',
+    applicationPath,
+    'developer-id',
+  ])
+  run('xcrun', ['stapler', 'validate', applicationPath])
+  run('/usr/sbin/spctl', [
+    '--assess',
+    '--type',
+    'execute',
+    '--verbose=4',
+    applicationPath,
+  ])
+  return signatureField(
+    run('/usr/bin/codesign', [
+      '--display',
+      '--verbose=4',
+      applicationPath,
+    ]),
+    'CDHash',
+  )
 }
 
 function signedSidecarSha256(applicationPath) {

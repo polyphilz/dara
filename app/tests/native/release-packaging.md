@@ -61,6 +61,9 @@ without rebuilding or uploading again.
 archived artifacts without consulting any ambient submission state in the
 checkout. The distribution build passes its application state explicitly when
 it needs to bind verification to the exact sidecar hashes submitted to Apple.
+The standalone verifier authenticates and Gatekeeper-assesses both the supplied
+app and the copy mounted from the DMG, and requires their signed code-directory
+hashes to match.
 
 ## Isolated runtime smoke
 
