@@ -131,7 +131,7 @@ fn fresh_pair_migrates_reopens_and_is_idempotent() {
             row.get(0)
         })
         .expect("history count");
-    assert_eq!(history_rows, 12);
+    assert_eq!(history_rows, 13);
 }
 
 #[test]
@@ -1111,20 +1111,21 @@ fn settings_migration_adds_defaults_to_an_existing_database() {
 
     let preferences = main
         .query_row(
-            "SELECT revision, appearance, zoom_percent, legacy_zoom_migrated
+            "SELECT revision, appearance, automatic_update_checks_enabled, zoom_percent, legacy_zoom_migrated
              FROM user_preferences WHERE singleton_id = 1",
             [],
             |row| {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, bool>(3)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, bool>(4)?,
                 ))
             },
         )
         .expect("migrated preferences");
-    assert_eq!(preferences, (1, "SYSTEM".into(), 100, false));
+    assert_eq!(preferences, (1, "SYSTEM".into(), true, 100, false));
     assert_eq!(
         main.query_row("SELECT count(*) FROM keyboard_binding", [], |row| {
             row.get::<_, i64>(0)
@@ -1758,7 +1759,7 @@ fn changed_checksums_and_future_heads_are_rejected() {
     let main = open_existing(&future.main, DatabaseKind::Main);
     main.execute(
         "INSERT INTO refinery_schema_history(version, name, applied_on, checksum)
-         SELECT 13, 'future', applied_on, '0'
+         SELECT 14, 'future', applied_on, '0'
          FROM refinery_schema_history WHERE version = 1",
         [],
     )
@@ -1779,17 +1780,17 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
     let mut all = migrations::main_runner().get_migrations().clone();
     all.push(
         Migration::unapplied(
-            "V13__grouped_good.sql",
+            "V14__grouped_good.sql",
             "CREATE TABLE grouped_good(id INTEGER PRIMARY KEY) STRICT;",
         )
-        .expect("V13 migration"),
+        .expect("V14 migration"),
     );
     all.push(
         Migration::unapplied(
-            "V14__grouped_failure.sql",
+            "V15__grouped_failure.sql",
             "CREATE TABLE grouped_failure(id INTEGER) STRICT; THIS IS NOT SQL;",
         )
-        .expect("V14 migration"),
+        .expect("V15 migration"),
     );
     let runner = Runner::new(&all).set_grouped(true);
     assert!(runner.run(&mut main).is_err());
@@ -1798,9 +1799,9 @@ fn grouped_refinery_run_rolls_back_all_pending_migrations() {
         migrations::main_runner()
             .get_last_applied_migration(&mut main)
             .expect("last migration")
-            .expect("V12")
+            .expect("V13")
             .version(),
-        12
+        13
     );
 }
 
@@ -1844,7 +1845,7 @@ fn launch_snapshot_runs_in_background_and_retention_keeps_seven_daily_points() {
         .expect("launch snapshot result")
         .expect("launch snapshot");
     assert!(launch.manifest_path.exists());
-    assert_eq!(launch.manifest.main.migration_head, Some(12));
+    assert_eq!(launch.manifest.main.migration_head, Some(13));
     drop(database);
 
     let base = launch.manifest.created_at;

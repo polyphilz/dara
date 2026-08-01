@@ -81,6 +81,7 @@ pub struct KeyboardBinding {
 pub struct StoredSettings {
     pub revision: i64,
     pub appearance: Appearance,
+    pub automatic_update_checks_enabled: bool,
     pub zoom_percent: i64,
     pub legacy_zoom_migrated: bool,
     pub desired_retention: f64,
@@ -92,6 +93,13 @@ pub struct StoredSettings {
 pub struct SetAppearanceInput {
     pub expected_revision: i64,
     pub appearance: Appearance,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetAutomaticUpdateChecksInput {
+    pub expected_revision: i64,
+    pub enabled: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -130,6 +138,7 @@ struct SchedulerConfigPreference {
 
 enum ScalarPreference {
     Appearance(Appearance),
+    AutomaticUpdateChecks(bool),
     ZoomPercent(i64),
 }
 
@@ -139,6 +148,7 @@ pub(super) fn load_settings(connection: &Connection) -> Result<StoredSettings> {
             "SELECT
                 preferences.revision,
                 preferences.appearance,
+                preferences.automatic_update_checks_enabled,
                 preferences.zoom_percent,
                 preferences.legacy_zoom_migrated,
                 scheduler.config_json
@@ -152,9 +162,10 @@ pub(super) fn load_settings(connection: &Connection) -> Result<StoredSettings> {
                 Ok((
                     row.get::<_, i64>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, i64>(2)?,
-                    row.get::<_, bool>(3)?,
-                    row.get::<_, String>(4)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, bool>(4)?,
+                    row.get::<_, String>(5)?,
                 ))
             },
         )
@@ -162,7 +173,7 @@ pub(super) fn load_settings(connection: &Connection) -> Result<StoredSettings> {
         .ok_or_else(|| {
             DatabaseError::InvalidStoredSettings("user preferences singleton is missing".into())
         })?;
-    let scheduler: SchedulerConfigPreference = serde_json::from_str(&row.4).map_err(|error| {
+    let scheduler: SchedulerConfigPreference = serde_json::from_str(&row.5).map_err(|error| {
         DatabaseError::InvalidStoredSettings(format!(
             "active scheduler preferences are invalid: {error}"
         ))
@@ -189,11 +200,24 @@ pub(super) fn load_settings(connection: &Connection) -> Result<StoredSettings> {
     Ok(StoredSettings {
         revision: row.0,
         appearance: Appearance::from_db(&row.1)?,
-        zoom_percent: row.2,
-        legacy_zoom_migrated: row.3,
+        automatic_update_checks_enabled: row.2,
+        zoom_percent: row.3,
+        legacy_zoom_migrated: row.4,
         desired_retention: scheduler.desired_retention,
         keyboard_bindings,
     })
+}
+
+pub(super) fn set_automatic_update_checks(
+    connection: &mut Connection,
+    input: SetAutomaticUpdateChecksInput,
+) -> Result<StoredSettings> {
+    update_preferences(
+        connection,
+        input.expected_revision,
+        ScalarPreference::AutomaticUpdateChecks(input.enabled),
+        None,
+    )
 }
 
 pub(super) fn set_appearance(
@@ -287,6 +311,12 @@ fn update_preferences(
              SET appearance = ?1
              WHERE singleton_id = 1 AND revision = ?2",
             params![appearance.as_db_str(), expected_revision],
+        )?,
+        ScalarPreference::AutomaticUpdateChecks(enabled) => transaction.execute(
+            "UPDATE user_preferences
+             SET automatic_update_checks_enabled = ?1
+             WHERE singleton_id = 1 AND revision = ?2",
+            params![enabled, expected_revision],
         )?,
         ScalarPreference::ZoomPercent(zoom_percent) => transaction.execute(
             "UPDATE user_preferences

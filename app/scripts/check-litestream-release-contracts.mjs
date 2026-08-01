@@ -9,15 +9,29 @@ import {
 
 const pinPath = 'src-tauri/resources/sidecars/litestream-v1.json'
 const noticePath = 'src-tauri/resources/sidecars/litestream-NOTICE'
+const baseConfigPath = 'src-tauri/tauri.conf.json'
 const releaseConfigPath = 'src-tauri/tauri.release.conf.json'
+const mainCapabilityPath = 'src-tauri/capabilities/main.json'
+const updaterCapabilityPath = 'src-tauri/capabilities/main-updater.json'
 const packagePath = 'package.json'
 const rustContractPath = 'src-tauri/src/backup/litestream.rs'
+const distributionBuildPath = 'scripts/build-notarized-distribution.mjs'
+const releaseArtifactPath = 'scripts/create-release-artifacts.mjs'
+const draftReleasePath = 'scripts/publish-draft-release.mjs'
+const updaterSigningPath = 'scripts/updater-signing.mjs'
 const canaryWorkflowPath = '../.github/workflows/litestream-r2-canary.yml'
 
 const pin = readJson(pinPath)
+const baseConfig = readJson(baseConfigPath)
 const releaseConfig = readJson(releaseConfigPath)
+const mainCapability = readJson(mainCapabilityPath)
+const updaterCapability = readJson(updaterCapabilityPath)
 const packageJson = readJson(packagePath)
 const rustContract = readFileSync(rustContractPath, 'utf8')
+const distributionBuild = readFileSync(distributionBuildPath, 'utf8')
+const releaseArtifacts = readFileSync(releaseArtifactPath, 'utf8')
+const draftRelease = readFileSync(draftReleasePath, 'utf8')
+const updaterSigning = readFileSync(updaterSigningPath, 'utf8')
 const distributionSigning = readDistributionSigningPolicy()
 const litestreamSigningPolicy =
   distributionSigning.sidecars[DistributionSidecarKey.Litestream]
@@ -35,6 +49,27 @@ assertEqual(
   pin.verification.requiredL0Retention,
   '720h',
   'exact-TXID retention',
+)
+assert(
+  updaterSigning.includes('verifyUpdaterArchiveSignature') &&
+    updaterSigning.includes('verifyUpdaterSigningCredentials'),
+  'release artifacts do not verify the updater signature',
+)
+assert(
+  packageJson.scripts['release:build:app'].includes(
+    'release:stage-provenance',
+  ) &&
+    distributionBuild.includes('release:stage-provenance') &&
+    releaseArtifacts.includes('readPackagedSourceProvenance') &&
+    draftRelease.includes('manifest.source?.commit') &&
+    draftRelease.includes('manifest.source?.dirty === false'),
+  'release artifacts are not bound to a clean source commit',
+)
+assert(
+  draftRelease.includes("'ls-remote'") &&
+    draftRelease.includes("'refs/heads/main'") &&
+    !draftRelease.includes("'rev-parse', 'origin/main'"),
+  'draft release publication does not verify the live origin/main ref',
 )
 for (const [name, value] of Object.entries(pin.verification)) {
   if (typeof value === 'boolean') {
@@ -111,6 +146,63 @@ for (const command of [
   )
 }
 assert(
+  !packageJson.scripts['release:build:app'].includes(
+    'VITE_DARA_UPDATER_ENABLED',
+  ),
+  'ad-hoc release application unexpectedly enables the updater frontend',
+)
+assert(
+  distributionBuild.includes('release:verify-updater-signing') &&
+    distributionBuild.includes("VITE_DARA_UPDATER_ENABLED: 'true'") &&
+    distributionBuild.includes("'main-updater'"),
+  'notarized distribution build does not enable the updater frontend',
+)
+for (const permission of [
+  'process:allow-restart',
+  'updater:allow-check',
+  'updater:allow-download-and-install',
+]) {
+  assert(
+    !mainCapability.permissions.includes(permission),
+    `ordinary main-window capability grants production updater permission: ${permission}`,
+  )
+  assert(
+    updaterCapability.permissions.includes(permission),
+    `production updater capability omits ${permission}`,
+  )
+}
+assert(
+  !baseConfig.app.security.capabilities.includes('main-updater'),
+  'ordinary builds unexpectedly grant the production updater capability',
+)
+for (const contract of [
+  "COPYFILE_DISABLE: '1'",
+  "'--no-mac-metadata'",
+  'verifyExtractedUpdaterArchive',
+  "'/usr/bin/codesign'",
+  "'/usr/sbin/spctl'",
+]) {
+  assert(
+    releaseArtifacts.includes(contract),
+    `updater archive validation omits ${contract}`,
+  )
+}
+assert(
+  updaterSigning.includes('scripts/updater-signature-verifier/Cargo.toml') &&
+    !updaterSigning.includes("'src-tauri/Cargo.toml'"),
+  'updater signature verification is not isolated from the application crate',
+)
+assert(
+  typeof baseConfig.plugins?.updater?.pubkey === 'string' &&
+    baseConfig.plugins.updater.pubkey.length > 0,
+  'Tauri updater public key is missing',
+)
+assertEqual(
+  baseConfig.plugins.updater.endpoints,
+  ['https://github.com/polyphilz/dara/releases/latest/download/latest.json'],
+  'Tauri updater endpoint',
+)
+assert(
   rustContract.includes(
     'include_str!("../../resources/sidecars/litestream-v1.json")',
   ),
@@ -172,6 +264,15 @@ for (const path of tracked) {
     !normalized.endsWith('/.env.notarization') &&
       !normalized.endsWith('.env.notarization'),
     `a local Apple notarization environment file is tracked: ${path}`,
+  )
+  assert(
+    !normalized.endsWith('/.env.updater') &&
+      !normalized.endsWith('.env.updater'),
+    `a local updater signing environment file is tracked: ${path}`,
+  )
+  assert(
+    !/\.(?:key|mobileprovision|p8|p12|pem|pfx|certsigningrequest)$/u.test(normalized),
+    `a private signing credential is tracked: ${path}`,
   )
   assert(
     !normalized.startsWith('app/src-tauri/resources/release/'),

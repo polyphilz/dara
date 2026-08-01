@@ -59,6 +59,12 @@ const pin = JSON.parse(
 const litestreamManifest = JSON.parse(
   readFileSync(resolve(resources, 'release/litestream.json'), 'utf8'),
 )
+const sourceProvenance = JSON.parse(
+  readFileSync(resolve(resources, 'release/source.json'), 'utf8'),
+)
+const stagedSourceProvenance = JSON.parse(
+  readFileSync('src-tauri/resources/release/source.json', 'utf8'),
+)
 const litestreamPin = JSON.parse(
   readFileSync(
     'src-tauri/resources/sidecars/litestream-v1.json',
@@ -100,6 +106,11 @@ assertEqual(
   litestreamManifest,
   litestreamPin,
   'bundled Litestream release manifest',
+)
+assertEqual(
+  sourceProvenance,
+  stagedSourceProvenance,
+  'bundled release source provenance',
 )
 if (signatureMode === PackageSignatureMode.AdHoc) {
   assertEqual(
@@ -257,6 +268,7 @@ const allowedResourceFiles = [
   'licenses/litestream-NOTICE',
   'release/llama-server.json',
   'release/litestream.json',
+  'release/source.json',
 ].sort()
 const packagedResourceFiles = listFiles(resources)
   .map((path) => path.slice(resources.length + 1).replaceAll('\\', '/'))

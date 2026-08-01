@@ -63,8 +63,8 @@ pub use queue::{ReviewQueueSelection, SelectNextReviewCardInput};
 pub(crate) use settings::validate_complete_bindings;
 pub use settings::{
     AdoptLegacyZoomInput, DaraCommand, KeyboardBinding, SetAppearanceInput,
-    SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings, DEFAULT_HOME_ACCELERATOR,
-    DEFAULT_QUICK_ADD_ACCELERATOR,
+    SetAutomaticUpdateChecksInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
+    DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
 };
 pub use stats::{HomeStats, LoadHomeStatsInput};
 pub use writer::DatabaseClient;
@@ -203,6 +203,14 @@ impl Database {
     #[cfg(test)]
     fn set_appearance(&self, input: SetAppearanceInput) -> Result<StoredSettings> {
         self.client.set_appearance(input)
+    }
+
+    #[cfg(test)]
+    fn set_automatic_update_checks(
+        &self,
+        input: SetAutomaticUpdateChecksInput,
+    ) -> Result<StoredSettings> {
+        self.client.set_automatic_update_checks(input)
     }
 
     #[cfg(test)]
@@ -511,6 +519,9 @@ fn writer_loop(
             }
             WriterMessage::SetAppearance { input, reply } => {
                 let _ = reply.send(settings::set_appearance(&mut main, input));
+            }
+            WriterMessage::SetAutomaticUpdateChecks { input, reply } => {
+                let _ = reply.send(settings::set_automatic_update_checks(&mut main, input));
             }
             WriterMessage::SetZoomPercent { input, reply } => {
                 let _ = reply.send(settings::set_zoom_percent(&mut main, input));

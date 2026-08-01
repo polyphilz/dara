@@ -57,6 +57,7 @@ assert(
 const resume = arguments_.includes(ResumeArgument)
 const policy = readDistributionSigningPolicy()
 const notarization = takeNotarizationEnvironment()
+run('pnpm', ['release:verify-updater-signing'], { stdio: 'inherit' })
 preflight(notarization, policy)
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
@@ -144,11 +145,20 @@ run('pnpm', [
   stdio: 'inherit',
 })
 
+run('node', [
+  'scripts/create-release-artifacts.mjs',
+  appPath,
+  dmgPath,
+], {
+  stdio: 'inherit',
+})
+
 console.info(`Notarized distribution passed: ${dmgPath}`)
 
 function buildSignedApplication(signingPolicy) {
   run('pnpm', ['release:verify-contracts'], { stdio: 'inherit' })
   run('pnpm', ['release:stage-sidecars'], { stdio: 'inherit' })
+  run('pnpm', ['release:stage-provenance'], { stdio: 'inherit' })
   run('pnpm', ['release:verify-resources'], { stdio: 'inherit' })
   run('pnpm', ['release:sign-sidecars'], { stdio: 'inherit' })
 
@@ -163,6 +173,11 @@ function buildSignedApplication(signingPolicy) {
     distributionConfigPath,
     `${JSON.stringify(
       {
+        app: {
+          security: {
+            capabilities: ['main', 'quick-add', 'main-updater'],
+          },
+        },
         bundle: {
           targets: ['app'],
           macOS: {
@@ -189,6 +204,10 @@ function buildSignedApplication(signingPolicy) {
       '--bundles',
       'app',
     ], {
+      env: {
+        ...process.env,
+        VITE_DARA_UPDATER_ENABLED: 'true',
+      },
       stdio: 'inherit',
     })
   } finally {

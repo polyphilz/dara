@@ -54,6 +54,7 @@ const DEFAULT_RETENTION_PERCENT = 90
 
 const SettingsMutation = {
   Appearance: 'APPEARANCE',
+  AutomaticUpdateChecks: 'AUTOMATIC_UPDATE_CHECKS',
   KeyboardBindings: 'KEYBOARD_BINDINGS',
   LaunchAtLogin: 'LAUNCH_AT_LOGIN',
   Zoom: 'ZOOM',
@@ -380,6 +381,22 @@ export function Settings({
         {snapshot.launchAtLoginError && (
           <p className="setting-inline-error" role="alert">{snapshot.launchAtLoginError}</p>
         )}
+        <SettingRow
+          control={
+            <DaraToggle
+              checked={snapshot.automaticUpdateChecksEnabled}
+              disabled={controlsDisabled}
+              label="Automatically check for updates"
+              onChange={(enabled) => {
+                void updateSetting(SettingsMutation.AutomaticUpdateChecks, (current) =>
+                  settingsGateway.setAutomaticUpdateChecks(current.revision, enabled),
+                )
+              }}
+            />
+          }
+          description="When on, Dara asks GitHub for the latest release shortly after launch and every 6 hours. You can still use Check for Updates… when this is off."
+          label="Automatically check for updates"
+        />
       </SettingSection>
 
       <SettingSection description="Global shortcuts work even while another app is active." title="Shortcuts">

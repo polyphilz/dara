@@ -27,8 +27,9 @@ use crate::{
     database::{
         commands::{run_writer, CommandError, CommandResult},
         validate_complete_bindings, AdoptLegacyZoomInput, DaraCommand, Database, KeyboardBinding,
-        SetAppearanceInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
-        DEFAULT_HOME_ACCELERATOR, DEFAULT_QUICK_ADD_ACCELERATOR,
+        SetAppearanceInput, SetAutomaticUpdateChecksInput, SetKeyboardBindingsInput,
+        SetZoomPercentInput, StoredSettings, DEFAULT_HOME_ACCELERATOR,
+        DEFAULT_QUICK_ADD_ACCELERATOR,
     },
     recovery_startup::{ApplicationLaunchContext, ApplicationLaunchMode},
 };
@@ -44,7 +45,10 @@ const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../icons/tray-icon.png");
 const EDIT_MENU_TEXT: &str = "Edit";
 const VIEW_MENU_TEXT: &str = "View";
 const SETTINGS_MENU_ID: &str = "open-settings";
+const CHECK_FOR_UPDATES_MENU_ID: &str = "check-for-updates";
+const CHECK_FOR_UPDATES_TRAY_MENU_ID: &str = "check-for-updates-tray";
 const SETTINGS_CHANGED_EVENT: &str = "settings-changed";
+const CHECK_FOR_UPDATES_EVENT: &str = "check-for-updates";
 const OPEN_SETTINGS_EVENT: &str = "open-settings";
 const OPEN_HOME_EVENT: &str = "open-home";
 const ZOOM_COMMAND_EVENT: &str = "app-zoom-command";
@@ -101,6 +105,7 @@ impl BrowseCommand {
 enum TrayMenuAction {
     ShowMain,
     ShowSettings,
+    CheckForUpdates,
     ShowQuickAdd,
     Quit,
 }
@@ -110,6 +115,7 @@ impl TrayMenuAction {
         match self {
             Self::ShowMain => "show-main",
             Self::ShowSettings => "show-settings",
+            Self::CheckForUpdates => CHECK_FOR_UPDATES_TRAY_MENU_ID,
             Self::ShowQuickAdd => "show-quick-add",
             Self::Quit => "quit",
         }
@@ -120,6 +126,8 @@ impl TrayMenuAction {
             Some(Self::ShowMain)
         } else if id == Self::ShowSettings.id() {
             Some(Self::ShowSettings)
+        } else if id == Self::CheckForUpdates.id() {
+            Some(Self::CheckForUpdates)
         } else if id == Self::ShowQuickAdd.id() {
             Some(Self::ShowQuickAdd)
         } else if id == Self::Quit.id() {
@@ -337,11 +345,13 @@ fn install_application_menu(app: &mut App) -> tauri::Result<()> {
         MenuItemKind::Submenu(submenu) => Some(submenu),
         _ => None,
     }) {
+        let check_for_updates =
+            MenuItemBuilder::with_id(CHECK_FOR_UPDATES_MENU_ID, "Check for Updates…").build(app)?;
         let settings = MenuItemBuilder::with_id(SETTINGS_MENU_ID, "Settings…")
             .accelerator("CmdOrCtrl+,")
             .build(app)?;
         let separator = PredefinedMenuItem::separator(app)?;
-        application_menu.append_items(&[&separator, &settings])?;
+        application_menu.append_items(&[&check_for_updates, &separator, &settings])?;
     }
     if let Some(edit_menu) = menu.items()?.into_iter().find_map(|item| match item {
         MenuItemKind::Submenu(submenu)
@@ -389,6 +399,14 @@ fn install_application_menu(app: &mut App) -> tauri::Result<()> {
         if event.id().as_ref() == SETTINGS_MENU_ID {
             if let Err(error) = dispatch_to_main_thread(app, "show settings", show_settings_inner) {
                 log::error!("failed to show Settings: {error}");
+            }
+            return;
+        }
+        if event.id().as_ref() == CHECK_FOR_UPDATES_MENU_ID {
+            if let Err(error) =
+                dispatch_to_main_thread(app, "check for updates", check_for_updates_inner)
+            {
+                log::error!("failed to check for updates: {error}");
             }
             return;
         }
@@ -472,6 +490,7 @@ fn tray_menu(app: &AppHandle, bindings: &[KeyboardBinding]) -> tauri::Result<Men
     MenuBuilder::new(app)
         .text(TrayMenuAction::ShowMain.id(), format!("Open {app_name}"))
         .text(TrayMenuAction::ShowSettings.id(), "Settings…")
+        .text(TrayMenuAction::CheckForUpdates.id(), "Check for Updates…")
         .text(
             TrayMenuAction::ShowQuickAdd.id(),
             format!("Quick Add  {quick_add_label}"),
@@ -504,6 +523,13 @@ fn install_tray(app: &App, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
                         dispatch_to_main_thread(app, "show settings", show_settings_inner)
                     {
                         log::error!("failed to show Settings: {error}");
+                    }
+                }
+                Some(TrayMenuAction::CheckForUpdates) => {
+                    if let Err(error) =
+                        dispatch_to_main_thread(app, "check for updates", check_for_updates_inner)
+                    {
+                        log::error!("failed to check for updates: {error}");
                     }
                 }
                 Some(TrayMenuAction::ShowQuickAdd) => {
@@ -680,6 +706,19 @@ pub async fn set_appearance(
 ) -> CommandResult<SettingsSnapshot> {
     let client = database.client();
     let stored = run_writer(move || client.set_appearance(input)).await?;
+    let snapshot = settings_snapshot(&app, stored);
+    emit_settings(&app, &snapshot);
+    Ok(snapshot)
+}
+
+#[tauri::command]
+pub async fn set_automatic_update_checks(
+    app: AppHandle,
+    database: State<'_, Database>,
+    input: SetAutomaticUpdateChecksInput,
+) -> CommandResult<SettingsSnapshot> {
+    let client = database.client();
+    let stored = run_writer(move || client.set_automatic_update_checks(input)).await?;
     let snapshot = settings_snapshot(&app, stored);
     emit_settings(&app, &snapshot);
     Ok(snapshot)
@@ -869,6 +908,12 @@ pub fn get_spike_status(state: State<'_, SpikeState>) -> SpikeStatus {
 #[tauri::command]
 pub fn show_quick_add(app: AppHandle) -> Result<(), String> {
     dispatch_to_main_thread(&app, "show quick add", show_quick_add_inner)
+}
+
+fn check_for_updates_inner(app: &AppHandle) -> Result<(), String> {
+    show_main_inner(app)?;
+    app.emit_to(MAIN_LABEL, CHECK_FOR_UPDATES_EVENT, ())
+        .map_err(|error| format!("could not request an update check: {error}"))
 }
 
 fn show_quick_add_inner(app: &AppHandle) -> Result<(), String> {
@@ -1213,7 +1258,8 @@ pub(crate) fn log_application_quit_context(app: &AppHandle) {
 mod focus_tests {
     use super::{
         arguments_request_autostart, load_tray_icon, main_window_close_action,
-        ApplicationLaunchMode, FocusContext, MainWindowCloseAction, AUTOSTART_ARGUMENT,
+        ApplicationLaunchMode, FocusContext, MainWindowCloseAction, TrayMenuAction,
+        AUTOSTART_ARGUMENT,
     };
 
     #[test]
@@ -1260,5 +1306,22 @@ mod focus_tests {
             MainWindowCloseAction::Hide
         );
         assert_eq!(main_window_close_action(None), MainWindowCloseAction::Hide);
+    }
+
+    #[test]
+    fn tray_menu_actions_have_stable_round_trip_identifiers() {
+        for action in [
+            TrayMenuAction::ShowMain,
+            TrayMenuAction::ShowSettings,
+            TrayMenuAction::CheckForUpdates,
+            TrayMenuAction::ShowQuickAdd,
+            TrayMenuAction::Quit,
+        ] {
+            assert_eq!(
+                TrayMenuAction::from_id(action.id()).map(TrayMenuAction::id),
+                Some(action.id()),
+            );
+        }
+        assert!(TrayMenuAction::from_id("unknown-action").is_none());
     }
 }

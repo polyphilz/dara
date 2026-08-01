@@ -21,9 +21,9 @@ use super::{
     PreparedOffsiteCheckpoint, RecordGradeInput, RecordOffsiteMediaAttemptInput, Result,
     ReviewContext, ReviewMutationResult, ReviewQueueSelection, SaveOffsiteBackupConfigInput,
     SchedulerReplayInstallReport, SchedulerReplaySnapshot, SearchCardContentInput,
-    SelectNextReviewCardInput, SetAppearanceInput, SetCardContentSuspendedInput,
-    SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings, UndoLastGradeInput,
-    UpdateCardContentInput,
+    SelectNextReviewCardInput, SetAppearanceInput, SetAutomaticUpdateChecksInput,
+    SetCardContentSuspendedInput, SetKeyboardBindingsInput, SetZoomPercentInput, StoredSettings,
+    UndoLastGradeInput, UpdateCardContentInput,
 };
 use crate::backup::domain::{BackupErrorCode, CheckpointId};
 use crate::backup::litestream::LitestreamTxid;
@@ -118,6 +118,10 @@ pub(super) enum WriterMessage {
     },
     SetAppearance {
         input: SetAppearanceInput,
+        reply: SyncSender<Result<StoredSettings>>,
+    },
+    SetAutomaticUpdateChecks {
+        input: SetAutomaticUpdateChecksInput,
         reply: SyncSender<Result<StoredSettings>>,
     },
     SetZoomPercent {
@@ -295,6 +299,7 @@ impl WriterMessage {
             | Self::UndoLastGrade { .. }
             | Self::InstallSchedulerReplay { .. }
             | Self::SetAppearance { .. }
+            | Self::SetAutomaticUpdateChecks { .. }
             | Self::SetZoomPercent { .. }
             | Self::AdoptLegacyZoom { .. }
             | Self::SetKeyboardBindings { .. }
@@ -638,6 +643,19 @@ impl DatabaseClient {
         let (reply, receiver) = mpsc::sync_channel(1);
         self.sender
             .send(WriterMessage::SetAppearance { input, reply })
+            .map_err(|_| DatabaseError::WriterUnavailable)?;
+        receiver
+            .recv()
+            .map_err(|_| DatabaseError::WriterUnavailable)?
+    }
+
+    pub fn set_automatic_update_checks(
+        &self,
+        input: SetAutomaticUpdateChecksInput,
+    ) -> Result<StoredSettings> {
+        let (reply, receiver) = mpsc::sync_channel(1);
+        self.sender
+            .send(WriterMessage::SetAutomaticUpdateChecks { input, reply })
             .map_err(|_| DatabaseError::WriterUnavailable)?;
         receiver
             .recv()

@@ -21,6 +21,8 @@ const litestreamPin = readJson(
   'src-tauri/resources/sidecars/litestream-v1.json',
 )
 const stage = resolve('src-tauri/resources/release')
+const sourceProvenancePath = resolve(stage, 'source.json')
+const sourceProvenance = readJson(sourceProvenancePath)
 const releaseManifestPath = resolve(
   stage,
   llamaPin.stagingPaths.releaseManifest,
@@ -51,6 +53,14 @@ assertEqual(
   stripGeneratedFields(releaseManifest),
   llamaPin,
   'release inputs',
+)
+assertEqual(
+  sourceProvenance,
+  {
+    commit: run('git', ['rev-parse', 'HEAD'], { capture: true }),
+    dirty: run('git', ['status', '--porcelain'], { capture: true }).length > 0,
+  },
+  'release source provenance',
 )
 assertEqual(releaseManifest.target.architecture, 'arm64', 'architecture')
 assertEqual(releaseManifest.verification.modelBundled, false, 'model policy')
@@ -209,6 +219,7 @@ const requiredResources = {
   'resources/release/bin/litestream': 'bin/litestream',
   'resources/release/llama-server.json': 'release/llama-server.json',
   'resources/release/litestream.json': 'release/litestream.json',
+  'resources/release/source.json': 'release/source.json',
   'resources/release/licenses/llama.cpp-LICENSE':
     'licenses/llama.cpp-LICENSE',
   'resources/release/licenses/litestream-LICENSE':

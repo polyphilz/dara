@@ -168,6 +168,7 @@ export class FakeDaraBackend {
         requireEmptyPayload(payload, command)
         return {
           appearance: Appearance.System,
+          automaticUpdateChecksEnabled: true,
           desiredRetention: 0.9,
           keyboardBindings: DEFAULT_KEYBOARD_BINDINGS,
           launchAtLogin: false,

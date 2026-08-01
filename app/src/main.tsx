@@ -18,6 +18,7 @@ import {
   tauriFreshInstallRecoveryGateway,
 } from './recovery/index.ts'
 import { RecoveryWindow } from './recovery/RecoveryWindow.tsx'
+import { AppUpdater } from './updater/index.ts'
 
 const mainWindowHistory = createHashHistory()
 
@@ -39,7 +40,10 @@ async function bootstrap() {
       {context.mode === ApplicationLaunchMode.Recovery ? (
         <RecoveryWindow />
       ) : (
-        <MainWindow history={mainWindowHistory} />
+        <>
+          <AppUpdater />
+          <MainWindow history={mainWindowHistory} />
+        </>
       )}
     </StrictMode>,
   )

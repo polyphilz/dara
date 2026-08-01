@@ -136,13 +136,16 @@ fn finish_exit_during_loop_destroyed(app: &tauri::AppHandle, state: &ExitShutdow
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(
-        |app, _arguments, _cwd| {
-            if let Err(error) = windows::macos::show_main(app.clone()) {
-                log::error!("failed to show Dara for the secondary launch: {error}");
-            }
-        },
-    ));
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                if let Err(error) = windows::macos::show_main(app.clone()) {
+                    log::error!("failed to show Dara for the secondary launch: {error}");
+                }
+            },
+        ));
     let builder = builder.plugin(app_lock::plugin());
     #[cfg(not(feature = "e2e"))]
     let builder = builder.plugin(logging::plugin());
@@ -202,6 +205,7 @@ pub fn run() {
             windows::macos::get_spike_status,
             windows::macos::load_settings,
             windows::macos::set_appearance,
+            windows::macos::set_automatic_update_checks,
             windows::macos::set_keyboard_bindings,
             windows::macos::set_launch_at_login,
             windows::macos::set_quick_add_file_dialog_open,
