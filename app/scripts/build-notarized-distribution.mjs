@@ -56,7 +56,7 @@ assert(
 )
 const resume = arguments_.includes(ResumeArgument)
 const policy = readDistributionSigningPolicy()
-const notarization = readNotarizationEnvironment()
+const notarization = takeNotarizationEnvironment()
 preflight(notarization, policy)
 
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
@@ -177,10 +177,6 @@ function buildSignedApplication(signingPolicy) {
     { mode: 0o600 },
   )
 
-  const tauriEnvironment = { ...process.env }
-  for (const name of Object.values(NotarizationEnvironmentVariable)) {
-    delete tauriEnvironment[name]
-  }
   try {
     run('pnpm', [
       'exec',
@@ -193,7 +189,6 @@ function buildSignedApplication(signingPolicy) {
       '--bundles',
       'app',
     ], {
-      env: tauriEnvironment,
       stdio: 'inherit',
     })
   } finally {
@@ -419,9 +414,18 @@ function runNotarytoolJson(arguments_, credentials) {
   }
 }
 
-function readNotarizationEnvironment() {
+function takeNotarizationEnvironment() {
+  const values = Object.fromEntries(
+    Object.values(NotarizationEnvironmentVariable).map((name) => [
+      name,
+      process.env[name]?.trim(),
+    ]),
+  )
+  for (const name of Object.values(NotarizationEnvironmentVariable)) {
+    delete process.env[name]
+  }
   const value = (name) => {
-    const result = process.env[name]?.trim()
+    const result = values[name]
     assert(
       result,
       `${name} is required; copy .env.notarization.example to .env.notarization`,
