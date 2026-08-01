@@ -36,16 +36,15 @@ assert(existsSync(appPath), `application was not found: ${appPath}`)
 assert(existsSync(dmgPath), `disk image was not found: ${dmgPath}`)
 
 const suppliedApplicationSubmissionPath = scriptArguments[2]
-const applicationSubmissionPath = resolve(
-  suppliedApplicationSubmissionPath ??
-    'src-tauri/target/release/bundle/notarization/application.json',
-)
+const applicationSubmissionPath = suppliedApplicationSubmissionPath
+  ? resolve(suppliedApplicationSubmissionPath)
+  : undefined
 assert(
-  suppliedApplicationSubmissionPath === undefined ||
+  applicationSubmissionPath === undefined ||
     existsSync(applicationSubmissionPath),
   `application notarization state was not found: ${applicationSubmissionPath}`,
 )
-const expectedSidecarSha256 = existsSync(applicationSubmissionPath)
+const expectedSidecarSha256 = applicationSubmissionPath
   ? requireSignedSidecarSha256(
       readSubmissionState(
         DistributionArtifact.Application,

@@ -57,6 +57,11 @@ directory still existing. Transient status and stapling failures are retried,
 and `pnpm release:resume:distribution` continues those saved submissions
 without rebuilding or uploading again.
 
+`pnpm release:verify-distribution -- <app> <dmg>` verifies independently
+archived artifacts without consulting any ambient submission state in the
+checkout. The distribution build passes its application state explicitly when
+it needs to bind verification to the exact sidecar hashes submitted to Apple.
+
 ## Isolated runtime smoke
 
 The packaged app was launched against

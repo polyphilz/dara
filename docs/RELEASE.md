@@ -255,6 +255,16 @@ directory. When resuming older state that predates those values, Dara derives
 them from the preserved submitted application archive and upgrades the state
 before continuing.
 
+To inspect an independently archived app and DMG, run:
+
+```sh
+pnpm release:verify-distribution -- <app> <dmg>
+```
+
+That standalone form compares the supplied app with the app mounted from the
+DMG and does not read submission state left by a different build in the current
+checkout.
+
 ## 5. Archive the exact candidate
 
 Keep the candidate until the installed smoke check passes. From `app/`, set the
