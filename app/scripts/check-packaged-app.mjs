@@ -234,15 +234,17 @@ assertEqual(
   'packaged Litestream minimum macOS version',
 )
 
-const quarantine = spawnSync(
-  'xattr',
-  ['-p', 'com.apple.quarantine', appPath],
-  { encoding: 'utf8' },
-)
-assert(
-  quarantine.status !== 0,
-  'locally built Dara.app unexpectedly has a quarantine attribute',
-)
+if (signatureMode === PackageSignatureMode.AdHoc) {
+  const quarantine = spawnSync(
+    'xattr',
+    ['-p', 'com.apple.quarantine', appPath],
+    { encoding: 'utf8' },
+  )
+  assert(
+    quarantine.status !== 0,
+    'locally built Dara.app unexpectedly has a quarantine attribute',
+  )
+}
 
 const allowedResourceFiles = [
   'bin/llama-server',
