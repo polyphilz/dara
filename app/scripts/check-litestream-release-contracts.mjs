@@ -65,6 +65,12 @@ assert(
     draftRelease.includes('manifest.source?.dirty === false'),
   'release artifacts are not bound to a clean source commit',
 )
+assert(
+  draftRelease.includes("'ls-remote'") &&
+    draftRelease.includes("'refs/heads/main'") &&
+    !draftRelease.includes("'rev-parse', 'origin/main'"),
+  'draft release publication does not verify the live origin/main ref',
+)
 for (const [name, value] of Object.entries(pin.verification)) {
   if (typeof value === 'boolean') {
     assert(value, `Litestream protocol verification is not pinned green: ${name}`)

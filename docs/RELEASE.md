@@ -153,7 +153,9 @@ git status --short --branch
 ```
 
 The status must show `main` aligned with `origin/main` and no tracked or
-untracked changes. Record the source commit:
+untracked changes. The draft-publication command also checks GitHub's live
+`main` ref so a stale local remote-tracking ref cannot authorize a release.
+Record the source commit:
 
 ```sh
 git rev-parse HEAD
@@ -483,7 +485,7 @@ pnpm release:publish:draft -- "$HOME/Downloads/dara-v0.1.0-release-notes.md"
 The command refuses to continue unless:
 
 - all three version sources agree;
-- the worktree is clean and `main` exactly matches `origin/main`;
+- the worktree is clean and `main` exactly matches GitHub's live `main` ref;
 - an annotated `v0.1.0` tag points at that commit locally and on GitHub;
 - every expected artifact exists;
 - `latest.json`, the updater signature, and every SHA-256 agree.

@@ -3,22 +3,34 @@ import { relaunch } from '@tauri-apps/plugin-process'
 import type { UpdateGateway } from './contracts.ts'
 
 let pendingUpdate: Update | null = null
+let updateCheckTail: Promise<void> = Promise.resolve()
 const UPDATE_CHECK_TIMEOUT_MS = 30_000
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1_000
 
+function serializeUpdateCheck<T>(operation: () => Promise<T>): Promise<T> {
+  const result = updateCheckTail.then(operation)
+  updateCheckTail = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
+}
+
 export const tauriUpdateGateway: UpdateGateway = {
   async check() {
-    await pendingUpdate?.close()
-    pendingUpdate = await check({ timeout: UPDATE_CHECK_TIMEOUT_MS })
-    if (pendingUpdate === null) {
-      return null
-    }
-    return {
-      currentVersion: pendingUpdate.currentVersion,
-      version: pendingUpdate.version,
-      notes: pendingUpdate.body ?? null,
-      publishedAt: pendingUpdate.date ?? null,
-    }
+    return serializeUpdateCheck(async () => {
+      await pendingUpdate?.close()
+      pendingUpdate = await check({ timeout: UPDATE_CHECK_TIMEOUT_MS })
+      if (pendingUpdate === null) {
+        return null
+      }
+      return {
+        currentVersion: pendingUpdate.currentVersion,
+        version: pendingUpdate.version,
+        notes: pendingUpdate.body ?? null,
+        publishedAt: pendingUpdate.date ?? null,
+      }
+    })
   },
   async downloadAndInstall(onProgress) {
     if (pendingUpdate === null) {

@@ -38,10 +38,15 @@ assert(
   'draft releases must be created from main',
 )
 const sourceCommit = run('git', ['rev-parse', 'HEAD'], { capture: true })
+const remoteMain = run('git', [
+  'ls-remote',
+  '--heads',
+  'origin',
+  'refs/heads/main',
+], { capture: true }).split(/\s/u)[0]
 assert(
-  sourceCommit ===
-    run('git', ['rev-parse', 'origin/main'], { capture: true }),
-  'main must match origin/main before creating a draft release',
+  sourceCommit === remoteMain,
+  'main must match the live origin/main before creating a draft release',
 )
 verifyReleaseMetadata(releaseRoot, version, sourceCommit)
 assert(

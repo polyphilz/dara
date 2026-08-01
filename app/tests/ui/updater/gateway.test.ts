@@ -16,6 +16,7 @@ vi.mock('@tauri-apps/plugin-process', () => ({
 }))
 
 beforeEach(() => {
+  vi.resetModules()
   vi.clearAllMocks()
   mocks.check.mockResolvedValue({
     body: null,
@@ -42,3 +43,60 @@ test('bounds update checks and downloads with explicit timeouts', async () => {
     { timeout: 10 * 60 * 1_000 },
   )
 })
+
+test('serializes checks and keeps the newest checked update for installation', async () => {
+  const firstDownloadAndInstall = vi.fn().mockResolvedValue(undefined)
+  const secondDownloadAndInstall = vi.fn().mockResolvedValue(undefined)
+  const firstClose = vi.fn()
+  const firstCheck = deferred<{
+    body: null
+    close: typeof firstClose
+    currentVersion: string
+    date: null
+    downloadAndInstall: typeof firstDownloadAndInstall
+    version: string
+  }>()
+  mocks.check.mockReset()
+  mocks.check
+    .mockReturnValueOnce(firstCheck.promise)
+    .mockResolvedValueOnce({
+      body: null,
+      close: vi.fn(),
+      currentVersion: '0.1.0',
+      date: null,
+      downloadAndInstall: secondDownloadAndInstall,
+      version: '0.3.0',
+    })
+
+  const { tauriUpdateGateway } = await import(
+    '../../../src/updater/gateway.ts'
+  )
+  const automaticCheck = tauriUpdateGateway.check()
+  const manualCheck = tauriUpdateGateway.check()
+
+  await vi.waitFor(() => expect(mocks.check).toHaveBeenCalledTimes(1))
+  firstCheck.resolve({
+    body: null,
+    close: firstClose,
+    currentVersion: '0.1.0',
+    date: null,
+    downloadAndInstall: firstDownloadAndInstall,
+    version: '0.2.0',
+  })
+
+  await expect(automaticCheck).resolves.toMatchObject({ version: '0.2.0' })
+  await expect(manualCheck).resolves.toMatchObject({ version: '0.3.0' })
+  expect(firstClose).toHaveBeenCalledOnce()
+
+  await tauriUpdateGateway.downloadAndInstall(vi.fn())
+  expect(firstDownloadAndInstall).not.toHaveBeenCalled()
+  expect(secondDownloadAndInstall).toHaveBeenCalledOnce()
+})
+
+function deferred<T>() {
+  let resolvePromise: (value: T) => void = () => undefined
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve
+  })
+  return { promise, resolve: resolvePromise }
+}
