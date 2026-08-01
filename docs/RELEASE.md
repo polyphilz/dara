@@ -1,8 +1,8 @@
 # Releasing Dara
 
-This is the authoritative runbook for building and installing a personal Dara
-release. Follow it from a clean checkout of `main`; do not infer Dara's release
-process from another Tauri repository.
+This is the authoritative runbook for building and installing Dara. Follow it
+from a clean checkout of `main`; do not infer Dara's release process from
+another Tauri repository.
 
 For user-facing setup, privacy, restore, and decommissioning guidance, see
 [`OFFSITE_BACKUP.md`](OFFSITE_BACKUP.md).
@@ -10,11 +10,12 @@ For user-facing setup, privacy, restore, and decommissioning guidance, see
 ## Current release policy
 
 - Dara releases are built locally on the release Mac.
-- The supported personal-v1 artifact is an arm64 `.app` for macOS 14 or newer.
-- The artifact is ad-hoc signed. It is suitable for local use, but it is not a
-  notarized public distribution.
-- Dara does not currently have a tag-triggered GitHub release workflow, an
-  updater, or a DMG release target.
+- The supported personal artifact is an arm64 `.app` for macOS 14 or newer.
+  It remains ad-hoc signed for fast local release and acceptance work.
+- The public artifact is an arm64 Developer ID signed, hardened, notarized, and
+  stapled `.dmg` for macOS 14 or newer.
+- Dara does not currently have a tag-triggered GitHub release workflow or an
+  updater. The public DMG is built and notarized locally on the release Mac.
 - A release tag records the exact source commit. Pushing a tag does not build,
   upload, or publish Dara.
 - The GGUF model is not bundled. The installed app downloads and verifies it
@@ -180,6 +181,90 @@ app/src-tauri/target/release/bundle/macos/Dara.app
 A successful command ends with a `Packaged app passed` message. Any earlier
 failure means there is no releasable artifact.
 
+### Build the public Developer ID distribution
+
+This one-time Mac setup must already be complete:
+
+- the Keychain contains the valid `Developer ID Application: SILO77 LLC
+  (PMZH6ULML8)` certificate and its private key; and
+- the App Store Connect API `.p8` key is stored outside the repository with
+  owner-only permissions.
+
+Copy the safe template and fill in the issuer ID, key ID, and absolute path to
+that external key file:
+
+```sh
+cd app
+cp .env.notarization.example .env.notarization
+chmod 600 .env.notarization
+```
+
+`.env.notarization` and the `.p8` key are local secrets and must never be
+committed. The example contains names and placeholders only.
+
+Build the public artifact from `app/`:
+
+```sh
+pnpm release:build:distribution
+```
+
+The command performs the normal pin, license, CPU, Metal, and resource checks
+before any signing. It then:
+
+1. signs `llama-server` and Litestream with fixed Dara sidecar identifiers,
+   the SILO77 Developer ID identity, secure timestamps, and hardened runtime;
+2. builds and signs Dara with hardened runtime;
+3. submits the application to Apple, records its submission ID, waits for
+   acceptance, and staples its ticket;
+4. creates and signs the final drag-to-Applications DMG, submits it to Apple,
+   records its submission ID, and staples its ticket;
+5. mounts the exact DMG and rechecks its resources and Developer ID chain; and
+6. asks Gatekeeper to assess both the disk image and the installed app.
+
+Apple signatures change executable bytes. Dara therefore verifies the exact
+unsigned upstream sidecar hashes before signing, and the installed runtime
+accepts Litestream only when it either still matches that exact hash or has the
+fixed Dara Litestream identifier under the pinned SILO77 certificate and team.
+A third-party or tampered signature does not satisfy that requirement.
+
+The public artifact is:
+
+```text
+app/src-tauri/target/release/bundle/dmg/Dara_0.1.0_aarch64.dmg
+```
+
+A successful command ends with `Notarized distribution passed`. Do not upload
+the DMG if any signing, notarization, stapling, mounted-content, or Gatekeeper
+check fails.
+
+Submission state is kept beneath
+`app/src-tauri/target/release/bundle/notarization/`. Status checks retry
+transient Apple or network failures. If the command still stops after an
+upload, preserve the app, DMG, archive, and state files, then resume without
+rebuilding or resubmitting them:
+
+```sh
+pnpm release:resume:distribution
+```
+
+The resume command verifies that each saved upload still has the exact SHA-256
+recorded at submission time before querying Apple or stapling anything. The
+application state also records the signed sidecar SHA-256 values used by the
+final verifier, so a resume does not require the ignored signing-staging
+directory. When resuming older state that predates those values, Dara derives
+them from the preserved submitted application archive and upgrades the state
+before continuing.
+
+To inspect an independently archived app and DMG, run:
+
+```sh
+pnpm release:verify-distribution -- <app> <dmg>
+```
+
+That standalone form compares the supplied app with the app mounted from the
+DMG, authenticates and Gatekeeper-assesses both copies, and does not read
+submission state left by a different build in the current checkout.
+
 ## 5. Archive the exact candidate
 
 Keep the candidate until the installed smoke check passes. From `app/`, set the
@@ -301,22 +386,13 @@ state at their target. An LLM or automation must not run them against
 `~/Library/Application Support/dara` without the user's explicit approval for
 that exact recovery.
 
-## Public distribution is a separate milestone
+## Public distribution boundary
 
-Uploading the current artifact for other people would distribute an arm64,
-ad-hoc-signed app. Downloaded copies would be quarantined by macOS and would not
-provide the normal signed-and-notarized installation experience.
+Only the DMG produced by `pnpm release:build:distribution` is a supported
+public artifact. The faster `pnpm release:build:app` output remains ad-hoc
+signed and is for local installation and acceptance only.
 
-Before treating Dara as a public binary release, deliberately add:
-
-- Developer ID signing for Dara and every nested executable;
-- hardened-runtime entitlement validation;
-- notarization and stapling;
-- a DMG or another documented installation artifact;
-- a clean-machine Gatekeeper test;
-- an explicit architecture/support policy; and
-- a release workflow that preserves Dara's sidecar and model-verification
-  gates.
-
-Do not copy another app's generic `tauri-action` workflow without reproducing
-the guarantees in `pnpm release:build:app`.
+The distribution command deliberately composes with, rather than replaces,
+the existing sidecar and model-verification gates. A future CI or updater
+workflow must preserve those guarantees, keep the Apple private key out of the
+repository, and repeat the mounted-DMG Gatekeeper checks before publishing.

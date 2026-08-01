@@ -49,6 +49,9 @@ menus, and AppKit activation/focus behavior.
 | `pnpm check` | Ordinary local frontend gate; excludes Linux-canonical visual comparisons. |
 | `pnpm release:build:app` | Build, stage, verify, bundle, ad-hoc sign, and inspect the pinned arm64 release app. |
 | `pnpm release:verify-app` | Recheck an already-built `.app` without rebuilding llama.cpp. |
+| `pnpm release:build:distribution` | Rebuild and verify the pinned sidecars, Developer ID sign every executable with hardened runtime, notarize and staple the app and DMG, then run Gatekeeper checks against the mounted artifact. |
+| `pnpm release:resume:distribution` | Resume saved Apple submissions and existing signed artifacts after a transient notarization or stapling failure, without rebuilding or uploading them again. |
+| `pnpm release:verify-distribution -- <app> <dmg>` | Recheck an existing signed and notarized public artifact without rebuilding sidecars. |
 | `pnpm release:acceptance help` | Drive clean-first-run and previous-schema upgrade acceptance against isolated `.data/` directories and the packaged app. |
 
 Canonical screenshots use

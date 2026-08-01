@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 
+import {
+  DistributionSidecarKey,
+  readDistributionSigningPolicy,
+} from './distribution-signing.mjs'
+
 const manifest = 'src-tauri/Cargo.toml'
 const productionTree = cargoTree([])
 const e2eTree = cargoTree(['--features', 'e2e'])
@@ -10,6 +15,8 @@ const ordinaryConfig = JSON.parse(ordinaryConfigText)
 const releaseConfig = JSON.parse(
   readFileSync('src-tauri/tauri.release.conf.json', 'utf8'),
 )
+const distributionSigning = readDistributionSigningPolicy()
+const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
 const e2eConfig = JSON.parse(
   readFileSync('src-tauri/tauri.e2e.conf.json', 'utf8'),
 )
@@ -132,9 +139,41 @@ if (
 ) {
   throw new Error('Release config must produce an ad-hoc-signed macOS 14 app')
 }
+if (
+  distributionSigning.formatVersion !== 1 ||
+  distributionSigning.application.bundleIdentifier !==
+    productionIdentity.identifier ||
+  distributionSigning.application.signingIdentity !==
+    'Developer ID Application: SILO77 LLC (PMZH6ULML8)' ||
+  distributionSigning.application.teamIdentifier !== 'PMZH6ULML8'
+) {
+  throw new Error('Unexpected Developer ID distribution signing policy')
+}
+if (
+  distributionSigning.sidecars[DistributionSidecarKey.LlamaServer]
+    .bundlePath !==
+    requiredResources['resources/release/bin/llama-server'] ||
+  distributionSigning.sidecars[DistributionSidecarKey.Litestream]
+    .bundlePath !==
+    requiredResources['resources/release/bin/litestream']
+) {
+  throw new Error('Distribution sidecar paths diverge from release resources')
+}
+for (const command of [
+  'release:verify-contracts',
+  'release:stage-sidecars',
+  'release:verify-resources',
+  'release:sign-sidecars',
+  'release:verify-distribution',
+]) {
+  const scripts = JSON.stringify(packageJson.scripts)
+  if (!scripts.includes(command)) {
+    throw new Error(`Distribution release scripts omit ${command}`)
+  }
+}
 
 console.info(
-  'Native bundle safety passed: development, release, and E2E identities are separate; WDIO plugins are feature-gated; release resources are explicit; and model/test artifacts are excluded.',
+  'Native bundle safety passed: development, release, and E2E identities are separate; WDIO plugins are feature-gated; release resources are explicit; public distribution has a fixed Developer ID policy; and model/test artifacts are excluded.',
 )
 
 function assertIdentity(config, expected, label) {

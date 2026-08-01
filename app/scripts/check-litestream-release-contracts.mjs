@@ -2,6 +2,11 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 
+import {
+  DistributionSidecarKey,
+  readDistributionSigningPolicy,
+} from './distribution-signing.mjs'
+
 const pinPath = 'src-tauri/resources/sidecars/litestream-v1.json'
 const noticePath = 'src-tauri/resources/sidecars/litestream-NOTICE'
 const releaseConfigPath = 'src-tauri/tauri.release.conf.json'
@@ -13,6 +18,9 @@ const pin = readJson(pinPath)
 const releaseConfig = readJson(releaseConfigPath)
 const packageJson = readJson(packagePath)
 const rustContract = readFileSync(rustContractPath, 'utf8')
+const distributionSigning = readDistributionSigningPolicy()
+const litestreamSigningPolicy =
+  distributionSigning.sidecars[DistributionSidecarKey.Litestream]
 const canaryWorkflow = readFileSync(canaryWorkflowPath, 'utf8')
 const notice = readFileSync(noticePath, 'utf8')
 
@@ -68,6 +76,21 @@ assertEqual(
   pin.target.minimumSystemVersion,
   'packaged minimum macOS version',
 )
+assertEqual(
+  litestreamSigningPolicy.bundlePath,
+  pin.binary.bundlePath,
+  'Developer ID Litestream bundle path',
+)
+assertEqual(
+  litestreamSigningPolicy.component,
+  pin.component,
+  'Developer ID Litestream component',
+)
+assertEqual(
+  litestreamSigningPolicy.identifier,
+  'com.silo77.dara.sidecar.litestream',
+  'Developer ID Litestream requirement identifier',
+)
 
 assert(
   packageJson.scripts['release:stage-sidecars'].includes(
@@ -99,6 +122,8 @@ for (const contract of [
   'verify-compaction: true',
   'DARA_LITESTREAM_R2_ACCESS_KEY_ID',
   'DARA_LITESTREAM_R2_SECRET_ACCESS_KEY',
+  'EMBEDDED_DISTRIBUTION_SIGNING_POLICY',
+  'verify_distribution_signature',
 ]) {
   assert(rustContract.includes(contract), `Rust Litestream contract omits ${contract}`)
 }
@@ -142,6 +167,11 @@ for (const path of tracked) {
   assert(
     !normalized.endsWith('/.env.local') && !normalized.endsWith('.env.local'),
     `a local secret environment file is tracked: ${path}`,
+  )
+  assert(
+    !normalized.endsWith('/.env.notarization') &&
+      !normalized.endsWith('.env.notarization'),
+    `a local Apple notarization environment file is tracked: ${path}`,
   )
   assert(
     !normalized.startsWith('app/src-tauri/resources/release/'),
