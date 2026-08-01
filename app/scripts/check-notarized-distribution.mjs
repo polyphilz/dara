@@ -135,11 +135,6 @@ function verifySignedSidecarHashes(applicationPath) {
 
 function verifyNotarizedApplication(applicationPath) {
   verifySignedSidecarHashes(applicationPath)
-  run('node', [
-    'scripts/check-packaged-app.mjs',
-    applicationPath,
-    'developer-id',
-  ])
   run('xcrun', ['stapler', 'validate', applicationPath])
   run('/usr/sbin/spctl', [
     '--assess',
@@ -147,6 +142,11 @@ function verifyNotarizedApplication(applicationPath) {
     'execute',
     '--verbose=4',
     applicationPath,
+  ])
+  run('node', [
+    'scripts/check-packaged-app.mjs',
+    applicationPath,
+    'developer-id',
   ])
   return signatureField(
     run('/usr/bin/codesign', [

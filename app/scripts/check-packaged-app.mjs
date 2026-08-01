@@ -146,6 +146,35 @@ assertEqual(
   'bundled Litestream notice',
 )
 
+run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath])
+run('codesign', ['--verify', '--strict', '--verbose=2', sidecar])
+run('codesign', ['--verify', '--strict', '--verbose=2', litestream])
+const signature = run('codesign', ['-dv', '--verbose=4', appPath])
+assertEqual(
+  signatureField(signature, 'Identifier'),
+  productionIdentity.identifier,
+  'signed application identifier',
+)
+if (signatureMode === PackageSignatureMode.AdHoc) {
+  assertEqual(signatureField(signature, 'Signature'), 'adhoc', 'app signature')
+} else {
+  verifyDeveloperIdSignature(
+    appPath,
+    distributionPolicy,
+    productionIdentity.identifier,
+  )
+  for (const [key, path] of [
+    [DistributionSidecarKey.LlamaServer, sidecar],
+    [DistributionSidecarKey.Litestream, litestream],
+  ]) {
+    verifyDeveloperIdSignature(
+      path,
+      distributionPolicy,
+      distributionPolicy.sidecars[key].identifier,
+    )
+  }
+}
+
 for (const binary of [appBinary, sidecar, litestream]) {
   const description = run('file', ['-b', binary])
   assert(
@@ -176,35 +205,6 @@ assertEqual(
   litestreamPin.binary.versionOutput,
   'bundled Litestream version output',
 )
-
-run('codesign', ['--verify', '--deep', '--strict', '--verbose=2', appPath])
-run('codesign', ['--verify', '--strict', '--verbose=2', sidecar])
-run('codesign', ['--verify', '--strict', '--verbose=2', litestream])
-const signature = run('codesign', ['-dv', '--verbose=4', appPath])
-assertEqual(
-  signatureField(signature, 'Identifier'),
-  productionIdentity.identifier,
-  'signed application identifier',
-)
-if (signatureMode === PackageSignatureMode.AdHoc) {
-  assertEqual(signatureField(signature, 'Signature'), 'adhoc', 'app signature')
-} else {
-  verifyDeveloperIdSignature(
-    appPath,
-    distributionPolicy,
-    productionIdentity.identifier,
-  )
-  for (const [key, path] of [
-    [DistributionSidecarKey.LlamaServer, sidecar],
-    [DistributionSidecarKey.Litestream, litestream],
-  ]) {
-    verifyDeveloperIdSignature(
-      path,
-      distributionPolicy,
-      distributionPolicy.sidecars[key].identifier,
-    )
-  }
-}
 assertEqual(
   run('/usr/libexec/PlistBuddy', [
     '-c',
