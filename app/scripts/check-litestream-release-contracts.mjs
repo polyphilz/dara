@@ -2,19 +2,25 @@ import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 
+import {
+  DistributionSidecarKey,
+  readDistributionSigningPolicy,
+} from './distribution-signing.mjs'
+
 const pinPath = 'src-tauri/resources/sidecars/litestream-v1.json'
 const noticePath = 'src-tauri/resources/sidecars/litestream-NOTICE'
 const releaseConfigPath = 'src-tauri/tauri.release.conf.json'
 const packagePath = 'package.json'
 const rustContractPath = 'src-tauri/src/backup/litestream.rs'
-const distributionSigningPath = 'src-tauri/distribution-signing.json'
 const canaryWorkflowPath = '../.github/workflows/litestream-r2-canary.yml'
 
 const pin = readJson(pinPath)
 const releaseConfig = readJson(releaseConfigPath)
 const packageJson = readJson(packagePath)
 const rustContract = readFileSync(rustContractPath, 'utf8')
-const distributionSigning = readJson(distributionSigningPath)
+const distributionSigning = readDistributionSigningPolicy()
+const litestreamSigningPolicy =
+  distributionSigning.sidecars[DistributionSidecarKey.Litestream]
 const canaryWorkflow = readFileSync(canaryWorkflowPath, 'utf8')
 const notice = readFileSync(noticePath, 'utf8')
 
@@ -71,17 +77,17 @@ assertEqual(
   'packaged minimum macOS version',
 )
 assertEqual(
-  distributionSigning.sidecars.litestream.bundlePath,
+  litestreamSigningPolicy.bundlePath,
   pin.binary.bundlePath,
   'Developer ID Litestream bundle path',
 )
 assertEqual(
-  distributionSigning.sidecars.litestream.component,
+  litestreamSigningPolicy.component,
   pin.component,
   'Developer ID Litestream component',
 )
 assertEqual(
-  distributionSigning.sidecars.litestream.identifier,
+  litestreamSigningPolicy.identifier,
   'com.silo77.dara.sidecar.litestream',
   'Developer ID Litestream requirement identifier',
 )

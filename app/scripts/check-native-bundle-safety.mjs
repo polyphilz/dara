@@ -2,6 +2,11 @@ import { readFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import process from 'node:process'
 
+import {
+  DistributionSidecarKey,
+  readDistributionSigningPolicy,
+} from './distribution-signing.mjs'
+
 const manifest = 'src-tauri/Cargo.toml'
 const productionTree = cargoTree([])
 const e2eTree = cargoTree(['--features', 'e2e'])
@@ -10,9 +15,7 @@ const ordinaryConfig = JSON.parse(ordinaryConfigText)
 const releaseConfig = JSON.parse(
   readFileSync('src-tauri/tauri.release.conf.json', 'utf8'),
 )
-const distributionSigning = Object.freeze(
-  JSON.parse(readFileSync('src-tauri/distribution-signing.json', 'utf8')),
-)
+const distributionSigning = readDistributionSigningPolicy()
 const packageJson = JSON.parse(readFileSync('package.json', 'utf8'))
 const e2eConfig = JSON.parse(
   readFileSync('src-tauri/tauri.e2e.conf.json', 'utf8'),
@@ -147,9 +150,11 @@ if (
   throw new Error('Unexpected Developer ID distribution signing policy')
 }
 if (
-  distributionSigning.sidecars.llamaServer.bundlePath !==
+  distributionSigning.sidecars[DistributionSidecarKey.LlamaServer]
+    .bundlePath !==
     requiredResources['resources/release/bin/llama-server'] ||
-  distributionSigning.sidecars.litestream.bundlePath !==
+  distributionSigning.sidecars[DistributionSidecarKey.Litestream]
+    .bundlePath !==
     requiredResources['resources/release/bin/litestream']
 ) {
   throw new Error('Distribution sidecar paths diverge from release resources')
