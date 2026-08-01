@@ -10,20 +10,50 @@ import { join, resolve } from 'node:path'
 import {
   assert,
   assertEqual,
+  DistributionSidecarKey,
   readDistributionSigningPolicy,
   run,
   signatureField,
   signatureFields,
 } from './distribution-signing.mjs'
+import {
+  DistributionArtifact,
+  readSubmissionState,
+  requireSignedSidecarSha256,
+  sha256File,
+} from './distribution-notarization-state.mjs'
 
 const policy = readDistributionSigningPolicy()
+const scriptArguments = process.argv.slice(2)
+if (scriptArguments[0] === '--') {
+  scriptArguments.shift()
+}
 const appPath = resolve(
-  process.argv[2] ?? 'src-tauri/target/release/bundle/macos/Dara.app',
+  scriptArguments[0] ?? 'src-tauri/target/release/bundle/macos/Dara.app',
 )
-const dmgPath = resolve(requiredArgument(3, 'notarized DMG path'))
-
+const dmgPath = resolve(requiredArgument(1, 'notarized DMG path'))
 assert(existsSync(appPath), `application was not found: ${appPath}`)
 assert(existsSync(dmgPath), `disk image was not found: ${dmgPath}`)
+
+const suppliedApplicationSubmissionPath = scriptArguments[2]
+const applicationSubmissionPath = resolve(
+  suppliedApplicationSubmissionPath ??
+    'src-tauri/target/release/bundle/notarization/application.json',
+)
+assert(
+  suppliedApplicationSubmissionPath === undefined ||
+    existsSync(applicationSubmissionPath),
+  `application notarization state was not found: ${applicationSubmissionPath}`,
+)
+const expectedSidecarSha256 = existsSync(applicationSubmissionPath)
+  ? requireSignedSidecarSha256(
+      readSubmissionState(
+        DistributionArtifact.Application,
+        applicationSubmissionPath,
+      ),
+    )
+  : signedSidecarSha256(appPath)
+verifySignedSidecarHashes(appPath)
 
 run('/usr/bin/codesign', ['--verify', '--strict', '--verbose=2', dmgPath])
 const dmgSignature = run('/usr/bin/codesign', [
@@ -71,6 +101,7 @@ try {
     existsSync(mountedAppPath),
     'notarized disk image does not contain Dara.app',
   )
+  verifySignedSidecarHashes(mountedAppPath)
   run('node', [
     'scripts/check-packaged-app.mjs',
     mountedAppPath,
@@ -94,7 +125,28 @@ try {
 console.info(`Notarization, stapling, Gatekeeper, and DMG contents passed.`)
 
 function requiredArgument(index, label) {
-  const value = process.argv[index]
+  const value = scriptArguments[index]
   assert(value, `${label} is required`)
   return value
+}
+
+function verifySignedSidecarHashes(applicationPath) {
+  const actualSidecarSha256 = signedSidecarSha256(applicationPath)
+  for (const key of Object.values(DistributionSidecarKey)) {
+    assertEqual(
+      actualSidecarSha256[key],
+      expectedSidecarSha256[key],
+      `${policy.sidecars[key].component} signed bytes from the submitted application`,
+    )
+  }
+}
+
+function signedSidecarSha256(applicationPath) {
+  const resourcesPath = join(applicationPath, 'Contents/Resources')
+  return Object.fromEntries(
+    Object.values(DistributionSidecarKey).map((key) => [
+      key,
+      sha256File(join(resourcesPath, policy.sidecars[key].bundlePath)),
+    ]),
+  )
 }

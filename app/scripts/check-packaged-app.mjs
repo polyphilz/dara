@@ -8,6 +8,7 @@ import { basename, extname, resolve } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 import {
+  DistributionSidecarKey,
   readDistributionSigningPolicy,
   verifyDeveloperIdSignature,
 } from './distribution-signing.mjs'
@@ -94,12 +95,6 @@ if (signatureMode === PackageSignatureMode.AdHoc) {
     releaseManifest.binary.size,
     'bundled llama-server size',
   )
-} else {
-  assertEqual(
-    sha256File(sidecar),
-    sha256File(stagedSidecar),
-    'Developer ID signed llama-server copy',
-  )
 }
 assertEqual(
   litestreamManifest,
@@ -121,12 +116,6 @@ if (signatureMode === PackageSignatureMode.AdHoc) {
     lstatSync(litestream).size,
     litestreamPin.binary.size,
     'bundled Litestream size',
-  )
-} else {
-  assertEqual(
-    sha256File(litestream),
-    sha256File(stagedLitestream),
-    'Developer ID signed Litestream copy',
   )
 }
 assertEqual(
@@ -206,8 +195,8 @@ if (signatureMode === PackageSignatureMode.AdHoc) {
     productionIdentity.identifier,
   )
   for (const [key, path] of [
-    ['llamaServer', sidecar],
-    ['litestream', litestream],
+    [DistributionSidecarKey.LlamaServer, sidecar],
+    [DistributionSidecarKey.Litestream, litestream],
   ]) {
     verifyDeveloperIdSignature(
       path,

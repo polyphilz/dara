@@ -1,5 +1,4 @@
 import { spawnSync } from 'node:child_process'
-import { createHash } from 'node:crypto'
 import {
   chmodSync,
   copyFileSync,
@@ -17,14 +16,18 @@ import { basename, dirname, join, resolve } from 'node:path'
 
 import {
   assert,
+  assertEqual,
+  DistributionSidecarKey,
   readDistributionSigningPolicy,
   run,
 } from './distribution-signing.mjs'
-
-const DistributionArtifact = Object.freeze({
-  Application: 'application',
-  DiskImage: 'disk-image',
-})
+import {
+  DistributionArtifact,
+  readSubmissionState,
+  requireSignedSidecarSha256,
+  sha256File,
+  writeSubmissionState,
+} from './distribution-notarization-state.mjs'
 const NotarizationEnvironmentVariable = Object.freeze({
   Issuer: 'APPLE_API_ISSUER',
   KeyId: 'APPLE_API_KEY',
@@ -96,8 +99,11 @@ if (resume) {
     appArchivePath,
     appSubmissionPath,
     notarization,
+    signedSidecarSha256(appPath, policy),
   )
 }
+
+ensureApplicationSidecarHashes(appSubmissionPath, appPath, policy)
 
 completeNotarization(
   DistributionArtifact.Application,
@@ -129,7 +135,12 @@ completeNotarization(
   dmgPath,
   notarization,
 )
-run('pnpm', ['release:verify-distribution', appPath, dmgPath], {
+run('pnpm', [
+  'release:verify-distribution',
+  appPath,
+  dmgPath,
+  appSubmissionPath,
+], {
   stdio: 'inherit',
 })
 
@@ -188,6 +199,7 @@ function buildSignedApplication(signingPolicy) {
   } finally {
     rmSync(temporaryDirectory, { recursive: true, force: true })
   }
+  verifyPackagedSidecarsMatchStaging(appPath, signingPolicy)
 }
 
 function createApplicationArchive(applicationPath, archivePath) {
@@ -231,7 +243,13 @@ function createSignedDiskImage(applicationPath, diskImagePath, signingPolicy) {
   }
 }
 
-function submitAndRecord(artifact, uploadPath, statePath, credentials) {
+function submitAndRecord(
+  artifact,
+  uploadPath,
+  statePath,
+  credentials,
+  signedSidecarHashes,
+) {
   const result = runNotarytoolJson([
     'submit',
     uploadPath,
@@ -242,20 +260,14 @@ function submitAndRecord(artifact, uploadPath, statePath, credentials) {
     typeof result.id === 'string' && result.id.length > 0,
     `Apple did not return a submission ID for ${artifact}`,
   )
-  writeFileSync(
+  writeSubmissionState(
     statePath,
-    `${JSON.stringify(
-      {
-        formatVersion: 1,
-        artifact,
-        submissionId: result.id,
-        uploadPath,
-        uploadSha256: sha256(uploadPath),
-      },
-      null,
-      2,
-    )}\n`,
-    { mode: 0o600 },
+    {
+      artifact,
+      submissionId: result.id,
+      uploadPath,
+      signedSidecarSha256: signedSidecarHashes,
+    },
   )
   console.info(`Submitted ${artifact} to Apple as ${result.id}.`)
 }
@@ -282,28 +294,6 @@ function completeNotarization(
     `stapling ${artifact}`,
   )
   run('xcrun', ['stapler', 'validate', staplePath], { stdio: 'inherit' })
-}
-
-function readSubmissionState(expectedArtifact, statePath) {
-  const state = JSON.parse(readFileSync(statePath, 'utf8'))
-  assert(state.formatVersion === 1, 'unsupported notarization state format')
-  assert(
-    state.artifact === expectedArtifact,
-    `unexpected notarization artifact in ${statePath}`,
-  )
-  assert(
-    typeof state.submissionId === 'string' && state.submissionId.length > 0,
-    `missing Apple submission ID in ${statePath}`,
-  )
-  assert(
-    existsSync(state.uploadPath),
-    `notarization upload is missing: ${state.uploadPath}`,
-  )
-  assert(
-    sha256(state.uploadPath) === state.uploadSha256,
-    `notarization upload changed after submission: ${state.uploadPath}`,
-  )
-  return state
 }
 
 function waitForAcceptedSubmission(submissionId, artifact, credentials) {
@@ -476,8 +466,82 @@ function preflight(notarization, signingPolicy) {
   )
 }
 
-function sha256(path) {
-  return createHash('sha256').update(readFileSync(path)).digest('hex')
+function ensureApplicationSidecarHashes(
+  statePath,
+  applicationPath,
+  signingPolicy,
+) {
+  const state = readSubmissionState(
+    DistributionArtifact.Application,
+    statePath,
+  )
+  if (state.signedSidecarSha256 !== undefined) {
+    requireSignedSidecarSha256(state)
+    return
+  }
+
+  const extractionDirectory = mkdtempSync(
+    join(tmpdir(), 'dara-notarization-archive-'),
+  )
+  try {
+    run('ditto', ['-x', '-k', state.uploadPath, extractionDirectory])
+    const archivedApplicationPath = join(
+      extractionDirectory,
+      basename(applicationPath),
+    )
+    const archivedHashes = signedSidecarSha256(
+      archivedApplicationPath,
+      signingPolicy,
+    )
+    assertEqual(
+      signedSidecarSha256(applicationPath, signingPolicy),
+      archivedHashes,
+      'current application sidecars from the submitted archive',
+    )
+    writeSubmissionState(statePath, {
+      artifact: state.artifact,
+      submissionId: state.submissionId,
+      uploadPath: state.uploadPath,
+      signedSidecarSha256: archivedHashes,
+    })
+  } finally {
+    rmSync(extractionDirectory, { recursive: true, force: true })
+  }
+}
+
+function verifyPackagedSidecarsMatchStaging(
+  applicationPath,
+  signingPolicy,
+) {
+  const packagedHashes = signedSidecarSha256(
+    applicationPath,
+    signingPolicy,
+  )
+  for (const key of Object.values(DistributionSidecarKey)) {
+    assertEqual(
+      packagedHashes[key],
+      sha256File(resolve(signingPolicy.sidecars[key].stagingPath)),
+      `packaged ${signingPolicy.sidecars[key].component} signed bytes`,
+    )
+  }
+}
+
+function signedSidecarSha256(applicationPath, signingPolicy) {
+  const resourcesPath = resolve(applicationPath, 'Contents/Resources')
+  return {
+    [DistributionSidecarKey.LlamaServer]: sha256File(
+      resolve(
+        resourcesPath,
+        signingPolicy.sidecars[DistributionSidecarKey.LlamaServer].bundlePath,
+      ),
+    ),
+    [DistributionSidecarKey.Litestream]: sha256File(
+      resolve(
+        resourcesPath,
+        signingPolicy.sidecars[DistributionSidecarKey.Litestream].bundlePath,
+      ),
+    ),
+  }
 }
 
 function sleep(milliseconds) {

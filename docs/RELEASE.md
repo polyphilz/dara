@@ -248,7 +248,12 @@ pnpm release:resume:distribution
 ```
 
 The resume command verifies that each saved upload still has the exact SHA-256
-recorded at submission time before querying Apple or stapling anything.
+recorded at submission time before querying Apple or stapling anything. The
+application state also records the signed sidecar SHA-256 values used by the
+final verifier, so a resume does not require the ignored signing-staging
+directory. When resuming older state that predates those values, Dara derives
+them from the preserved submitted application archive and upgrades the state
+before continuing.
 
 ## 5. Archive the exact candidate
 

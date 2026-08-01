@@ -50,9 +50,12 @@ users will install.
 
 The distribution command owns Apple submission polling rather than delegating
 an uninterruptible wait to Tauri. It records each submission ID and exact
-upload SHA-256 beneath the ignored release bundle directory. Transient status
-and stapling failures are retried, and `pnpm release:resume:distribution`
-continues those saved submissions without rebuilding or uploading again.
+upload SHA-256 beneath the ignored release bundle directory. The application
+submission state also records the exact signed sidecar hashes, so resuming and
+final artifact verification do not depend on the temporary signing-staging
+directory still existing. Transient status and stapling failures are retried,
+and `pnpm release:resume:distribution` continues those saved submissions
+without rebuilding or uploading again.
 
 ## Isolated runtime smoke
 
