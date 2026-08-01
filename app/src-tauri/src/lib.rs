@@ -136,13 +136,16 @@ fn finish_exit_during_loop_destroyed(app: &tauri::AppHandle, state: &ExitShutdow
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default().plugin(tauri_plugin_single_instance::init(
-        |app, _arguments, _cwd| {
-            if let Err(error) = windows::macos::show_main(app.clone()) {
-                log::error!("failed to show Dara for the secondary launch: {error}");
-            }
-        },
-    ));
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_single_instance::init(
+            |app, _arguments, _cwd| {
+                if let Err(error) = windows::macos::show_main(app.clone()) {
+                    log::error!("failed to show Dara for the secondary launch: {error}");
+                }
+            },
+        ));
     let builder = builder.plugin(app_lock::plugin());
     #[cfg(not(feature = "e2e"))]
     let builder = builder.plugin(logging::plugin());

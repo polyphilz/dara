@@ -9,15 +9,19 @@ import {
 
 const pinPath = 'src-tauri/resources/sidecars/litestream-v1.json'
 const noticePath = 'src-tauri/resources/sidecars/litestream-NOTICE'
+const baseConfigPath = 'src-tauri/tauri.conf.json'
 const releaseConfigPath = 'src-tauri/tauri.release.conf.json'
 const packagePath = 'package.json'
 const rustContractPath = 'src-tauri/src/backup/litestream.rs'
+const distributionBuildPath = 'scripts/build-notarized-distribution.mjs'
 const canaryWorkflowPath = '../.github/workflows/litestream-r2-canary.yml'
 
 const pin = readJson(pinPath)
+const baseConfig = readJson(baseConfigPath)
 const releaseConfig = readJson(releaseConfigPath)
 const packageJson = readJson(packagePath)
 const rustContract = readFileSync(rustContractPath, 'utf8')
+const distributionBuild = readFileSync(distributionBuildPath, 'utf8')
 const distributionSigning = readDistributionSigningPolicy()
 const litestreamSigningPolicy =
   distributionSigning.sidecars[DistributionSidecarKey.Litestream]
@@ -111,6 +115,26 @@ for (const command of [
   )
 }
 assert(
+  packageJson.scripts['release:build:app'].includes(
+    'VITE_DARA_UPDATER_ENABLED=true',
+  ),
+  'release application build does not enable the updater frontend',
+)
+assert(
+  distributionBuild.includes("VITE_DARA_UPDATER_ENABLED: 'true'"),
+  'notarized distribution build does not enable the updater frontend',
+)
+assert(
+  typeof baseConfig.plugins?.updater?.pubkey === 'string' &&
+    baseConfig.plugins.updater.pubkey.length > 0,
+  'Tauri updater public key is missing',
+)
+assertEqual(
+  baseConfig.plugins.updater.endpoints,
+  ['https://github.com/polyphilz/dara/releases/latest/download/latest.json'],
+  'Tauri updater endpoint',
+)
+assert(
   rustContract.includes(
     'include_str!("../../resources/sidecars/litestream-v1.json")',
   ),
@@ -172,6 +196,15 @@ for (const path of tracked) {
     !normalized.endsWith('/.env.notarization') &&
       !normalized.endsWith('.env.notarization'),
     `a local Apple notarization environment file is tracked: ${path}`,
+  )
+  assert(
+    !normalized.endsWith('/.env.updater') &&
+      !normalized.endsWith('.env.updater'),
+    `a local updater signing environment file is tracked: ${path}`,
+  )
+  assert(
+    !/\.(?:key|p8|p12|pfx|certsigningrequest)$/u.test(normalized),
+    `a private signing credential is tracked: ${path}`,
   )
   assert(
     !normalized.startsWith('app/src-tauri/resources/release/'),

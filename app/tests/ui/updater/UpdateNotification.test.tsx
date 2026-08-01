@@ -1,0 +1,46 @@
+import { fireEvent, render, waitFor } from '@testing-library/react'
+import { expect, test, vi } from 'vitest'
+import {
+  UpdateController,
+  UpdateNotification,
+  UpdatePhase,
+  type AvailableUpdate,
+  type UpdateGateway,
+} from '../../../src/updater/index.ts'
+
+const availableUpdate: AvailableUpdate = {
+  currentVersion: '0.1.0',
+  version: '0.2.0',
+  notes: null,
+  publishedAt: null,
+}
+
+test('uses Dara buttons for installing or deferring an update', async () => {
+  const gateway: UpdateGateway = {
+    check: vi.fn().mockResolvedValue(availableUpdate),
+    downloadAndInstall: vi.fn().mockResolvedValue(undefined),
+    relaunch: vi.fn().mockResolvedValue(undefined),
+  }
+  const controller = new UpdateController(gateway)
+  await controller.checkManually()
+  const { getByRole, queryByRole } = render(
+    <UpdateNotification
+      controller={controller}
+      state={controller.getSnapshot()}
+    />,
+  )
+
+  expect(getByRole('status').textContent).toContain(
+    'Dara 0.2.0 is available',
+  )
+  expect(
+    getByRole('button', { name: 'Install and restart' }).classList.contains(
+      'dara-button',
+    ),
+  ).toBe(true)
+  fireEvent.click(getByRole('button', { name: 'Not now' }))
+  await waitFor(() =>
+    expect(controller.getSnapshot()).toEqual({ phase: UpdatePhase.Idle }),
+  )
+  expect(queryByRole('alert')).toBeNull()
+})

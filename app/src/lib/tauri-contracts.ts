@@ -55,6 +55,7 @@ export type DaraIpcCommand =
 export const DaraEvent = {
   BrowseCommand: 'browse-command',
   CardCreated: 'card-created',
+  CheckForUpdates: 'check-for-updates',
   OffsiteBackupProgress: 'offsite-backup-progress',
   OpenHome: 'open-home',
   OpenSettings: 'open-settings',

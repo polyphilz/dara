@@ -144,6 +144,14 @@ run('pnpm', [
   stdio: 'inherit',
 })
 
+run('node', [
+  'scripts/create-release-artifacts.mjs',
+  appPath,
+  dmgPath,
+], {
+  stdio: 'inherit',
+})
+
 console.info(`Notarized distribution passed: ${dmgPath}`)
 
 function buildSignedApplication(signingPolicy) {
@@ -189,6 +197,10 @@ function buildSignedApplication(signingPolicy) {
       '--bundles',
       'app',
     ], {
+      env: {
+        ...process.env,
+        VITE_DARA_UPDATER_ENABLED: 'true',
+      },
       stdio: 'inherit',
     })
   } finally {

@@ -12,6 +12,7 @@ target/
 .env.*
 !.env.example
 !app/.env.notarization.example
+!app/.env.updater.example
 
 # local model weights (llama.cpp GGUF, ONNX)
 models/

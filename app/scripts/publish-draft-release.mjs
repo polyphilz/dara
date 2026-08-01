@@ -1,0 +1,126 @@
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
+import { basename, resolve } from 'node:path'
+
+import { assert, run } from './distribution-signing.mjs'
+import { readReleaseVersion } from './release-version.mjs'
+
+const [notesArgument] = process.argv.slice(2)
+assert(
+  notesArgument,
+  'usage: node scripts/publish-draft-release.mjs <release-notes.md>',
+)
+
+const notesPath = resolve(notesArgument)
+assert(existsSync(notesPath), `release notes are missing: ${notesPath}`)
+
+const version = readReleaseVersion()
+const tag = `v${version}`
+const releaseRoot = resolve('src-tauri/target/release/bundle/release')
+const artifactPaths = [
+  resolve(releaseRoot, `Dara_${version}_aarch64.dmg`),
+  resolve(releaseRoot, `Dara_${version}_aarch64.app.tar.gz`),
+  resolve(releaseRoot, `Dara_${version}_aarch64.app.tar.gz.sig`),
+  resolve(releaseRoot, 'latest.json'),
+  resolve(releaseRoot, 'SHA256SUMS'),
+]
+
+for (const artifactPath of artifactPaths) {
+  assert(existsSync(artifactPath), `release artifact is missing: ${artifactPath}`)
+}
+verifyReleaseMetadata(releaseRoot, version)
+
+assert(
+  run('git', ['status', '--porcelain'], { capture: true }).length === 0,
+  'draft releases must be created from a clean worktree',
+)
+assert(
+  run('git', ['branch', '--show-current'], { capture: true }) === 'main',
+  'draft releases must be created from main',
+)
+assert(
+  run('git', ['rev-parse', 'HEAD'], { capture: true }) ===
+    run('git', ['rev-parse', 'origin/main'], { capture: true }),
+  'main must match origin/main before creating a draft release',
+)
+assert(
+  run('git', ['tag', '--list', tag], { capture: true }) === tag,
+  `${tag} must exist locally before creating the draft release`,
+)
+assert(
+  run('git', ['cat-file', '-t', `refs/tags/${tag}`], { capture: true }) === 'tag',
+  `${tag} must be an annotated local tag`,
+)
+assert(
+  run('git', ['rev-list', '-n', '1', tag], { capture: true }) ===
+    run('git', ['rev-parse', 'HEAD'], { capture: true }),
+  `${tag} must point to the current main commit`,
+)
+const remoteTag = run('git', [
+  'ls-remote',
+  '--tags',
+  'origin',
+  `refs/tags/${tag}^{}`,
+], { capture: true }).split(/\s/u)[0]
+assert(
+  remoteTag === run('git', ['rev-parse', 'HEAD'], { capture: true }),
+  `${tag} must be pushed to origin at the current main commit`,
+)
+
+run('gh', [
+  'release',
+  'create',
+  tag,
+  '--draft',
+  '--verify-tag',
+  '--title',
+  `Dara ${version}`,
+  '--notes-file',
+  notesPath,
+  ...artifactPaths,
+], { stdio: 'inherit' })
+
+console.info(
+  `Draft ${tag} created with ${artifactPaths.map(basename).join(', ')}.`,
+)
+
+function verifyReleaseMetadata(root, expectedVersion) {
+  const archiveName = `Dara_${expectedVersion}_aarch64.app.tar.gz`
+  const signature = readFileSync(resolve(root, `${archiveName}.sig`), 'utf8').trim()
+  const manifest = JSON.parse(readFileSync(resolve(root, 'latest.json'), 'utf8'))
+  const platform = manifest.platforms?.['darwin-aarch64']
+  assert(manifest.version === expectedVersion, 'latest.json has the wrong version')
+  assert(platform?.signature === signature, 'latest.json has the wrong signature')
+  assert(
+    platform?.url ===
+      `https://github.com/polyphilz/dara/releases/download/v${expectedVersion}/${archiveName}`,
+    'latest.json has the wrong updater URL',
+  )
+
+  const expectedChecksums = new Map(
+    readFileSync(resolve(root, 'SHA256SUMS'), 'utf8')
+      .trim()
+      .split(/\r?\n/u)
+      .map((line) => {
+        const match = line.match(/^([a-f0-9]{64})  (.+)$/u)
+        assert(match, `invalid SHA256SUMS line: ${line}`)
+        return [match[2], match[1]]
+      }),
+  )
+  for (const name of [
+    `Dara_${expectedVersion}_aarch64.dmg`,
+    archiveName,
+    `${archiveName}.sig`,
+    'latest.json',
+  ]) {
+    assert(expectedChecksums.has(name), `SHA256SUMS omits ${name}`)
+    assert(
+      expectedChecksums.get(name) === sha256File(resolve(root, name)),
+      `SHA256SUMS does not match ${name}`,
+    )
+  }
+}
+
+function sha256File(path) {
+  return createHash('sha256').update(readFileSync(path)).digest('hex')
+}
