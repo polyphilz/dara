@@ -70,8 +70,8 @@ test('keeps Quick Add open while choosing an occlusion image file', async () => 
   }
   mocks.ingestImageFile.mockResolvedValue(image)
   const { container, getByRole } = render(<QuickAddWindow />)
-  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
-  fireEvent.mouseDown(getByRole('option', { name: 'Image occlusion' }))
+  fireEvent.click(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.click(getByRole('option', { name: 'Image occlusion' }))
   const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
 
   fireEvent.click(input)
@@ -225,8 +225,8 @@ test('normalizes whitespace-only source to null and Mod-Enter saves from Source'
 
 test('creates a CLOZE card with canonical variants and a revealed search projection', async () => {
   const { getByRole } = render(<QuickAddWindow />)
-  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
-  fireEvent.mouseDown(getByRole('option', { name: 'Cloze' }))
+  fireEvent.click(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.click(getByRole('option', { name: 'Cloze' }))
   const text = getByRole('textbox', { name: 'Text' })
   const extra = getByRole('textbox', { name: 'Extra' })
   replaceEditorDocument(
@@ -265,8 +265,8 @@ test('opens the full image-occlusion editor from paste and saves layered masks',
   }
   mocks.ingestClipboardImage.mockResolvedValue(image)
   const { container, getByRole, queryByRole } = render(<QuickAddWindow />)
-  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
-  fireEvent.mouseDown(getByRole('option', { name: 'Image occlusion' }))
+  fireEvent.click(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.click(getByRole('option', { name: 'Image occlusion' }))
 
   const picker = getByRole('button', { name: 'Choose an image for occlusion' })
   fireEvent.paste(picker, {
@@ -339,8 +339,8 @@ test('opens the full image-occlusion editor from paste and saves layered masks',
 
 test('blocks invalid CLOZE syntax and focuses its Text editor', () => {
   const { getByRole } = render(<QuickAddWindow />)
-  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
-  fireEvent.mouseDown(getByRole('option', { name: 'Cloze' }))
+  fireEvent.click(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.click(getByRole('option', { name: 'Cloze' }))
   const text = getByRole('textbox', { name: 'Text' })
   replaceEditorDocument(text, '`{{c1::code is literal}}`')
 
@@ -358,7 +358,7 @@ test('the card-type dropdown is app-owned and consumes Escape before dismissal',
   const trigger = getByRole('button', { name: 'Card type: Basic' })
   expect(queryByRole('combobox', { name: 'Card type' })).toBeNull()
 
-  fireEvent.mouseDown(trigger)
+  fireEvent.click(trigger)
   const listbox = getByRole('listbox', { name: 'Card type' })
   expect(listbox.classList.contains('dara-select-popover')).toBe(true)
   await waitFor(() => {
@@ -441,14 +441,14 @@ test('the app-owned code-language menu closes without dismissing Quick Add', () 
   const trigger = getByRole('button', {
     name: 'Code language: TypeScript',
   })
-  fireEvent.mouseDown(trigger)
+  fireEvent.click(trigger)
   expect(getByRole('listbox', { name: 'Code language' })).not.toBeNull()
 
   fireEvent.pointerDown(source)
   expect(queryByRole('listbox', { name: 'Code language' })).toBeNull()
   expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
 
-  fireEvent.mouseDown(trigger)
+  fireEvent.click(trigger)
   fireEvent.keyDown(getByRole('option', { name: 'TypeScript' }), {
     key: 'Escape',
   })
