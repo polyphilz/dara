@@ -111,6 +111,9 @@ pub enum SearchError {
     #[error("model artifact is invalid: {0}")]
     InvalidArtifact(String),
 
+    #[error("semantic-search work was canceled during shutdown")]
+    ShutdownCanceled,
+
     #[error("llama.cpp sidecar is unavailable: {0}")]
     RuntimeUnavailable(String),
 
@@ -395,6 +398,7 @@ fn redacted_search_error(error: &SearchError) -> String {
 }
 
 fn prepare_and_verify(inner: &SearchServiceInner) -> Result<(), SearchError> {
+    ensure_search_active(&inner.shutdown)?;
     let sidecar_path = inner
         .sidecar_path
         .as_deref()
@@ -431,7 +435,7 @@ fn prepare_and_verify(inner: &SearchServiceInner) -> Result<(), SearchError> {
             status.phase = SemanticSearchPhase::Verifying;
             status.message = Some(format!("Verifying {}", override_path.display()));
         });
-        verify_artifact(override_path, &inner.manifest)?;
+        verify_artifact(override_path, &inner.manifest, &inner.shutdown)?;
         override_path.to_owned()
     } else {
         prepare_managed_artifact(inner)?
@@ -448,6 +452,7 @@ fn prepare_and_verify(inner: &SearchServiceInner) -> Result<(), SearchError> {
         status.message = Some("Verifying llama.cpp compatibility".into());
     });
     verify_golden_fixtures(inner, &artifact_path)?;
+    ensure_search_active(&inner.shutdown)?;
     let receipt_after =
         build_verification_receipt(&inner.runtime_settings, &artifact_path, sidecar_path)
             .inspect_err(|error| {
@@ -472,7 +477,13 @@ fn prepare_and_verify(inner: &SearchServiceInner) -> Result<(), SearchError> {
 }
 
 fn prepare_managed_artifact(inner: &SearchServiceInner) -> Result<PathBuf, SearchError> {
-    if inner.model_path.is_file() && verify_artifact(&inner.model_path, &inner.manifest).is_ok() {
+    if inner.model_path.is_file()
+        && artifact_can_be_reused(verify_artifact(
+            &inner.model_path,
+            &inner.manifest,
+            &inner.shutdown,
+        ))?
+    {
         update_status(inner, |status| {
             status.phase = SemanticSearchPhase::Verifying;
             status.downloaded_bytes = inner.manifest.config.model_file_size;
@@ -498,7 +509,11 @@ fn prepare_managed_artifact(inner: &SearchServiceInner) -> Result<PathBuf, Searc
         downloaded = 0;
     }
     if downloaded == inner.manifest.config.model_file_size {
-        if verify_artifact(&partial_path, &inner.manifest).is_ok() {
+        if artifact_can_be_reused(verify_artifact(
+            &partial_path,
+            &inner.manifest,
+            &inner.shutdown,
+        ))? {
             fs::rename(&partial_path, &inner.model_path)?;
             sync_directory(parent)?;
             return Ok(inner.model_path.clone());
@@ -527,7 +542,7 @@ fn prepare_managed_artifact(inner: &SearchServiceInner) -> Result<PathBuf, Searc
     if response.status() == StatusCode::RANGE_NOT_SATISFIABLE
         && downloaded == inner.manifest.config.model_file_size
     {
-        verify_artifact(&partial_path, &inner.manifest)?;
+        verify_artifact(&partial_path, &inner.manifest, &inner.shutdown)?;
     } else {
         response = response.error_for_status()?;
         let resumed = response.status() == StatusCode::PARTIAL_CONTENT;
@@ -547,11 +562,7 @@ fn prepare_managed_artifact(inner: &SearchServiceInner) -> Result<PathBuf, Searc
         }
         let mut buffer = [0_u8; 64 * 1024];
         loop {
-            if inner.shutdown.load(Ordering::Relaxed) {
-                return Err(SearchError::Runtime(
-                    "download canceled during shutdown".into(),
-                ));
-            }
+            ensure_search_active(&inner.shutdown)?;
             let read = response.read(&mut buffer)?;
             if read == 0 {
                 break;
@@ -561,7 +572,7 @@ fn prepare_managed_artifact(inner: &SearchServiceInner) -> Result<PathBuf, Searc
             update_status(inner, |status| status.downloaded_bytes = downloaded);
         }
         output.sync_all()?;
-        verify_artifact(&partial_path, &inner.manifest)?;
+        verify_artifact(&partial_path, &inner.manifest, &inner.shutdown)?;
     }
     fs::rename(&partial_path, &inner.model_path)?;
     sync_directory(parent)?;
@@ -591,7 +602,12 @@ fn validate_content_range(
     Ok(())
 }
 
-fn verify_artifact(path: &Path, manifest: &TextEmbeddingIndexManifest) -> Result<(), SearchError> {
+fn verify_artifact(
+    path: &Path,
+    manifest: &TextEmbeddingIndexManifest,
+    shutdown: &AtomicBool,
+) -> Result<(), SearchError> {
+    ensure_search_active(shutdown)?;
     let metadata = path.metadata().map_err(|error| {
         SearchError::InvalidArtifact(format!("cannot read {}: {error}", path.display()))
     })?;
@@ -604,16 +620,7 @@ fn verify_artifact(path: &Path, manifest: &TextEmbeddingIndexManifest) -> Result
         )));
     }
     let mut file = File::open(path)?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 1024 * 1024];
-    loop {
-        let read = file.read(&mut buffer)?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
-    }
-    let observed = hex(&digest.finalize());
+    let observed = sha256_reader(&mut file, shutdown)?;
     if observed != manifest.model_file_sha256 {
         return Err(SearchError::InvalidArtifact(format!(
             "{} has SHA-256 {observed}; expected {}",
@@ -622,6 +629,37 @@ fn verify_artifact(path: &Path, manifest: &TextEmbeddingIndexManifest) -> Result
         )));
     }
     Ok(())
+}
+
+fn artifact_can_be_reused(result: Result<(), SearchError>) -> Result<bool, SearchError> {
+    match result {
+        Ok(()) => Ok(true),
+        Err(SearchError::ShutdownCanceled) => Err(SearchError::ShutdownCanceled),
+        Err(_) => Ok(false),
+    }
+}
+
+fn sha256_reader(reader: &mut impl Read, shutdown: &AtomicBool) -> Result<String, SearchError> {
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 1024 * 1024];
+    loop {
+        ensure_search_active(shutdown)?;
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        digest.update(&buffer[..read]);
+    }
+    ensure_search_active(shutdown)?;
+    Ok(hex(&digest.finalize()))
+}
+
+fn ensure_search_active(shutdown: &AtomicBool) -> Result<(), SearchError> {
+    if shutdown.load(Ordering::Acquire) {
+        Err(SearchError::ShutdownCanceled)
+    } else {
+        Ok(())
+    }
 }
 
 fn build_verification_receipt(
@@ -812,6 +850,7 @@ fn verify_golden_fixtures(
     inner: &SearchServiceInner,
     model_path: &Path,
 ) -> Result<(), SearchError> {
+    ensure_search_active(&inner.shutdown)?;
     let fixtures: GoldenFixtureFile = serde_json::from_str(embedding_index::JINA_V1_GOLDEN_JSON)?;
     if fixtures.fixture_version != 1
         || fixtures.model_file_sha256 != inner.manifest.model_file_sha256
@@ -829,6 +868,7 @@ fn verify_golden_fixtures(
         fixtures.generated_with.device,
     );
     for case in fixtures.cases {
+        ensure_search_active(&inner.shutdown)?;
         let observed = embed_with_model(inner, model_path, &case.input)?;
         embedding_index::validate_embedding(&observed, inner.manifest.dimension as usize)?;
         embedding_index::validate_embedding(&case.embedding, inner.manifest.dimension as usize)?;
@@ -853,6 +893,7 @@ fn verify_golden_fixtures(
             )));
         }
     }
+    ensure_search_active(&inner.shutdown)?;
     Ok(())
 }
 
@@ -1660,6 +1701,23 @@ fn hex(bytes: &[u8]) -> String {
 mod tests {
     use super::*;
 
+    struct CancelAfterFirstRead<'a> {
+        input: std::io::Cursor<Vec<u8>>,
+        shutdown: &'a AtomicBool,
+        reads: usize,
+    }
+
+    impl Read for CancelAfterFirstRead<'_> {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            let read = self.input.read(buffer)?;
+            self.reads += 1;
+            if self.reads == 1 {
+                self.shutdown.store(true, Ordering::Release);
+            }
+            Ok(read)
+        }
+    }
+
     fn test_runtime_settings() -> LlamaRuntimeSettings {
         LlamaRuntimeSettings {
             device: Some("test-device".into()),
@@ -1789,6 +1847,34 @@ mod tests {
             validate_content_range(Some(&invalid), 100),
             Err(SearchError::InvalidArtifact(_))
         ));
+    }
+
+    #[test]
+    fn artifact_hashing_stops_between_chunks_during_shutdown() {
+        let shutdown = AtomicBool::new(false);
+        let mut reader = CancelAfterFirstRead {
+            input: std::io::Cursor::new(vec![7_u8; 2 * 1024 * 1024]),
+            shutdown: &shutdown,
+            reads: 0,
+        };
+
+        let result = sha256_reader(&mut reader, &shutdown);
+
+        assert!(matches!(result, Err(SearchError::ShutdownCanceled)));
+        assert_eq!(reader.reads, 1);
+        assert!(reader.input.position() < reader.input.get_ref().len() as u64);
+    }
+
+    #[test]
+    fn artifact_reuse_does_not_swallow_shutdown_cancellation() {
+        assert!(matches!(
+            artifact_can_be_reused(Err(SearchError::ShutdownCanceled)),
+            Err(SearchError::ShutdownCanceled)
+        ));
+        assert!(!artifact_can_be_reused(Err(SearchError::InvalidArtifact(
+            "invalid fixture".into()
+        )))
+        .expect("invalid artifacts should be replaced"));
     }
 
     #[test]
