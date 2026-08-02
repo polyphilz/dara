@@ -28,6 +28,7 @@ use crate::{
         connection::{self, FileState},
         DatabasePaths, InitializationOptions,
     },
+    windows::macos::MAIN_LABEL,
 };
 
 #[cfg(feature = "e2e")]
@@ -351,7 +352,7 @@ fn complete_development_recovery(
     })?;
     context.transition_to_normal();
     let window = app
-        .get_webview_window("main")
+        .get_webview_window(MAIN_LABEL)
         .ok_or_else(|| RecoveryCommandError::internal("Could not find the Dara window."))?;
     window.eval("window.location.reload()").map_err(|error| {
         RecoveryCommandError::internal(format!(

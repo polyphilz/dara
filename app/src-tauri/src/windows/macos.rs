@@ -38,7 +38,7 @@ use crate::{
 /// launch can be told apart from someone opening Dara from the Dock or Spotlight.
 pub const AUTOSTART_ARGUMENT: &str = "--autostart";
 
-const MAIN_LABEL: &str = "main";
+pub(crate) const MAIN_LABEL: &str = "main";
 const QUICK_ADD_LABEL: &str = "quick-add";
 const TRAY_ID: &str = "dara-tray";
 const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../icons/tray-icon.png");
