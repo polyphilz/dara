@@ -38,7 +38,7 @@ use crate::{
 /// launch can be told apart from someone opening Dara from the Dock or Spotlight.
 pub const AUTOSTART_ARGUMENT: &str = "--autostart";
 
-const MAIN_LABEL: &str = "main";
+pub(crate) const MAIN_LABEL: &str = "main";
 const QUICK_ADD_LABEL: &str = "quick-add";
 const TRAY_ID: &str = "dara-tray";
 const TRAY_ICON_BYTES: &[u8] = include_bytes!("../../icons/tray-icon.png");
@@ -222,12 +222,21 @@ const fn main_window_close_action(
 }
 
 pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
+    app.set_activation_policy(tauri::ActivationPolicy::Regular);
+    setup_regular_application(app.handle(), settings)
+}
+
+pub(crate) fn setup_handle(app: &AppHandle, settings: StoredSettings) -> tauri::Result<()> {
+    app.set_activation_policy(tauri::ActivationPolicy::Regular)?;
+    setup_regular_application(app, settings)
+}
+
+fn setup_regular_application(app: &AppHandle, settings: StoredSettings) -> tauri::Result<()> {
     // Dara stays a Regular application for its whole lifetime. macOS binds menu-bar ownership
     // during activation, from the policy the process already holds at that moment, so an
     // Accessory process that is activated by its own menu-bar icon can never take the menu
     // bar afterwards -- it reads keystrokes while the previously active application stays
     // named in the menu bar. Remaining Regular costs a Dock icon and keeps activation honest.
-    app.set_activation_policy(tauri::ActivationPolicy::Regular);
     app.get_webview_window(MAIN_LABEL)
         .ok_or(tauri::Error::WebviewNotFound)?
         .set_title(&app.package_info().name)?;
@@ -237,18 +246,18 @@ pub fn setup(app: &mut App, settings: StoredSettings) -> tauri::Result<()> {
     app.manage(state);
 
     install_application_menu(app)?;
-    create_quick_add_window(app.handle())?;
+    create_quick_add_window(app)?;
     install_tray(app, &settings.keyboard_bindings)?;
-    register_shortcuts(app.handle(), &settings.keyboard_bindings);
-    install_clock_change_observers(app.handle());
+    register_shortcuts(app, &settings.keyboard_bindings);
+    install_clock_change_observers(app);
 
-    refresh_autostart_registration(app.handle());
+    refresh_autostart_registration(app);
     if launched_by_autostart() {
         // Signing in is not a request to use Dara. Leave the window closed and hand the
         // foreground straight back, so launch-at-login stays a residency setting.
         log::info!("started by launch-at-login; staying resident without a window");
         enter_resident_mode();
-    } else if let Err(error) = activate_main_window(app.handle()) {
+    } else if let Err(error) = activate_main_window(app) {
         // Opening Dara deliberately, from the Dock or Spotlight, opens its window like any
         // other application. The policy is already Regular by this point, before macOS
         // activates the launching process, which is the ordering that lets the window arrive
@@ -297,7 +306,7 @@ pub fn setup_recovery(app: &mut App) -> tauri::Result<()> {
     Ok(())
 }
 
-fn enable_main_navigation_gestures(app: &App) -> tauri::Result<()> {
+fn enable_main_navigation_gestures(app: &AppHandle) -> tauri::Result<()> {
     let window = app
         .get_webview_window(MAIN_LABEL)
         .ok_or(tauri::Error::WebviewNotFound)?;
@@ -339,8 +348,8 @@ fn install_clock_change_observers(app: &AppHandle) {
     }
 }
 
-fn install_application_menu(app: &mut App) -> tauri::Result<()> {
-    let menu = Menu::default(app.handle())?;
+fn install_application_menu(app: &AppHandle) -> tauri::Result<()> {
+    let menu = Menu::default(app)?;
     if let Some(application_menu) = menu.items()?.into_iter().find_map(|item| match item {
         MenuItemKind::Submenu(submenu) => Some(submenu),
         _ => None,
@@ -500,8 +509,8 @@ fn tray_menu(app: &AppHandle, bindings: &[KeyboardBinding]) -> tauri::Result<Men
         .build()
 }
 
-fn install_tray(app: &App, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
-    let menu = tray_menu(app.handle(), bindings)?;
+fn install_tray(app: &AppHandle, bindings: &[KeyboardBinding]) -> tauri::Result<()> {
+    let menu = tray_menu(app, bindings)?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
@@ -1185,7 +1194,7 @@ pub fn handle_window_event(window: &tauri::Window, event: &WindowEvent) {
                 let launch_mode = window
                     .app_handle()
                     .try_state::<ApplicationLaunchContext>()
-                    .map(|context| context.mode);
+                    .map(|context| context.mode());
                 match main_window_close_action(launch_mode) {
                     MainWindowCloseAction::Exit => {
                         log::info!("recovery window close requested application exit");

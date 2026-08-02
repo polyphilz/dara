@@ -21,7 +21,7 @@ use std::{
     time::Instant,
 };
 
-use tauri::{Emitter, Manager, RunEvent};
+use tauri::{AppHandle, Emitter, Manager, RunEvent};
 
 pub use recovery::run_from_args as run_recovery_from_args;
 
@@ -134,6 +134,82 @@ fn finish_exit_during_loop_destroyed(app: &tauri::AppHandle, state: &ExitShutdow
     state.complete_shutdown_once(|| shutdown_managed_services(app));
 }
 
+fn initialize_normal_services(
+    app: &AppHandle,
+    database_paths: &database::DatabasePaths,
+) -> Result<database::StoredSettings, Box<dyn std::error::Error>> {
+    database::register_sqlite_vec()?;
+    let database = database::initialize(
+        database_paths.clone(),
+        env!("CARGO_PKG_VERSION"),
+        database::InitializationOptions::default(),
+    )?;
+    if recovery::restored_offsite_takeover_required(database_paths)? {
+        let client = database.client();
+        if let Some(config) = client.load_offsite_backup_config()? {
+            client.set_offsite_backup_takeover_reason(
+                config.backup_set_id,
+                Some(database::OffsiteBackupTakeoverReason::RestoredBackup),
+            )?;
+        }
+    }
+    log::info!("database ready");
+    let resource_dir = app.path().resource_dir()?;
+    let search =
+        search::SearchService::start(database.client(), database.paths().root(), &resource_dir)?;
+    let ocr = media::OcrCoordinator::start(database.client())?;
+    let offsite_media = backup::media_reconciliation::MediaBackupCoordinator::start(
+        database.client(),
+        database.paths().media.clone(),
+    );
+    let litestream = backup::litestream_runtime::LitestreamRuntimeService::start(
+        database.client(),
+        database.paths().root.clone(),
+        database.paths().main.clone(),
+        resource_dir.clone(),
+    );
+    let offsite_checkpoint = backup::checkpoint::CheckpointCoordinator::start(
+        database.client(),
+        offsite_media.checkpoint_handle(),
+        litestream.checkpoint_handle(),
+        database.paths().root.clone(),
+        database.paths().main.clone(),
+        resource_dir,
+        env!("CARGO_PKG_VERSION").to_owned(),
+    );
+    let startup_settings = database.client().load_settings()?;
+    app.manage(database);
+    app.manage(search);
+    app.manage(ocr);
+    app.manage(offsite_media);
+    app.manage(litestream);
+    app.manage(offsite_checkpoint);
+    app.manage(backup::commands::OffsiteBackupOperationRegistry::default());
+
+    Ok(startup_settings)
+}
+
+fn finish_normal_runtime(
+    app: &AppHandle,
+    database_paths: &database::DatabasePaths,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if recovery_startup::take_show_main_after_restart_request(database_paths)? {
+        windows::macos::show_main(app.clone()).map_err(std::io::Error::other)?;
+    }
+    recovery::confirm_restored_launch(database_paths)?;
+    Ok(())
+}
+
+pub(crate) fn initialize_normal_runtime_after_recovery(
+    app: &AppHandle,
+    database_paths: database::DatabasePaths,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let startup_settings = initialize_normal_services(app, &database_paths)?;
+
+    windows::macos::setup_handle(app, startup_settings)?;
+    finish_normal_runtime(app, &database_paths)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
@@ -224,75 +300,22 @@ pub fn run() {
             let launch_context = if pair_state == recovery_startup::DatabasePairState::Fresh
                 && recovery_startup::e2e_start_fresh_requested()
             {
-                recovery_startup::ApplicationLaunchContext {
-                    mode: recovery_startup::ApplicationLaunchMode::Normal,
-                }
+                recovery_startup::ApplicationLaunchContext::new(
+                    recovery_startup::ApplicationLaunchMode::Normal,
+                )
             } else {
                 launch_context
             };
+            let launch_mode = launch_context.mode();
             app.manage(launch_context);
-            if launch_context.mode == recovery_startup::ApplicationLaunchMode::Recovery {
+            if launch_mode == recovery_startup::ApplicationLaunchMode::Recovery {
                 app.manage(recovery_startup::FreshInstallRecoveryState::default());
                 windows::macos::setup_recovery(app)?;
                 return Ok(());
             }
-            database::register_sqlite_vec()?;
-            let database = database::initialize(
-                database_paths.clone(),
-                env!("CARGO_PKG_VERSION"),
-                database::InitializationOptions::default(),
-            )?;
-            if recovery::restored_offsite_takeover_required(&database_paths)? {
-                let client = database.client();
-                if let Some(config) = client.load_offsite_backup_config()? {
-                    client.set_offsite_backup_takeover_reason(
-                        config.backup_set_id,
-                        Some(database::OffsiteBackupTakeoverReason::RestoredBackup),
-                    )?;
-                }
-            }
-            log::info!("database ready");
-            let resource_dir = app.path().resource_dir()?;
-            let search = search::SearchService::start(
-                database.client(),
-                database.paths().root(),
-                &resource_dir,
-            )?;
-            let ocr = media::OcrCoordinator::start(database.client())?;
-            let offsite_media = backup::media_reconciliation::MediaBackupCoordinator::start(
-                database.client(),
-                database.paths().media.clone(),
-            );
-            let litestream = backup::litestream_runtime::LitestreamRuntimeService::start(
-                database.client(),
-                database.paths().root.clone(),
-                database.paths().main.clone(),
-                resource_dir.clone(),
-            );
-            let offsite_checkpoint = backup::checkpoint::CheckpointCoordinator::start(
-                database.client(),
-                offsite_media.checkpoint_handle(),
-                litestream.checkpoint_handle(),
-                database.paths().root.clone(),
-                database.paths().main.clone(),
-                resource_dir.clone(),
-                env!("CARGO_PKG_VERSION").to_owned(),
-            );
-            let startup_settings = database.client().load_settings()?;
-            app.manage(database);
-            app.manage(search);
-            app.manage(ocr);
-            app.manage(offsite_media);
-            app.manage(litestream);
-            app.manage(offsite_checkpoint);
-            app.manage(backup::commands::OffsiteBackupOperationRegistry::default());
-
+            let startup_settings = initialize_normal_services(app.handle(), &database_paths)?;
             windows::setup(app, startup_settings)?;
-            if recovery_startup::take_show_main_after_restart_request(&database_paths)? {
-                windows::macos::show_main(app.handle().clone()).map_err(std::io::Error::other)?;
-            }
-            recovery::confirm_restored_launch(&database_paths)?;
-            Ok(())
+            finish_normal_runtime(app.handle(), &database_paths)
         })
         .on_window_event(windows::handle_window_event)
         .build(tauri::generate_context!())
