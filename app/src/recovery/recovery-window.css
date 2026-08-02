@@ -1,17 +1,44 @@
 .recovery-window {
   min-height: 100vh;
   display: grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 680px);
+  align-content: center;
+  justify-content: center;
   padding: 42px 24px;
 }
 
+.recovery-brand {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 24px;
+  color: var(--ink);
+}
+
+.recovery-brand-mark {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  background: linear-gradient(145deg, #ffad7f, #ff6d54);
+  mask: url('../../src-tauri/icons/tray-icon.svg') center / contain no-repeat;
+  -webkit-mask: url('../../src-tauri/icons/tray-icon.svg') center / contain no-repeat;
+}
+
+.recovery-brand-wordmark {
+  color: var(--accent);
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  line-height: 1;
+}
+
 .recovery-card {
-  width: min(680px, 100%);
+  width: 100%;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 14px;
   background: var(--surface);
-  box-shadow: 0 18px 50px color-mix(in srgb, var(--ink) 8%, transparent);
 }
 
 .recovery-header {
@@ -21,16 +48,9 @@
   border-bottom: 1px solid var(--line);
 }
 
-.recovery-header > span {
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
 .recovery-header h1 {
   margin: 0;
-  font-size: 25px;
+  font-size: 18px;
   line-height: 1.2;
 }
 

@@ -61,9 +61,6 @@
   border-radius: 10px;
   color: #24211e;
   background: #fbfaf8;
-  box-shadow:
-    0 18px 42px rgba(20, 17, 14, 0.24),
-    0 3px 10px rgba(20, 17, 14, 0.12);
   scrollbar-width: thin;
 }
 
@@ -101,9 +98,6 @@
   border-color: rgba(255, 255, 255, 0.18);
   color: #f5f1ea;
   background: #292624;
-  box-shadow:
-    0 18px 42px rgba(0, 0, 0, 0.46),
-    0 3px 10px rgba(0, 0, 0, 0.3);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -111,8 +105,5 @@
     border-color: rgba(255, 255, 255, 0.18);
     color: #f5f1ea;
     background: #292624;
-    box-shadow:
-      0 18px 42px rgba(0, 0, 0, 0.46),
-      0 3px 10px rgba(0, 0, 0, 0.3);
   }
 }
