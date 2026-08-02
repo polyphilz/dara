@@ -101,6 +101,41 @@ describe('rejects feature-local typography', () => {
     expect(found.map((entry) => entry.line)).toEqual([2, 5])
   })
 
+  test('camelCase weight, tracking, and leading assignments fail', () => {
+    const found = violations(
+      'const style = { fontWeight: 700, letterSpacing: 0.04, lineHeight: 1.2 }\n' +
+        '<div fontWeight={700} letterSpacing={0.04} lineHeight={1.2} />\n',
+      'src/windows/main/Settings.tsx',
+    )
+    expect(found.map((entry) => entry.check)).toEqual([
+      TypographyCheckKind.FontWeight,
+      TypographyCheckKind.LetterSpacing,
+      TypographyCheckKind.LineHeight,
+      TypographyCheckKind.FontWeight,
+      TypographyCheckKind.LetterSpacing,
+      TypographyCheckKind.LineHeight,
+    ])
+  })
+
+  test('wrapped camelCase weight, tracking, and leading assignments fail', () => {
+    const found = violations(
+      'const style = {\n' +
+        '  fontWeight:\n    compact ? 600 : 700,\n' +
+        '  letterSpacing:\n    dense ? 0.02 : 0.04,\n' +
+        '  lineHeight:\n    fallback ?? 1.2,\n' +
+        '}\n' +
+        'const node = <text letterSpacing={\n  dense ? 0.02 : 0.04\n} />\n',
+      'src/windows/main/Settings.tsx',
+    )
+    expect(found.map((entry) => entry.check)).toEqual([
+      TypographyCheckKind.FontWeight,
+      TypographyCheckKind.LetterSpacing,
+      TypographyCheckKind.LineHeight,
+      TypographyCheckKind.LetterSpacing,
+    ])
+    expect(found.map((entry) => entry.line)).toEqual([2, 4, 6, 9])
+  })
+
   test('a feature-local variable cannot hide a raw type value', () => {
     const found = violations(
       ':root {\n' +
@@ -154,6 +189,20 @@ describe('accepts the central typography system', () => {
           '  line-height:\n    var(--type-leading-supporting);\n' +
           '  letter-spacing:\n    var(--type-tracking-supporting);\n' +
           '}\n',
+      ),
+    ).toEqual([])
+  })
+
+  test('camelCase type tokens pass', () => {
+    expect(
+      violations(
+        "const style = {\n" +
+          "  fontSize: 'var(--type-size-supporting)',\n" +
+          "  fontWeight: 'var(--type-weight-supporting)',\n" +
+          "  lineHeight: 'var(--type-leading-supporting)',\n" +
+          "  letterSpacing: 'var(--type-tracking-supporting)',\n" +
+          '}\n',
+        'src/windows/main/Settings.tsx',
       ),
     ).toEqual([])
   })

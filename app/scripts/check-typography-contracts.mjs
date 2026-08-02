@@ -55,6 +55,26 @@ const wrappedCssCheckByProperty = {
   },
 }
 
+const inlineTypographyCheckByProperty = {
+  fontSize: {
+    name: TypographyCheckKind.InlineFontSize,
+    message: 'fontSize assigns a numeric literal instead of a type token',
+  },
+  fontWeight: {
+    name: TypographyCheckKind.FontWeight,
+    message: 'fontWeight assigns a numeric literal instead of a weight token',
+  },
+  letterSpacing: {
+    name: TypographyCheckKind.LetterSpacing,
+    message:
+      'letterSpacing assigns a numeric literal instead of a tracking token',
+  },
+  lineHeight: {
+    name: TypographyCheckKind.LineHeight,
+    message: 'lineHeight assigns a numeric literal instead of a leading token',
+  },
+}
+
 /*
  * Every exception is narrow and carries its reason. Dynamic SVG text is sized
  * from geometry rather than from the type scale, so it cannot be tokenized
@@ -97,11 +117,13 @@ const checks = [
     message:
       'font shorthand embeds a raw px/rem size; use the separate type token properties',
   },
-  {
-    name: TypographyCheckKind.InlineFontSize,
-    test: (line) => hasNumericFontSizeAssignment(line),
-    message: 'fontSize assigns a numeric literal instead of a type token',
-  },
+  ...Object.entries(inlineTypographyCheckByProperty).map(
+    ([property, check]) => ({
+      name: check.name,
+      test: (line) => hasNumericTypographyAssignment(line, property),
+      message: check.message,
+    }),
+  ),
   {
     name: TypographyCheckKind.FontWeight,
     test: (line) => /(^|[^-\w])font-weight\s*:\s*\d/.test(line),
@@ -122,11 +144,11 @@ const checks = [
 
 const checkedExtensions = new Set(['.css', '.ts', '.tsx'])
 
-function hasNumericFontSizeAssignment(line) {
+function hasNumericTypographyAssignment(line, property) {
   const assignmentPatterns = [
-    /\bfontSize\b\s*:\s*([^,}\n]+)/g,
-    /\bfontSize\b\s*=\s*\{([^}]*)\}/g,
-    /\bfontSize\b\s*=\s*([^;,\n]+)/g,
+    new RegExp(`\\b${property}\\b\\s*:\\s*([^,}\\n]+)`, 'g'),
+    new RegExp(`\\b${property}\\b\\s*=\\s*\\{([^}]*)\\}`, 'g'),
+    new RegExp(`\\b${property}\\b\\s*=\\s*([^;,\\n]+)`, 'g'),
   ]
 
   return assignmentPatterns.some((pattern) => {
@@ -202,13 +224,20 @@ function findWrappedDeclarationViolations(
     return violations
   }
 
-  const fontSizeAssignmentPattern =
-    /\bfontSize\b\s*(?::|=\s*\{?)\s*([\s\S]*?)(?=,|;|\}|\n\s*[A-Za-z_$][\w$]*\s*:|$)/g
-  for (const match of analyzedContents.matchAll(fontSizeAssignmentPattern)) {
+  const inlinePropertyPattern = Object.keys(
+    inlineTypographyCheckByProperty,
+  ).join('|')
+  const inlineAssignmentPattern = new RegExp(
+    `\\b(${inlinePropertyPattern})\\b\\s*(?::|=\\s*\\{?)\\s*([\\s\\S]*?)(?=,|;|\\}|\\n\\s*[A-Za-z_$][\\w$]*\\s*:|$)`,
+    'g',
+  )
+  for (const match of analyzedContents.matchAll(inlineAssignmentPattern)) {
+    const property = match[1]
+    const check = inlineTypographyCheckByProperty[property]
     if (
       !match[0].includes('\n') ||
-      hasNumericFontSizeAssignment(match[0].split('\n')[0]) ||
-      !numericLiteralPattern.test(match[1])
+      hasNumericTypographyAssignment(match[0].split('\n')[0], property) ||
+      !numericLiteralPattern.test(match[2])
     ) {
       continue
     }
@@ -223,8 +252,8 @@ function findWrappedDeclarationViolations(
     violations.push({
       path,
       line: startLine,
-      check: TypographyCheckKind.InlineFontSize,
-      message: 'fontSize assigns a numeric literal instead of a type token',
+      check: check.name,
+      message: check.message,
       source,
     })
   }
