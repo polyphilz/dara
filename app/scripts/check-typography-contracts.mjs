@@ -25,6 +25,36 @@ const numericLiteralPattern =
   /(^|[^\w$])(?:\d+(?:\.\d*)?|\.\d+)(?:[a-z%]+)?(?![\w$])/i
 const customPropertyReferencePattern = /var\(\s*(--[\w-]+)/g
 
+const wrappedCssCheckByProperty = {
+  'font-size': {
+    name: TypographyCheckKind.FontSize,
+    test: (value) => /\d*\.?\d+\s*(px|rem)\b/.test(value),
+    message: 'font-size uses a raw px/rem literal instead of a type token',
+  },
+  font: {
+    name: TypographyCheckKind.FontShorthand,
+    test: (value) => /\d*\.?\d+\s*(px|rem)\b/.test(value),
+    message:
+      'font shorthand embeds a raw px/rem size; use the separate type token properties',
+  },
+  'font-weight': {
+    name: TypographyCheckKind.FontWeight,
+    test: (value) => /^\s*\d/.test(value),
+    message: 'font-weight uses a raw numeric value instead of a weight token',
+  },
+  'letter-spacing': {
+    name: TypographyCheckKind.LetterSpacing,
+    test: (value) => /^\s*-?\.?\d/.test(value),
+    message:
+      'letter-spacing uses a raw numeric value instead of a tracking token',
+  },
+  'line-height': {
+    name: TypographyCheckKind.LineHeight,
+    test: (value) => /^\s*\d/.test(value),
+    message: 'line-height uses a raw numeric value instead of a leading token',
+  },
+}
+
 /*
  * Every exception is narrow and carries its reason. Dynamic SVG text is sized
  * from geometry rather than from the type scale, so it cannot be tokenized
@@ -113,6 +143,93 @@ function referencedCustomProperties(value) {
   return [...value.matchAll(customPropertyReferencePattern)].map(
     (match) => match[1],
   )
+}
+
+function lineAtOffset(contents, offset) {
+  return contents.slice(0, offset).split('\n').length
+}
+
+function sourceForRange(rawLines, startLine, endLine) {
+  return rawLines
+    .slice(startLine - 1, endLine)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ')
+}
+
+function findWrappedDeclarationViolations(
+  path,
+  rawLines,
+  analyzedLines,
+  allowed,
+) {
+  const analyzedContents = analyzedLines.join('\n')
+  const violations = []
+
+  if (extname(path) === '.css') {
+    const declarationPattern =
+      /(?:^|[;{])\s*(font-size|font|font-weight|letter-spacing|line-height)\s*:\s*([^;}]+)/gm
+
+    for (const match of analyzedContents.matchAll(declarationPattern)) {
+      const propertyEnd = match[0].indexOf(match[1]) + match[1].length
+      const valueStart = match[0].lastIndexOf(match[2])
+      if (!match[0].slice(propertyEnd, valueStart).includes('\n')) {
+        continue
+      }
+
+      const check = wrappedCssCheckByProperty[match[1]]
+      if (!check.test(match[2])) {
+        continue
+      }
+
+      const propertyOffset = match.index + match[0].indexOf(match[1])
+      const startLine = lineAtOffset(analyzedContents, propertyOffset)
+      const endLine = lineAtOffset(analyzedContents, match.index + match[0].length)
+      const source = sourceForRange(rawLines, startLine, endLine)
+      if (allowed.some((entry) => entry.pattern.test(source))) {
+        continue
+      }
+
+      violations.push({
+        path,
+        line: startLine,
+        check: check.name,
+        message: check.message,
+        source,
+      })
+    }
+
+    return violations
+  }
+
+  const fontSizeAssignmentPattern =
+    /\bfontSize\b\s*(?::|=\s*\{?)\s*([\s\S]*?)(?=,|;|\}|\n\s*[A-Za-z_$][\w$]*\s*:|$)/g
+  for (const match of analyzedContents.matchAll(fontSizeAssignmentPattern)) {
+    if (
+      !match[0].includes('\n') ||
+      hasNumericFontSizeAssignment(match[0].split('\n')[0]) ||
+      !numericLiteralPattern.test(match[1])
+    ) {
+      continue
+    }
+
+    const startLine = lineAtOffset(analyzedContents, match.index)
+    const endLine = lineAtOffset(analyzedContents, match.index + match[0].length)
+    const source = sourceForRange(rawLines, startLine, endLine)
+    if (allowed.some((entry) => entry.pattern.test(source))) {
+      continue
+    }
+
+    violations.push({
+      path,
+      line: startLine,
+      check: TypographyCheckKind.InlineFontSize,
+      message: 'fontSize assigns a numeric literal instead of a type token',
+      source,
+    })
+  }
+
+  return violations
 }
 
 function findTypographyVariableViolations(path, rawLines, analyzedLines) {
@@ -236,6 +353,12 @@ export function findTypographyViolations(path, contents, relativePath) {
   })
 
   violations.push(
+    ...findWrappedDeclarationViolations(
+      path,
+      rawLines,
+      analyzedLines,
+      allowed,
+    ),
     ...findTypographyVariableViolations(path, rawLines, analyzedLines),
   )
 

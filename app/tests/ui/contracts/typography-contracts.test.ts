@@ -38,6 +38,26 @@ describe('rejects feature-local typography', () => {
     ])
   })
 
+  test('wrapped CSS typography declarations fail', () => {
+    const found = violations(
+      '.a {\n' +
+        '  font-size:\n    12px;\n' +
+        '  font:\n    650 12px/1.1 var(--font-family-app);\n' +
+        '  font-weight:\n    750;\n' +
+        '  letter-spacing:\n    0.09em;\n' +
+        '  line-height:\n    1.45;\n' +
+        '}\n',
+    )
+    expect(found.map((entry) => entry.check)).toEqual([
+      TypographyCheckKind.FontSize,
+      TypographyCheckKind.FontShorthand,
+      TypographyCheckKind.FontWeight,
+      TypographyCheckKind.LetterSpacing,
+      TypographyCheckKind.LineHeight,
+    ])
+    expect(found.map((entry) => entry.line)).toEqual([2, 4, 6, 8, 10])
+  })
+
   test('a numeric fontSize in TypeScript fails', () => {
     const found = violations(
       'const style = { fontSize: 13 }\n',
@@ -64,6 +84,21 @@ describe('rejects feature-local typography', () => {
       TypographyCheckKind.InlineFontSize,
       TypographyCheckKind.InlineFontSize,
     ])
+  })
+
+  test('wrapped TypeScript and JSX fontSize assignments fail', () => {
+    const found = violations(
+      'const style = {\n' +
+        '  fontSize:\n    compact ? 12 : 14,\n' +
+        '}\n' +
+        'const node = <text fontSize={\n  fallback ?? 12\n} />\n',
+      'src/markdown/CodeBlockNodeView.tsx',
+    )
+    expect(found.map((entry) => entry.check)).toEqual([
+      TypographyCheckKind.InlineFontSize,
+      TypographyCheckKind.InlineFontSize,
+    ])
+    expect(found.map((entry) => entry.line)).toEqual([2, 5])
   })
 
   test('a feature-local variable cannot hide a raw type value', () => {
@@ -105,6 +140,19 @@ describe('accepts the central typography system', () => {
           '  font-weight: var(--type-weight-supporting);\n' +
           '  line-height: var(--type-leading-supporting);\n' +
           '  letter-spacing: var(--type-tracking-supporting);\n' +
+          '}\n',
+      ),
+    ).toEqual([])
+  })
+
+  test('wrapped type tokens pass', () => {
+    expect(
+      violations(
+        '.setting-note {\n' +
+          '  font-size:\n    var(--type-size-supporting);\n' +
+          '  font-weight:\n    var(--type-weight-supporting);\n' +
+          '  line-height:\n    var(--type-leading-supporting);\n' +
+          '  letter-spacing:\n    var(--type-tracking-supporting);\n' +
           '}\n',
       ),
     ).toEqual([])
