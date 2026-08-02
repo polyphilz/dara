@@ -17,6 +17,7 @@ export interface BrowserScenario {
 export const BrowserHarnessSurface = {
   Main: 'MAIN',
   QuickAdd: 'QUICK_ADD',
+  Recovery: 'RECOVERY',
   VisualCatalog: 'VISUAL_CATALOG',
 } as const
 
@@ -77,6 +78,9 @@ export function parseBrowserHarnessSurface(
   }
   if (value === BrowserHarnessSurface.Main) {
     return BrowserHarnessSurface.Main
+  }
+  if (value === BrowserHarnessSurface.Recovery) {
+    return BrowserHarnessSurface.Recovery
   }
   if (value === BrowserHarnessSurface.QuickAdd || value === null) {
     return BrowserHarnessSurface.QuickAdd

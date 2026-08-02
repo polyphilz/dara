@@ -40,12 +40,15 @@
 }
 
 .occlusion-image-picker strong {
-  font-size: 15px;
+  font-size: var(--type-size-subheading);
+  font-weight: var(--type-weight-subheading);
+  letter-spacing: var(--type-tracking-subheading);
 }
 
 .occlusion-image-picker > span:not(.occlusion-picker-icon) {
   color: color-mix(in srgb, var(--muted) 88%, var(--ink));
-  font-size: 12px;
+  font-size: var(--type-size-supporting);
+  line-height: var(--type-leading-supporting);
 }
 
 .occlusion-editor kbd {
@@ -267,9 +270,6 @@
 .occlusion-legend-popover > strong {
   display: block;
   margin-bottom: 9px;
-  font-size: 11px;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
 }
 
 .occlusion-legend-popover dl {
@@ -292,14 +292,14 @@
 
 .occlusion-legend-popover dt {
   color: var(--accent);
-  font-size: 10px;
-  font-weight: 750;
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
 }
 
 .occlusion-legend-popover dd {
-  color: #716d66;
-  font-size: 10px;
-  line-height: 1.35;
+  color: var(--muted);
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .occlusion-layer-panel {
@@ -314,11 +314,6 @@
   justify-content: space-between;
   padding: 10px 11px;
   border-bottom: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
 }
 
 .occlusion-layer-list {
@@ -348,7 +343,8 @@
   border-radius: 5px;
   color: #fff;
   background: var(--accent);
-  font-size: 10px;
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
 }
 
 .occlusion-layer-row > span {
@@ -359,6 +355,8 @@
 
 .occlusion-layer-row > small {
   color: var(--muted);
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .occlusion-layer-controls {
@@ -371,9 +369,6 @@
 .occlusion-layer-controls label > span {
   display: block;
   margin-bottom: 5px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
 }
 
 .occlusion-layer-controls input {
@@ -384,7 +379,9 @@
   border-radius: 6px;
   color: var(--ink);
   background: color-mix(in srgb, var(--surface) 74%, transparent);
-  font: 600 11px/1.2 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-control-value);
+  line-height: var(--type-leading-body);
 }
 
 .occlusion-layer-controls input:focus {
@@ -413,9 +410,6 @@
 .occlusion-layer-empty {
   margin: 0;
   padding: 22px 14px;
-  color: var(--muted);
-  font-size: 11px;
-  line-height: 1.45;
 }
 
 .occlusion-review-image {
@@ -439,7 +433,6 @@
 }
 
 .occlusion-render-error {
-  color: #a63232;
   text-align: center;
 }
 

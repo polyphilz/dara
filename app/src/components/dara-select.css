@@ -10,7 +10,11 @@
   border-radius: 6px;
   color: var(--ink);
   background: color-mix(in srgb, var(--surface) 72%, transparent);
-  font: 650 12px/1.1 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-leading-label);
+  letter-spacing: var(--type-tracking-label);
   cursor: pointer;
 }
 
@@ -75,7 +79,11 @@
   border-radius: 6px;
   color: inherit;
   background: transparent;
-  font: 600 12px/1.2 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-leading-label);
+  letter-spacing: var(--type-tracking-label);
   text-align: left;
   cursor: pointer;
 }

@@ -3,25 +3,34 @@
   cursor: pointer;
 }
 
+/*
+ * Button sizes carry the typography roles rather than raw values: standard
+ * action text is Label, compact is Caption, and mini is Eyebrow. Line height
+ * is deliberately left to the control's own padding so existing button
+ * geometry is preserved.
+ */
 .dara-button-standard {
   padding: var(--action-button-padding);
   border-radius: var(--action-button-radius);
-  font-size: var(--action-button-font-size);
-  font-weight: 700;
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: var(--type-tracking-label);
 }
 
 .dara-button-compact {
   padding: 6px 9px;
   border-radius: 7px;
-  font-size: 11px;
-  font-weight: 650;
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
+  letter-spacing: var(--type-tracking-caption);
 }
 
 .dara-button-mini {
   padding: 4px 6px;
   border-radius: 6px;
-  font-size: 10px;
-  font-weight: 650;
+  font-size: var(--type-size-eyebrow);
+  font-weight: var(--type-weight-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
 }
 
 .dara-button-icon {

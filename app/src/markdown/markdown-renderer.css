@@ -1,8 +1,8 @@
 .dara-markdown {
   max-width: 68ch;
   overflow-wrap: anywhere;
-  font-size: 22px;
-  line-height: 1.5;
+  font-size: var(--type-size-content-review);
+  line-height: var(--type-leading-content);
 }
 
 .dara-markdown > :first-child {
@@ -42,7 +42,7 @@
 .dara-markdown h5,
 .dara-markdown h6 {
   margin: 1.1em 0 0.45em;
-  line-height: 1.2;
+  line-height: var(--type-leading-content-heading);
 }
 
 .dara-markdown h1 {
@@ -152,7 +152,7 @@
 
 .dara-markdown th {
   background: rgba(24, 23, 22, 0.045);
-  font-weight: 700;
+  font-weight: var(--type-weight-label);
 }
 
 .dara-markdown input[type="checkbox"] {
@@ -168,7 +168,7 @@
 }
 
 .dara-markdown .katex-error {
-  color: #a63232;
+  color: var(--text-danger);
   font-family: var(--font-family-app);
   font-size: 0.8em;
 }
@@ -203,11 +203,11 @@
 }
 
 .dara-markdown-error {
-  font-size: 15px;
+  font-size: var(--type-size-content-editor);
 }
 
 .dara-markdown-error > p {
-  color: #a63232;
+  color: var(--text-danger);
 }
 
 :root[data-appearance='DARK'] .dara-markdown code,

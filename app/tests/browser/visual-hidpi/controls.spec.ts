@@ -7,7 +7,9 @@ test('shared control one-device-pixel details at DPR 2', async ({ page }) => {
     `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}&surface=${BrowserHarnessSurface.VisualCatalog}`,
   )
   await page.getByRole('button', { name: 'Catalog choice: Second option' }).focus()
-  await expect(page.locator('.visual-catalog')).toHaveScreenshot(
+  // Scoped to the control group: this check is about one-device-pixel borders
+  // and focus rings, not the typography specimens.
+  await expect(page.locator('#catalog-control-group')).toHaveScreenshot(
     'controls-dpr2.png',
     { scale: 'device' },
   )

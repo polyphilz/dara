@@ -17,23 +17,10 @@
 
 .card-editor-header p {
   margin-bottom: 2px;
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.card-editor-header h1 {
-  font-size: 27px;
-  font-weight: 520;
-  letter-spacing: -0.035em;
 }
 
 .card-editor-header > span {
   margin-top: 7px;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .card-type-picker {
@@ -46,11 +33,6 @@
 
 .card-type-picker > span {
   margin-left: 2px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
 }
 
 .card-type-picker .card-type-trigger {
@@ -64,11 +46,6 @@
 .card-editor-field > span {
   display: block;
   margin: 0 0 7px 2px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
 }
 
 .card-editor-field input {
@@ -80,8 +57,8 @@
   outline: none;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.78);
-  font-size: 14px;
-  line-height: 1.45;
+  font-size: var(--type-size-control-value);
+  line-height: var(--type-leading-body);
 }
 
 .card-editor-field input:focus {
@@ -97,19 +74,20 @@
   margin-top: 15px;
 }
 
-.card-editor-field small {
+/*
+ * "optional" qualifies an Eyebrow field label, so it stays on the label's own
+ * size rather than shrinking below the minimum readable role.
+ */
+.card-editor-field > span small {
   color: inherit;
-  font-size: 0.8em;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: inherit;
+  font-weight: var(--type-weight-caption);
+  letter-spacing: inherit;
 }
 
 .card-editor-field .cloze-syntax-hint {
   display: block;
   margin: 7px 2px 0;
-  color: var(--muted);
-  font-size: 11px;
-  letter-spacing: normal;
 }
 
 .card-editor-footer {
@@ -146,8 +124,6 @@
 
 .card-editor-error {
   margin: 12px 0 0;
-  color: #a63232;
-  font-size: 11px;
 }
 
 .basic-card-form-main {

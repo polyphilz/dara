@@ -38,6 +38,11 @@ import {
 } from '../../components/dara-button-types.ts'
 import { DaraInput } from '../../components/DaraInput.tsx'
 import { DaraSelect } from '../../components/DaraSelect.tsx'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import { ConfirmationDialog } from './ConfirmationDialog.tsx'
 import { ConfirmationDialogInitialFocus } from './confirmation-dialog.ts'
 
@@ -368,26 +373,51 @@ export function OffsiteBackupSection({
   return (
     <section className="setting-section offsite-backup-section">
       <div className="setting-section-heading">
-        <h2>Off-site backup</h2>
-        <p>
+        <DaraText as="h2" variant={DaraTextVariant.Subheading}>
+          Off-site backup
+        </DaraText>
+        <DaraText
+          as="p"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Supporting}
+        >
           Keep a recoverable copy of Dara in your private Cloudflare R2 bucket.
-        </p>
+        </DaraText>
       </div>
       <div className="setting-section-body">
         {loadingError && status === null ? (
           <div className="offsite-backup-load-error" role="alert">
-            <span>{loadingError}</span>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Danger}
+              variant={DaraTextVariant.Supporting}
+            >
+              {loadingError}
+            </DaraText>
             <DaraButton onClick={() => void reload()} type="button">
               Try again
             </DaraButton>
           </div>
         ) : status === null ? (
-          <p className="offsite-backup-loading">Loading backup status…</p>
+          <DaraText
+            as="p"
+            className="offsite-backup-loading"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
+            Loading backup status…
+          </DaraText>
         ) : (
           <>
             {loadingError && (
               <div className="offsite-backup-load-error" role="alert">
-                <span>{loadingError}</span>
+                <DaraText
+                  as="span"
+                  tone={DaraTextTone.Danger}
+                  variant={DaraTextVariant.Supporting}
+                >
+                  {loadingError}
+                </DaraText>
                 <DaraButton onClick={() => void reload()} type="button">
                   Try again
                 </DaraButton>
@@ -395,12 +425,25 @@ export function OffsiteBackupSection({
             )}
             <div className="offsite-backup-intro">
               <div>
-                <strong>{overview.title}</strong>
-                <span>{overview.detail}</span>
+                <DaraText as="strong" variant={DaraTextVariant.Subheading}>
+                  {overview.title}
+                </DaraText>
+                <DaraText
+                  as="span"
+                  tone={DaraTextTone.Muted}
+                  variant={DaraTextVariant.Supporting}
+                >
+                  {overview.detail}
+                </DaraText>
               </div>
-              <span className={`backup-state-pill ${overview.tone}`}>
+              <DaraText
+                as="span"
+                className={`backup-state-pill ${overview.tone}`}
+                tone={DaraTextTone.Inherit}
+                variant={DaraTextVariant.Eyebrow}
+              >
                 {overview.pill}
-              </span>
+              </DaraText>
             </div>
 
             {!enabled || formMode !== BackupFormMode.Configure ? (
@@ -607,40 +650,78 @@ export function OffsiteBackupSection({
 
             {status.credentials !== CredentialAvailability.Present &&
               status.configured && (
-                <p className="offsite-backup-warning" role="status">
+                <DaraText
+                  as="p"
+                  className="offsite-backup-warning"
+                  role="status"
+                  tone={DaraTextTone.Warning}
+                  variant={DaraTextVariant.Supporting}
+                >
                   {status.credentials === CredentialAvailability.Missing
                     ? 'R2 credentials are not saved on this Mac.'
                     : 'macOS Keychain is currently unavailable.'}
-                </p>
+                </DaraText>
               )}
             {status.credentialCleanupPending && (
-              <p className="offsite-backup-warning" role="status">
+              <DaraText
+                as="p"
+                className="offsite-backup-warning"
+                role="status"
+                tone={DaraTextTone.Warning}
+                variant={DaraTextVariant.Supporting}
+              >
                 Dara still needs to remove credentials for a previous R2 target
                 from macOS Keychain. Quit and reopen Dara to retry, or choose
                 Remove saved credentials.
-              </p>
+              </DaraText>
             )}
-            <p className="offsite-backup-privacy">
+            <DaraText
+              as="p"
+              className="offsite-backup-privacy"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
               Backup contents are not encrypted by Dara before upload. Your R2
               credentials and Cloudflare’s private-bucket controls protect
               access.
-            </p>
+            </DaraText>
             <div aria-atomic="true" aria-live="polite" className="offsite-backup-live">
               {activeOperation && (
-                <p role="status">
+                <DaraText
+                  as="p"
+                  role="status"
+                  tone={DaraTextTone.Muted}
+                  variant={DaraTextVariant.Supporting}
+                >
                   {progressMessage(
                     progress?.operation === activeOperation
                       ? progress.phase
                       : OffsiteBackupProgressPhase.ValidatingConfig,
                   )}
-                </p>
+                </DaraText>
               )}
               {notice && (
-                <p className="success" role="status">
+                <DaraText
+                  as="p"
+                  className="success"
+                  role="status"
+                  tone={DaraTextTone.Success}
+                  variant={DaraTextVariant.Supporting}
+                >
                   {notice.message}
-                </p>
+                </DaraText>
               )}
-              {operationError && <p className="error" role="alert">{operationError}</p>}
+              {operationError && (
+                <DaraText
+                  as="p"
+                  className="error"
+                  role="alert"
+                  tone={DaraTextTone.Danger}
+                  variant={DaraTextVariant.Supporting}
+                >
+                  {operationError}
+                </DaraText>
+              )}
             </div>
           </>
         )}
@@ -684,10 +765,10 @@ export function OffsiteBackupSection({
           }}
           title="Change off-site backup target?"
         >
-          <p>
+          <DaraText as="p" variant={DaraTextVariant.Body}>
             Dara will create a separate backup at the new target. It will not
             delete or redirect the existing backup in R2.
-          </p>
+          </DaraText>
         </ConfirmationDialog>
       )}
 
@@ -717,10 +798,10 @@ export function OffsiteBackupSection({
           }
           title="Disable off-site backup?"
         >
-          <p>
+          <DaraText as="p" variant={DaraTextVariant.Body}>
             Dara will stop sending new changes to R2. Existing remote backups
             and saved credentials will remain.
-          </p>
+          </DaraText>
         </ConfirmationDialog>
       )}
 
@@ -750,10 +831,10 @@ export function OffsiteBackupSection({
           }
           title="Remove saved R2 credentials?"
         >
-          <p>
+          <DaraText as="p" variant={DaraTextVariant.Body}>
             Backup will be disabled first. Credentials will be removed from
             macOS Keychain, but Dara will not delete anything from R2.
-          </p>
+          </DaraText>
         </ConfirmationDialog>
       )}
 
@@ -784,10 +865,10 @@ export function OffsiteBackupSection({
           }
           title="Take over this restored backup?"
         >
-          <p>
+          <DaraText as="p" variant={DaraTextVariant.Body}>
             Continue only if the old Dara installation will no longer write to
             this backup. Changes made separately on two Macs cannot be merged.
-          </p>
+          </DaraText>
         </ConfirmationDialog>
       )}
     </section>
@@ -844,7 +925,14 @@ function BackupConfigurationForm({
             />
           </BackupField>
           <div className="offsite-backup-field">
-            <label id={`${accountId}-jurisdiction-label`}>Jurisdiction</label>
+            <DaraText
+              as="label"
+              id={`${accountId}-jurisdiction-label`}
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Label}
+            >
+              Jurisdiction
+            </DaraText>
             <DaraSelect
               ariaLabel="R2 jurisdiction"
               disabled={controlsDisabled}
@@ -946,12 +1034,25 @@ function BackupField({
 }) {
   return (
     <div className="offsite-backup-field">
-      <label htmlFor={id}>{label}</label>
+      <DaraText
+        as="label"
+        htmlFor={id}
+        tone={DaraTextTone.Muted}
+        variant={DaraTextVariant.Label}
+      >
+        {label}
+      </DaraText>
       {children}
       {error && (
-        <span className="offsite-backup-field-error" id={`${id}-error`}>
+        <DaraText
+          as="span"
+          className="offsite-backup-field-error"
+          id={`${id}-error`}
+          tone={DaraTextTone.Danger}
+          variant={DaraTextVariant.Supporting}
+        >
           {error}
-        </span>
+        </DaraText>
       )}
     </div>
   )
@@ -1065,13 +1166,44 @@ function BackupStatusItem({
 }) {
   return (
     <div className={`offsite-backup-status-item ${tone}`}>
-      <dt>{label}</dt>
+      <dt>
+        <DaraText
+          as="span"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Caption}
+        >
+          {label}
+        </DaraText>
+      </dt>
       <dd>
-        <strong>{state}</strong>
-        <span>{detail}</span>
+        <DaraText
+          as="strong"
+          tone={statusTextTone(tone)}
+          variant={DaraTextVariant.Label}
+        >
+          {state}
+        </DaraText>
+        <DaraText
+          as="span"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Caption}
+        >
+          {detail}
+        </DaraText>
       </dd>
     </div>
   )
+}
+
+function statusTextTone(tone: BackupStatusTone): DaraTextTone {
+  switch (tone) {
+    case BackupStatusTone.Healthy:
+      return DaraTextTone.Success
+    case BackupStatusTone.Warning:
+      return DaraTextTone.Warning
+    case BackupStatusTone.Neutral:
+      return DaraTextTone.Default
+  }
 }
 
 function backupOverview(

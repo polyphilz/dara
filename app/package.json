@@ -17,6 +17,7 @@
     "test:coverage": "tsc -p tsconfig.ui-test.json && vitest run --coverage",
     "test:bundle-report": "DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build",
     "test:bundle-safety:check": "node scripts/check-bundle-safety.mjs",
+    "test:typography-contracts": "node scripts/check-typography-contracts.mjs",
     "test:bundle-safety": "pnpm test:bundle-report && pnpm test:bundle-safety:check",
     "test:browser:typecheck": "tsc -p tsconfig.browser-test.json",
     "test:browser": "pnpm test:browser:typecheck && playwright test --project=chromium-functional --project=webkit-contract",
@@ -47,7 +48,7 @@
     "release:publish:draft": "node scripts/publish-draft-release.mjs",
     "test:frontend": "pnpm test && pnpm test:browser",
     "test:frontend:stress": "playwright test --project=chromium-functional --repeat-each=10 --fail-on-flaky-tests",
-    "check": "pnpm lint && DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build && pnpm test:frontend && pnpm test:bundle-safety:check"
+    "check": "pnpm lint && pnpm test:typography-contracts && DARA_BUNDLE_REPORT_PATH=node_modules/.tmp/dara-bundle-report.json pnpm build && pnpm test:frontend && pnpm test:bundle-safety:check"
   },
   "dependencies": {
     "@codemirror/commands": "6.10.4",

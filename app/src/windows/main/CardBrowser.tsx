@@ -8,6 +8,11 @@ import {
   type KeyboardEvent,
 } from 'react'
 import { DaraInput } from '../../components/DaraInput.tsx'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import {
   DaraButtonSize,
@@ -658,14 +663,28 @@ export function CardBrowser({
     if (editingLoading) {
       return (
         <section aria-label="Edit card" className="card-editor-route-status">
-          <p role="status">Loading card…</p>
+          <DaraText
+            as="p"
+            role="status"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
+            Loading card…
+          </DaraText>
         </section>
       )
     }
     if (editingError || editingItem === null) {
       return (
         <section aria-label="Edit card" className="card-editor-route-status">
-          <p role="alert">{editingError ?? 'Card could not be loaded.'}</p>
+          <DaraText
+            as="p"
+            role="alert"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
+            {editingError ?? 'Card could not be loaded.'}
+          </DaraText>
           <DaraButton onClick={onExitEdit} type="button">
             Return to Browse
           </DaraButton>
@@ -710,14 +729,25 @@ export function CardBrowser({
         </div>
 
         <div className="card-result-summary" aria-live="polite">
-          <span>{searchSummaryLabel(searchPending, searchMode)}</span>
-          <span>
+          <DaraText
+            as="span"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Eyebrow}
+          >
+            {searchSummaryLabel(searchPending, searchMode)}
+          </DaraText>
+          <DaraText
+            as="span"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Eyebrow}
+          >
             {searchPending ? '↵' : loading ? '…' : `${results.length}${hasMore ? '+' : ''}`}
-          </span>
+          </DaraText>
         </div>
 
         {semanticStatus && semanticStatus.phase !== SemanticSearchPhase.Ready && (
-          <p
+          <DaraText
+            as="p"
             className={`semantic-search-status${semanticStatusShimmers(semanticStatus) ? ' semantic-search-status-shimmering' : ''}`}
             data-shimmer-text={
               semanticStatusShimmers(semanticStatus)
@@ -725,9 +755,11 @@ export function CardBrowser({
                 : undefined
             }
             role="status"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Caption}
           >
             {semanticStatusLabel(semanticStatus)}
-          </p>
+          </DaraText>
         )}
 
         <div className="card-result-list" role="listbox" aria-label="Cards">
@@ -775,9 +807,14 @@ export function CardBrowser({
           })}
         </div>
         {!loading && results.length === 0 && (
-          <p className="card-result-empty">
+          <DaraText
+            as="p"
+            className="card-result-empty"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
             {searchPending ? 'Press Enter to search.' : 'No cards found.'}
-          </p>
+          </DaraText>
         )}
         {hasMore && (
           <DaraButton
@@ -796,16 +833,33 @@ export function CardBrowser({
           <>
             <header className="card-detail-toolbar">
               <div>
-                <span className="card-type-label">
+                <DaraText
+                  as="span"
+                  className="card-type-label"
+                  tone={DaraTextTone.Muted}
+                  variant={DaraTextVariant.Eyebrow}
+                >
                   {selected.cardContent.type}
-                </span>
+                </DaraText>
                 {selected.cardContent.type === CardContentType.Occlusion && (
-                  <span className="occlusion-mode-badge">
+                  <DaraText
+                    as="span"
+                    className="occlusion-mode-badge"
+                    tone={DaraTextTone.Muted}
+                    variant={DaraTextVariant.Caption}
+                  >
                     {occlusionModeLabel(selected.cardContent.occlusion.mode)}
-                  </span>
+                  </DaraText>
                 )}
                 {selected.reviewStatus !== CardContentReviewStatus.Active && (
-                  <span className="detail-status">{statusLabel(selected.reviewStatus)}</span>
+                  <DaraText
+                    as="span"
+                    className="detail-status"
+                    tone={DaraTextTone.Muted}
+                    variant={DaraTextVariant.Caption}
+                  >
+                    {statusLabel(selected.reviewStatus)}
+                  </DaraText>
                 )}
               </div>
               <div className="card-detail-actions">
@@ -839,7 +893,13 @@ export function CardBrowser({
 
             {confirmingDelete && (
               <div className="delete-confirmation" role="alert">
-                <span>Delete this card? Review history will be retained.</span>
+                <DaraText
+                  as="span"
+                  tone={DaraTextTone.Danger}
+                  variant={DaraTextVariant.Supporting}
+                >
+                  Delete this card? Review history will be retained.
+                </DaraText>
                 <div>
                   <DaraButton
                     disabled={mutating}
@@ -865,9 +925,13 @@ export function CardBrowser({
               {selected.cardContent.type === CardContentType.Occlusion ? (
                 <>
                   <section>
-                    <span>
+                    <DaraText
+                      as="span"
+                      tone={DaraTextTone.Muted}
+                      variant={DaraTextVariant.Eyebrow}
+                    >
                       Image · {selected.cardContent.occlusion.layers.length} layers
-                    </span>
+                    </DaraText>
                     {selectedOcclusionLayerId && (
                       <div className="occlusion-browser-preview">
                         <OcclusionReview
@@ -880,18 +944,28 @@ export function CardBrowser({
                   </section>
                   {selected.cardContent.frontMd.trim() && (
                     <section>
-                      <span>Prompt</span>
+                      <DaraText
+                        as="span"
+                        tone={DaraTextTone.Muted}
+                        variant={DaraTextVariant.Eyebrow}
+                      >
+                        Prompt
+                      </DaraText>
                       <MarkdownRenderer source={selected.cardContent.frontMd} />
                     </section>
                   )}
                 </>
               ) : (
                 <section>
-                  <span>
+                  <DaraText
+                    as="span"
+                    tone={DaraTextTone.Muted}
+                    variant={DaraTextVariant.Eyebrow}
+                  >
                     {selected.cardContent.type === CardContentType.Basic
                       ? 'Front'
                       : 'Text'}
-                  </span>
+                  </DaraText>
                   {selected.cardContent.type === CardContentType.Basic ? (
                     <MarkdownRenderer source={selected.cardContent.frontMd} />
                   ) : (
@@ -906,17 +980,27 @@ export function CardBrowser({
               {(selected.cardContent.type === CardContentType.Basic ||
                 selected.cardContent.backMd.trim()) && (
                   <section>
-                    <span>
+                    <DaraText
+                      as="span"
+                      tone={DaraTextTone.Muted}
+                      variant={DaraTextVariant.Eyebrow}
+                    >
                       {selected.cardContent.type === CardContentType.Basic
                         ? 'Back'
                         : 'Extra'}
-                    </span>
+                    </DaraText>
                     <MarkdownRenderer source={selected.cardContent.backMd} />
                   </section>
                 )}
               {reviewCards.length > 0 && (
                 <section>
-                  <span>Review cards · {reviewCards.length}</span>
+                  <DaraText
+                    as="span"
+                    tone={DaraTextTone.Muted}
+                    variant={DaraTextVariant.Eyebrow}
+                  >
+                    Review cards · {reviewCards.length}
+                  </DaraText>
                   <div
                     aria-label="Review cards"
                     className="review-card-siblings"
@@ -965,7 +1049,13 @@ export function CardBrowser({
               )}
               {selected.cardContent.source && (
                 <section>
-                  <span>Source</span>
+                  <DaraText
+                    as="span"
+                    tone={DaraTextTone.Muted}
+                    variant={DaraTextVariant.Eyebrow}
+                  >
+                    Source
+                  </DaraText>
                   <CardSource value={selected.cardContent.source} />
                 </section>
               )}
@@ -973,20 +1063,32 @@ export function CardBrowser({
           </>
         ) : (
           <div className="card-browser-placeholder">
-            <h2>
+            <DaraText as="h2" variant={DaraTextVariant.Subheading}>
               {loading
                 ? 'Searching…'
                 : addressedLoading
                   ? 'Loading card…'
                   : 'No card selected'}
-            </h2>
-            <p>Start typing to search, or choose a card.</p>
+            </DaraText>
+            <DaraText
+              as="p"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
+              Start typing to search, or choose a card.
+            </DaraText>
           </div>
         )}
         {error && (
-          <p className="card-browser-error" role="alert">
+          <DaraText
+            as="p"
+            className="card-browser-error"
+            role="alert"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
             {error}
-          </p>
+          </DaraText>
         )}
       </div>
     </section>

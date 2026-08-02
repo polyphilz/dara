@@ -2,6 +2,11 @@ import { ActivityCalendar, type Activity } from 'react-activity-calendar'
 import { memo, useEffect, useMemo, useState } from 'react'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import { DaraButtonSize } from '../../components/dara-button-types.ts'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import { errorMessage } from '../../review/errors.ts'
 import type { HomeStats, LoadHomeStatsInput } from '../../review/index.ts'
 import { captureStudyMoment } from '../../scheduling/index.ts'
@@ -108,6 +113,10 @@ export const Home = memo(function Home({
             blockSize={11 * ACTIVITY_GRAPH_SCALE}
             colorScheme={calendarColorScheme}
             data={activity}
+            /*
+             * Dynamic SVG label geometry: the calendar's label size must scale
+             * with the block size, so it stays computed rather than tokenized.
+             */
             fontSize={12 * ACTIVITY_GRAPH_SCALE}
             labels={{
               legend: { less: 'Less', more: 'More' },
@@ -123,19 +132,37 @@ export const Home = memo(function Home({
             }}
           />
         ) : error ? (
-          <div className="home-activity-loading" aria-live="polite">
+          <DaraText
+            aria-live="polite"
+            as="div"
+            className="home-activity-loading"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
             Activity unavailable.
-          </div>
+          </DaraText>
         ) : (
-          <div className="home-activity-loading" aria-live="polite">
+          <DaraText
+            aria-live="polite"
+            as="div"
+            className="home-activity-loading"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
             Loading activity…
-          </div>
+          </DaraText>
         )}
       </section>
 
       {error && (
         <div className="home-error" role="alert">
-          <span>{error}</span>
+          <DaraText
+            as="span"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
+            {error}
+          </DaraText>
           <DaraButton
             onClick={() => {
               invalidateHomeStats()

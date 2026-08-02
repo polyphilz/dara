@@ -8,6 +8,11 @@ import type {
   DiagnosticsGateway,
   DiagnosticsSnapshot,
 } from '../../diagnostics/index.ts'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import { SemanticSearchPhase } from '../../review/index.ts'
 
 const JINA_V5_TEXT_NANO_MODEL =
@@ -43,8 +48,16 @@ export function DiagnosticsPanel({
     <div className="diagnostics-overview">
       <div className="diagnostics-overview-heading">
         <div>
-          <strong>System status</strong>
-          <span>Current versions, local storage, and maintenance state.</span>
+          <DaraText as="strong" variant={DaraTextVariant.Label}>
+            System status
+          </DaraText>
+          <DaraText
+            as="span"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
+            Current versions, local storage, and maintenance state.
+          </DaraText>
         </div>
         <DaraButton
           disabled={loading}
@@ -58,13 +71,25 @@ export function DiagnosticsPanel({
       </div>
       {snapshot && <DiagnosticsDetails snapshot={snapshot} />}
       {loading && !snapshot && (
-        <p className="diagnostics-message" role="status">
+        <DaraText
+          as="p"
+          className="diagnostics-message"
+          role="status"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Supporting}
+        >
           Loading diagnostics…
-        </p>
+        </DaraText>
       )}
       {error && (
         <div className="diagnostics-message error" role="alert">
-          <span>{error}</span>
+          <DaraText
+            as="span"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
+            {error}
+          </DaraText>
           <DaraButton
             onClick={() => void reload()}
             size={DaraButtonSize.Mini}
@@ -164,10 +189,30 @@ function DiagnosticItem({
 }) {
   return (
     <div className={`diagnostics-item${warning ? ' warning' : ''}`}>
-      <dt>{label}</dt>
+      <dt>
+        <DaraText
+          as="span"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Caption}
+        >
+          {label}
+        </DaraText>
+      </dt>
       <dd>
-        <strong>{value}</strong>
-        <span>{detail}</span>
+        <DaraText
+          as="strong"
+          tone={warning ? DaraTextTone.Warning : DaraTextTone.Default}
+          variant={DaraTextVariant.Body}
+        >
+          {value}
+        </DaraText>
+        <DaraText
+          as="span"
+          tone={warning ? DaraTextTone.Warning : DaraTextTone.Muted}
+          variant={DaraTextVariant.Caption}
+        >
+          {detail}
+        </DaraText>
       </dd>
     </div>
   )

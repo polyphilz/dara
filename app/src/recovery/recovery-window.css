@@ -25,12 +25,13 @@
   -webkit-mask: url('../../src-tauri/icons/tray-icon.svg') center / contain no-repeat;
 }
 
+/* Approved first-launch brand exception: 32px mark, 24px wordmark, accent. */
 .recovery-brand-wordmark {
   color: var(--accent);
-  font-size: 24px;
-  font-weight: 800;
-  letter-spacing: -0.045em;
-  line-height: 1;
+  font-size: var(--type-size-brand-wordmark);
+  font-weight: var(--type-weight-brand-wordmark);
+  letter-spacing: var(--type-tracking-brand-wordmark);
+  line-height: var(--type-leading-metric);
 }
 
 .recovery-card {
@@ -48,25 +49,23 @@
   border-bottom: 1px solid var(--line);
 }
 
-.recovery-header h1 {
-  margin: 0;
-  font-size: 18px;
-  line-height: 1.2;
-}
-
-.recovery-header p,
+/*
+ * The choice and checkpoint cards are buttons, so their internal text keeps
+ * its typography here rather than nesting text components inside a control.
+ */
 .recovery-choice span,
-.recovery-empty span,
-.recovery-checkpoint-list span,
-.recovery-path-note,
-.recovery-catalog-note {
+.recovery-empty span {
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: var(--type-size-supporting);
+  font-weight: var(--type-weight-supporting);
+  line-height: var(--type-leading-supporting);
 }
 
-.recovery-header p {
-  margin: 0;
+.recovery-checkpoint-list span {
+  color: var(--muted);
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .recovery-choice-list {
@@ -95,8 +94,13 @@
   background: var(--accent-soft);
 }
 
-.recovery-choice strong {
-  font-size: 14px;
+.recovery-choice strong,
+.recovery-empty strong,
+.recovery-checkpoint strong {
+  font-size: var(--type-size-subheading);
+  font-weight: var(--type-weight-subheading);
+  line-height: var(--type-leading-subheading);
+  letter-spacing: var(--type-tracking-subheading);
 }
 
 .recovery-form {
@@ -114,11 +118,6 @@
   gap: 6px;
 }
 
-.recovery-field label {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
-}
 
 .recovery-field input {
   width: 100%;
@@ -129,7 +128,7 @@
   border-radius: 8px;
   color: var(--ink);
   background: var(--canvas);
-  font-size: 11px;
+  font-size: var(--type-size-control-value);
 }
 
 .recovery-field input:hover:not(:disabled) {
@@ -148,13 +147,7 @@
 }
 
 .recovery-field input[aria-invalid='true'] {
-  border-color: #a63232;
-}
-
-.recovery-field > span {
-  color: #a63232;
-  font-size: 9px;
-  line-height: 1.35;
+  border-color: var(--text-danger);
 }
 
 .recovery-field .dara-select-trigger {
@@ -222,16 +215,20 @@
   gap: 5px;
 }
 
-.recovery-checkpoint-list .ready {
+.recovery-checkpoint-list .ready,
+.recovery-checkpoint-list .unavailable {
   flex: none;
-  color: #31714b;
-  font-weight: 750;
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
+  line-height: var(--type-leading-caption);
+}
+
+.recovery-checkpoint-list .ready {
+  color: var(--text-success);
 }
 
 .recovery-checkpoint-list .unavailable {
-  flex: none;
-  color: #a45f17;
-  font-weight: 750;
+  color: var(--text-warning);
 }
 
 .recovery-empty {
@@ -246,9 +243,6 @@
 
 .recovery-restore-progress {
   margin: 0;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.5;
 }
 
 .recovery-notice,
@@ -256,15 +250,6 @@
   margin: 0;
   padding: 12px 30px;
   border-top: 1px solid var(--line);
-  font-size: 10px;
-}
-
-.recovery-notice {
-  color: var(--muted);
-}
-
-.recovery-error {
-  color: #a63232;
 }
 
 @media (max-width: 620px) {

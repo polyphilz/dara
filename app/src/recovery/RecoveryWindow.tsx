@@ -19,6 +19,11 @@ import {
 } from '../components/dara-button-types.ts'
 import { DaraInput } from '../components/DaraInput.tsx'
 import { DaraSelect } from '../components/DaraSelect.tsx'
+import { DaraText } from '../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../components/dara-text-types.ts'
 import {
   RecoveryCommandErrorCode,
   RemoteCheckpointAvailability,
@@ -156,20 +161,28 @@ export function RecoveryWindow({
             <span aria-hidden="true" className="recovery-brand-mark" />
             <span className="recovery-brand-wordmark">dara</span>
           </div>
-          <h1 id="fresh-install-title">
+          <DaraText
+            as="h1"
+            id="fresh-install-title"
+            variant={DaraTextVariant.Heading}
+          >
             {step === RecoveryStep.Choose
               ? 'How would you like to begin?'
               : step === RecoveryStep.Connect
                 ? 'Find your off-site backup'
                 : 'Choose a backup'}
-          </h1>
-          <p>
+          </DaraText>
+          <DaraText
+            as="p"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
             {step === RecoveryStep.Choose
               ? 'This device does not have any Dara data yet.'
               : step === RecoveryStep.Connect
                 ? 'Enter the Cloudflare R2 details that own your Dara backup.'
                 : 'Dara found these complete checkpoints under its private backup location.'}
-          </p>
+          </DaraText>
         </header>
 
         {step === RecoveryStep.Choose && (
@@ -273,10 +286,15 @@ export function RecoveryWindow({
                 value={form.secretAccessKey}
               />
             </RecoveryField>
-            <p className="recovery-path-note">
+            <DaraText
+              as="p"
+              className="recovery-path-note"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
               Dara will look in <strong>dara/primary</strong>. Your credentials
               stay in this app and are not saved unless you complete a restore.
-            </p>
+            </DaraText>
             <div className="recovery-actions">
               <DaraButton
                 disabled={busy}
@@ -347,11 +365,16 @@ export function RecoveryWindow({
               </ul>
             )}
             {catalog.malformedObjectsIgnored > 0 && (
-              <p className="recovery-catalog-note">
+              <DaraText
+                as="p"
+                className="recovery-catalog-note"
+                tone={DaraTextTone.Muted}
+                variant={DaraTextVariant.Supporting}
+              >
                 Dara safely ignored {catalog.malformedObjectsIgnored} invalid
                 backup{' '}
                 {catalog.malformedObjectsIgnored === 1 ? 'record' : 'records'}.
-              </p>
+              </DaraText>
             )}
             <div className="recovery-actions">
               <DaraButton
@@ -374,23 +397,42 @@ export function RecoveryWindow({
               </DaraButton>
             </div>
             {busy && (
-              <p aria-live="polite" className="recovery-restore-progress">
+              <DaraText
+                aria-live="polite"
+                as="p"
+                className="recovery-restore-progress"
+                tone={DaraTextTone.Muted}
+                variant={DaraTextVariant.Supporting}
+              >
                 Restoring and checking your databases and images. Dara will
                 reopen when everything is safe.
-              </p>
+              </DaraText>
             )}
           </div>
         )}
 
         {busy && step === RecoveryStep.Choose && (
-          <p aria-live="polite" className="recovery-notice">
+          <DaraText
+            aria-live="polite"
+            as="p"
+            className="recovery-notice"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
             Creating your Dara library…
-          </p>
+          </DaraText>
         )}
         {operationError && (
-          <p aria-live="assertive" className="recovery-error" role="alert">
+          <DaraText
+            aria-live="assertive"
+            as="p"
+            className="recovery-error"
+            role="alert"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
             {operationError}
-          </p>
+          </DaraText>
         )}
       </section>
     </main>
@@ -410,9 +452,25 @@ function RecoveryField({
 }) {
   return (
     <div className="recovery-field">
-      <label htmlFor={id}>{label}</label>
+      <DaraText
+        as="label"
+        htmlFor={id}
+        tone={DaraTextTone.Muted}
+        variant={DaraTextVariant.Label}
+      >
+        {label}
+      </DaraText>
       {children}
-      {error && <span id={`${id}-error`}>{error}</span>}
+      {error && (
+        <DaraText
+          as="span"
+          id={`${id}-error`}
+          tone={DaraTextTone.Danger}
+          variant={DaraTextVariant.Supporting}
+        >
+          {error}
+        </DaraText>
+      )}
     </div>
   )
 }

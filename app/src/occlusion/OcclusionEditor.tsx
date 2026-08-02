@@ -16,6 +16,11 @@ import {
   DaraButtonVariant,
 } from '../components/dara-button-types.ts'
 import { DaraSelect } from '../components/DaraSelect.tsx'
+import { DaraText } from '../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../components/dara-text-types.ts'
 import { createUuidV7 } from '../review/uuid-v7.ts'
 import {
   OcclusionMaskColor,
@@ -689,7 +694,9 @@ export const OcclusionEditor = forwardRef<
                 ref={legendPopoverRef}
                 role="dialog"
               >
-                <strong>Image editor shortcuts</strong>
+                <DaraText as="strong" variant={DaraTextVariant.Eyebrow}>
+                  Image editor shortcuts
+                </DaraText>
                 <dl>
                   {LEGEND_ITEMS.map((item) => (
                     <div key={item.keys}>
@@ -781,6 +788,10 @@ export const OcclusionEditor = forwardRef<
                     <text
                       className="occlusion-mask-number"
                       dominantBaseline="central"
+                      /*
+                       * Dynamic SVG geometry: the mask number must scale with
+                       * its badge radius, so it stays computed here.
+                       */
                       fontSize={maskNumberBadgeRadius * 1.15}
                       textAnchor="middle"
                       x={badgeX}
@@ -818,7 +829,13 @@ export const OcclusionEditor = forwardRef<
           }}
         >
           <header>
-            <span>Layers</span>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Eyebrow}
+            >
+              Layers
+            </DaraText>
           </header>
           <div className="occlusion-layer-list">
             {definition.layers.map((layer, index) => (
@@ -845,7 +862,13 @@ export const OcclusionEditor = forwardRef<
           {selectedLayer ? (
             <div className="occlusion-layer-controls">
               <label>
-                <span>Layer label <small>optional</small></span>
+                <DaraText
+                  as="span"
+                  tone={DaraTextTone.Muted}
+                  variant={DaraTextVariant.Eyebrow}
+                >
+                  Layer label <small>optional</small>
+                </DaraText>
                 <DaraInput
                   disabled={disabled}
                   ref={layerLabelRef}
@@ -925,7 +948,14 @@ export const OcclusionEditor = forwardRef<
               </div>
             </div>
           ) : (
-            <p className="occlusion-layer-empty">Draw a rectangle to create layer 1.</p>
+            <DaraText
+              as="p"
+              className="occlusion-layer-empty"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
+              Draw a rectangle to create layer 1.
+            </DaraText>
           )}
         </aside>
       </div>
