@@ -22,6 +22,19 @@ describe('rejects feature-local typography', () => {
     expect(violations('.a {\n  font-size: 0.75rem;\n}\n')).toHaveLength(1)
   })
 
+  test('relative font sizes fail outside approved authored content', () => {
+    const found = violations(
+      '.a {\n  font-size: 1.45em;\n}\n' +
+        '.b {\n  font-size: 120%;\n}\n' +
+        '.c {\n  font-size: 11pt;\n}\n',
+    )
+    expect(found.map((entry) => entry.check)).toEqual([
+      TypographyCheckKind.FontSize,
+      TypographyCheckKind.FontSize,
+      TypographyCheckKind.FontSize,
+    ])
+  })
+
   test('a font shorthand with a pixel size fails', () => {
     const found = violations('.a {\n  font: 650 12px/1.1 var(--font-family-app);\n}\n')
     expect(found[0].check).toBe(TypographyCheckKind.FontShorthand)
@@ -56,6 +69,13 @@ describe('rejects feature-local typography', () => {
       TypographyCheckKind.LineHeight,
     ])
     expect(found.map((entry) => entry.line)).toEqual([2, 4, 6, 8, 10])
+  })
+
+  test('a wrapped relative font size fails', () => {
+    const found = violations('.a {\n  font-size:\n    120%;\n}\n')
+    expect(found).toHaveLength(1)
+    expect(found[0].check).toBe(TypographyCheckKind.FontSize)
+    expect(found[0].line).toBe(2)
   })
 
   test('a numeric fontSize in TypeScript fails', () => {
@@ -207,13 +227,34 @@ describe('accepts the central typography system', () => {
     ).toEqual([])
   })
 
-  test('relative authored-content ratios pass', () => {
+  test('approved relative authored-content ratios pass', () => {
     expect(
       violations(
         '.dara-markdown h1 {\n  font-size: 1.45em;\n}\n',
         'src/markdown/markdown-renderer.css',
       ),
     ).toEqual([])
+    expect(
+      violations(
+        '.dara-rich-text-content code {\n  font-size: 0.9em;\n}\n',
+        'src/markdown/rich-text-editor.css',
+      ),
+    ).toEqual([])
+  })
+
+  test('unapproved relative ratios fail even in authored-content files', () => {
+    expect(
+      violations(
+        '.dara-markdown h1 {\n  font-size: 1.2em;\n}\n',
+        'src/markdown/markdown-renderer.css',
+      ),
+    ).toHaveLength(1)
+    expect(
+      violations(
+        '.feature-heading {\n  font-size: 1.45em;\n}\n',
+        FEATURE_STYLESHEET,
+      ),
+    ).toHaveLength(1)
   })
 
   test('inherit keywords pass', () => {

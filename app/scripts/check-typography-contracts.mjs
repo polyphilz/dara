@@ -23,19 +23,21 @@ export const TypographyCheckKind = {
 
 const numericLiteralPattern =
   /(^|[^\w$])(?:\d+(?:\.\d*)?|\.\d+)(?:[a-z%]+)?(?![\w$])/i
+const cssFontSizeLiteralPattern =
+  /(?:\d+(?:\.\d*)?|\.\d+)\s*(?:%|[a-z]+)(?![\w-])/i
 const customPropertyReferencePattern = /var\(\s*(--[\w-]+)/g
 
 const wrappedCssCheckByProperty = {
   'font-size': {
     name: TypographyCheckKind.FontSize,
-    test: (value) => /\d*\.?\d+\s*(px|rem)\b/.test(value),
-    message: 'font-size uses a raw px/rem literal instead of a type token',
+    test: (value) => cssFontSizeLiteralPattern.test(value),
+    message: 'font-size uses a raw size literal instead of a type token',
   },
   font: {
     name: TypographyCheckKind.FontShorthand,
-    test: (value) => /\d*\.?\d+\s*(px|rem)\b/.test(value),
+    test: (value) => cssFontSizeLiteralPattern.test(value),
     message:
-      'font shorthand embeds a raw px/rem size; use the separate type token properties',
+      'font shorthand embeds a raw size; use the separate type token properties',
   },
   'font-weight': {
     name: TypographyCheckKind.FontWeight,
@@ -77,8 +79,8 @@ const inlineTypographyCheckByProperty = {
 
 /*
  * Every exception is narrow and carries its reason. Dynamic SVG text is sized
- * from geometry rather than from the type scale, so it cannot be tokenized
- * without breaking the drawing it belongs to.
+ * from geometry rather than from the type scale, while authored rich content
+ * needs ratios that remain relative to its surrounding content role.
  */
 const allowlist = [
   {
@@ -99,23 +101,38 @@ const allowlist = [
     reason:
       'Mask number weight belongs to the same geometry-derived SVG badge as the OcclusionEditor mask size.',
   },
+  {
+    file: 'src/markdown/markdown-renderer.css',
+    pattern:
+      /^\s*font-size: (?:1\.45|1\.28|1\.14|0\.78|0\.84|0\.76|0\.8)em;$/,
+    reason:
+      'Rendered Markdown hierarchy and inline constructs scale relative to the selected authored-content role.',
+  },
+  {
+    file: 'src/markdown/rich-text-editor.css',
+    pattern: /^\s*font-size: 0\.9em;$/,
+    reason:
+      'Inline code in authored rich text scales relative to the editor content role.',
+  },
 ]
 
 const checks = [
   {
     name: TypographyCheckKind.FontSize,
-    // A font-size may use tokens, relative content ratios, or keywords, but a
-    // raw px/rem literal is a new one-off size decision.
+    // A font-size may use tokens or keywords. Approved authored-content ratios
+    // are documented as exact allowlist entries above.
     test: (line) =>
-      /(^|[^-\w])font-size\s*:/.test(line) && /\d*\.?\d+\s*(px|rem)\b/.test(line),
-    message: 'font-size uses a raw px/rem literal instead of a type token',
+      /(^|[^-\w])font-size\s*:/.test(line) &&
+      cssFontSizeLiteralPattern.test(line),
+    message: 'font-size uses a raw size literal instead of a type token',
   },
   {
     name: TypographyCheckKind.FontShorthand,
     test: (line) =>
-      /(^|[^-\w])font\s*:/.test(line) && /\d*\.?\d+\s*(px|rem)\b/.test(line),
+      /(^|[^-\w])font\s*:/.test(line) &&
+      cssFontSizeLiteralPattern.test(line),
     message:
-      'font shorthand embeds a raw px/rem size; use the separate type token properties',
+      'font shorthand embeds a raw size; use the separate type token properties',
   },
   ...Object.entries(inlineTypographyCheckByProperty).map(
     ([property, check]) => ({
