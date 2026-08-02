@@ -11,6 +11,20 @@ import { extname, relative, resolve } from 'node:path'
 const sourceRoot = resolve('src')
 const tokenSource = resolve('src/styles/base.css')
 
+export const TypographyCheckKind = {
+  FontSize: 'font-size',
+  FontShorthand: 'font shorthand',
+  InlineFontSize: 'fontSize',
+  FontWeight: 'font-weight',
+  LetterSpacing: 'letter-spacing',
+  LineHeight: 'line-height',
+  TypographyVariable: 'typography variable',
+}
+
+const numericLiteralPattern =
+  /(^|[^\w$])(?:\d+(?:\.\d*)?|\.\d+)(?:[a-z%]+)?(?![\w$])/i
+const customPropertyReferencePattern = /var\(\s*(--[\w-]+)/g
+
 /*
  * Every exception is narrow and carries its reason. Dynamic SVG text is sized
  * from geometry rather than from the type scale, so it cannot be tokenized
@@ -39,7 +53,7 @@ const allowlist = [
 
 const checks = [
   {
-    name: 'font-size',
+    name: TypographyCheckKind.FontSize,
     // A font-size may use tokens, relative content ratios, or keywords, but a
     // raw px/rem literal is a new one-off size decision.
     test: (line) =>
@@ -47,33 +61,30 @@ const checks = [
     message: 'font-size uses a raw px/rem literal instead of a type token',
   },
   {
-    name: 'font shorthand',
+    name: TypographyCheckKind.FontShorthand,
     test: (line) =>
       /(^|[^-\w])font\s*:/.test(line) && /\d*\.?\d+\s*(px|rem)\b/.test(line),
     message:
       'font shorthand embeds a raw px/rem size; use the separate type token properties',
   },
   {
-    name: 'fontSize',
-    test: (line) =>
-      /\bfontSize\b\s*[:=]/.test(line) &&
-      (/\bfontSize\b\s*[:=]\s*['"`]?\d/.test(line) ||
-        /\bfontSize=\{[^}]*\d/.test(line)),
+    name: TypographyCheckKind.InlineFontSize,
+    test: (line) => hasNumericFontSizeAssignment(line),
     message: 'fontSize assigns a numeric literal instead of a type token',
   },
   {
-    name: 'font-weight',
+    name: TypographyCheckKind.FontWeight,
     test: (line) => /(^|[^-\w])font-weight\s*:\s*\d/.test(line),
     message: 'font-weight uses a raw numeric value instead of a weight token',
   },
   {
-    name: 'letter-spacing',
+    name: TypographyCheckKind.LetterSpacing,
     test: (line) => /(^|[^-\w])letter-spacing\s*:\s*-?\.?\d/.test(line),
     message:
       'letter-spacing uses a raw numeric value instead of a tracking token',
   },
   {
-    name: 'line-height',
+    name: TypographyCheckKind.LineHeight,
     test: (line) => /(^|[^-\w])line-height\s*:\s*\d/.test(line),
     message: 'line-height uses a raw numeric value instead of a leading token',
   },
@@ -81,19 +92,96 @@ const checks = [
 
 const checkedExtensions = new Set(['.css', '.ts', '.tsx'])
 
-export function findTypographyViolations(path, contents, relativePath) {
+function hasNumericFontSizeAssignment(line) {
+  const assignmentPatterns = [
+    /\bfontSize\b\s*:\s*([^,}\n]+)/g,
+    /\bfontSize\b\s*=\s*\{([^}]*)\}/g,
+    /\bfontSize\b\s*=\s*([^;,\n]+)/g,
+  ]
+
+  return assignmentPatterns.some((pattern) => {
+    for (const match of line.matchAll(pattern)) {
+      if (numericLiteralPattern.test(match[1])) {
+        return true
+      }
+    }
+    return false
+  })
+}
+
+function referencedCustomProperties(value) {
+  return [...value.matchAll(customPropertyReferencePattern)].map(
+    (match) => match[1],
+  )
+}
+
+function findTypographyVariableViolations(path, rawLines, analyzedLines) {
+  if (extname(path) !== '.css') {
+    return []
+  }
+
+  const analyzedContents = analyzedLines.join('\n')
+  const definitions = new Map()
+  const definitionPattern =
+    /(?:^|[;{])\s*(--[\w-]+)\s*:\s*([^;}]+)/gm
+  const typographyDeclarationPattern =
+    /(?:^|[;{])\s*(?:font-size|font|font-weight|letter-spacing|line-height)\s*:\s*([^;}]+)/gm
+
+  for (const match of analyzedContents.matchAll(definitionPattern)) {
+    const valueStart = match.index + match[0].lastIndexOf(match[2])
+    definitions.set(match[1], {
+      line: analyzedContents.slice(0, valueStart).split('\n').length,
+      value: match[2],
+    })
+  }
+
+  const pending = []
+  for (const match of analyzedContents.matchAll(typographyDeclarationPattern)) {
+    pending.push(...referencedCustomProperties(match[1]))
+  }
+
+  const visited = new Set()
   const violations = []
-  const allowed = allowlist.filter((entry) => entry.file === relativePath)
+  while (pending.length > 0) {
+    const name = pending.pop()
+    if (visited.has(name)) {
+      continue
+    }
+    visited.add(name)
+
+    const definition = definitions.get(name)
+    if (!definition) {
+      continue
+    }
+    pending.push(...referencedCustomProperties(definition.value))
+
+    if (numericLiteralPattern.test(definition.value)) {
+      violations.push({
+        path,
+        line: definition.line,
+        check: TypographyCheckKind.TypographyVariable,
+        message:
+          'a custom property used by typography contains a raw numeric value instead of a type token',
+        source: rawLines[definition.line - 1].trim(),
+      })
+    }
+  }
+
+  return violations
+}
+
+function linesWithoutComments(rawLines) {
+  const analyzedLines = []
   let inBlockComment = false
 
-  contents.split('\n').forEach((rawLine, index) => {
+  for (const rawLine of rawLines) {
     let line = rawLine
 
-    // Strip comments so documentation and reasons never trip the checker.
     if (inBlockComment) {
       const end = line.indexOf('*/')
       if (end === -1) {
-        return
+        analyzedLines.push('')
+        continue
       }
       line = line.slice(end + 2)
       inBlockComment = false
@@ -112,6 +200,20 @@ export function findTypographyViolations(path, contents, relativePath) {
     if (lineComment !== -1 && !/https?:$/.test(line.slice(0, lineComment))) {
       line = line.slice(0, lineComment)
     }
+    analyzedLines.push(line)
+  }
+
+  return analyzedLines
+}
+
+export function findTypographyViolations(path, contents, relativePath) {
+  const violations = []
+  const allowed = allowlist.filter((entry) => entry.file === relativePath)
+  const rawLines = contents.split('\n')
+  const analyzedLines = linesWithoutComments(rawLines)
+
+  analyzedLines.forEach((line, index) => {
+    const rawLine = rawLines[index]
     if (!line.trim()) {
       return
     }
@@ -132,6 +234,10 @@ export function findTypographyViolations(path, contents, relativePath) {
       }
     }
   })
+
+  violations.push(
+    ...findTypographyVariableViolations(path, rawLines, analyzedLines),
+  )
 
   return violations
 }

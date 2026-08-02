@@ -1,7 +1,11 @@
 .dara-text {
-  margin: 0;
   font-family: var(--font-family-app);
   font-style: normal;
+}
+
+/* Caller-owned layout classes must always win over this element reset. */
+:where(.dara-text) {
+  margin: 0;
 }
 
 .dara-text-display {

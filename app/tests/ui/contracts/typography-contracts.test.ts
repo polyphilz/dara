@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'vitest'
-import { findTypographyViolations } from '../../../scripts/check-typography-contracts.mjs'
+import {
+  findTypographyViolations,
+  TypographyCheckKind,
+} from '../../../scripts/check-typography-contracts.mjs'
 
 const FEATURE_STYLESHEET = 'src/windows/main/main-window.css'
 
@@ -11,7 +14,7 @@ describe('rejects feature-local typography', () => {
   test('a raw pixel font size fails', () => {
     const found = violations('.setting-note {\n  font-size: 12px;\n}\n')
     expect(found).toHaveLength(1)
-    expect(found[0].check).toBe('font-size')
+    expect(found[0].check).toBe(TypographyCheckKind.FontSize)
     expect(found[0].line).toBe(2)
   })
 
@@ -21,7 +24,7 @@ describe('rejects feature-local typography', () => {
 
   test('a font shorthand with a pixel size fails', () => {
     const found = violations('.a {\n  font: 650 12px/1.1 var(--font-family-app);\n}\n')
-    expect(found[0].check).toBe('font shorthand')
+    expect(found[0].check).toBe(TypographyCheckKind.FontShorthand)
   })
 
   test('raw weights, tracking, and leading fail', () => {
@@ -29,9 +32,9 @@ describe('rejects feature-local typography', () => {
       '.a {\n  font-weight: 750;\n  letter-spacing: 0.09em;\n  line-height: 1.45;\n}\n',
     )
     expect(found.map((entry) => entry.check)).toEqual([
-      'font-weight',
-      'letter-spacing',
-      'line-height',
+      TypographyCheckKind.FontWeight,
+      TypographyCheckKind.LetterSpacing,
+      TypographyCheckKind.LineHeight,
     ])
   })
 
@@ -40,7 +43,7 @@ describe('rejects feature-local typography', () => {
       'const style = { fontSize: 13 }\n',
       'src/markdown/CodeBlockNodeView.ts',
     )
-    expect(found[0].check).toBe('fontSize')
+    expect(found[0].check).toBe(TypographyCheckKind.InlineFontSize)
   })
 
   test('a pixel fontSize string in TypeScript fails', () => {
@@ -48,7 +51,48 @@ describe('rejects feature-local typography', () => {
       "const style = { fontSize: '13px' }\n",
       'src/markdown/CodeBlockNodeView.ts',
     )
-    expect(found[0].check).toBe('fontSize')
+    expect(found[0].check).toBe(TypographyCheckKind.InlineFontSize)
+  })
+
+  test('computed numeric fontSize expressions fail', () => {
+    const found = violations(
+      'const a = { fontSize: compact ? 12 : 14 }\n' +
+        'const b = { fontSize: fallback ?? 12 }\n',
+      'src/markdown/CodeBlockNodeView.ts',
+    )
+    expect(found.map((entry) => entry.check)).toEqual([
+      TypographyCheckKind.InlineFontSize,
+      TypographyCheckKind.InlineFontSize,
+    ])
+  })
+
+  test('a feature-local variable cannot hide a raw type value', () => {
+    const found = violations(
+      ':root {\n' +
+        '  --card-font-size: 12px;\n' +
+        '}\n' +
+        '.card {\n' +
+        '  font-size: var(--card-font-size);\n' +
+        '}\n',
+    )
+    expect(found).toHaveLength(1)
+    expect(found[0].check).toBe(TypographyCheckKind.TypographyVariable)
+    expect(found[0].line).toBe(2)
+  })
+
+  test('a chained feature-local variable cannot hide a raw type value', () => {
+    const found = violations(
+      ':root {\n' +
+        '  --card-font-size: var(--card-font-size-base);\n' +
+        '  --card-font-size-base: 0.75rem;\n' +
+        '}\n' +
+        '.card {\n' +
+        '  font-size: var(--card-font-size);\n' +
+        '}\n',
+    )
+    expect(found).toHaveLength(1)
+    expect(found[0].check).toBe(TypographyCheckKind.TypographyVariable)
+    expect(found[0].line).toBe(3)
   })
 })
 
