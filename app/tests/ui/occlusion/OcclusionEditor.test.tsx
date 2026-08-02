@@ -134,8 +134,8 @@ test('builds multiple layers and multiple masks per layer with local undo', asyn
   expect(getByRole('button', { name: /Layer 1.*2 masks/ })).toBeTruthy()
   expect(getByRole('button', { name: /Layer 2.*1 mask/ })).toBeTruthy()
 
-  fireEvent.mouseDown(getByRole('button', { name: /Occlusion mode/ }))
-  fireEvent.mouseDown(getByRole('option', { name: 'Hide all, guess one' }))
+  fireEvent.click(getByRole('button', { name: /Occlusion mode/ }))
+  fireEvent.click(getByRole('option', { name: 'Hide all, guess one' }))
   expect(current.mode).toBe(OcclusionMode.HideAllGuessOne)
 
   expect(getByRole('button', { name: /Legend/ })).toBeTruthy()

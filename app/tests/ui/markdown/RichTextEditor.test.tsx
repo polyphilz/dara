@@ -217,10 +217,10 @@ test('code blocks lazy-load CodeMirror and synchronize code changes', async () =
   expect(serializeDaraMarkdown(view.state.doc)).toContain(
     'console.log(answer)',
   )
-  fireEvent.mouseDown(
+  fireEvent.click(
     getByRole('button', { name: 'Code language: TypeScript' }),
   )
-  fireEvent.mouseDown(getByRole('option', { name: 'Python' }))
+  fireEvent.click(getByRole('option', { name: 'Python' }))
   expect(serializeDaraMarkdown(view.state.doc)).toContain('```python')
   await waitFor(() => {
     const codeBlock = container.querySelector('.dara-code-block-editor')

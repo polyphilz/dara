@@ -20,3 +20,21 @@ test('shared listbox supports keyboard open, selection, Escape, and focus return
   await expect(listbox).toBeHidden()
   await expect(page.getByRole('button', { name: 'Catalog choice: Third option' })).toBeFocused()
 })
+
+test('shared listbox stays open after a complete held pointer click', async ({ page }) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}&surface=${BrowserHarnessSurface.VisualCatalog}`,
+  )
+  const trigger = page.getByRole('button', {
+    name: 'Catalog choice: Second option',
+  })
+  const listbox = page.getByRole('listbox', { name: 'Catalog choice' })
+
+  await trigger.click({ delay: 75 })
+  await expect(listbox).toBeVisible()
+  await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+
+  await trigger.click({ delay: 75 })
+  await expect(listbox).toBeHidden()
+  await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+})

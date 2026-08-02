@@ -29,3 +29,25 @@ test('rich-text selection saves canonical Markdown through the public result', a
     type: CardContentType.Basic,
   })
 })
+
+test('code-language listbox survives a held pointer click and applies selection', async ({ page }) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const editor = page.getByTestId('front-editor')
+  const front = editor.getByRole('textbox', { name: 'Front' })
+  await front.fill('const answer = 42')
+  await editor.getByRole('button', { name: 'Code block' }).click()
+
+  const language = editor.getByRole('button', {
+    name: 'Code language: Plain code',
+  })
+  await language.click({ delay: 75 })
+  const listbox = page.getByRole('listbox', { name: 'Code language' })
+  await expect(listbox).toBeVisible()
+
+  await page.getByRole('option', { name: 'TypeScript' }).click({ delay: 75 })
+  await expect(
+    editor.getByRole('button', { name: 'Code language: TypeScript' }),
+  ).toBeVisible()
+})

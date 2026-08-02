@@ -68,7 +68,7 @@ test('Escape closes the listbox and returns focus to its trigger', async () => {
     />,
   )
   const trigger = getByRole('button', { name: 'Card type: Basic' })
-  fireEvent.mouseDown(trigger)
+  fireEvent.click(trigger)
   const listbox = getByRole('listbox', { name: 'Card type' })
   await waitFor(() => {
     expect(document.activeElement).toBe(
@@ -82,8 +82,7 @@ test('Escape closes the listbox and returns focus to its trigger', async () => {
   await waitFor(() => expect(document.activeElement).toBe(trigger))
 })
 
-test('a direct pointer click toggles the listbox only once', async () => {
-  const user = userEvent.setup()
+test('a complete pointer click toggles the listbox only once after a held press', async () => {
   const { getByRole, queryByRole } = render(
     <DaraSelect
       ariaLabel="Card type"
@@ -94,10 +93,17 @@ test('a direct pointer click toggles the listbox only once', async () => {
   )
   const trigger = getByRole('button', { name: 'Card type: Basic' })
 
-  await user.click(trigger)
+  fireEvent.mouseDown(trigger)
+  await new Promise((resolve) => window.setTimeout(resolve, 10))
+  expect(queryByRole('listbox', { name: 'Card type' })).toBeNull()
+  fireEvent.mouseUp(trigger)
+  fireEvent.click(trigger)
   expect(getByRole('listbox', { name: 'Card type' })).toBeTruthy()
 
-  await user.click(trigger)
+  fireEvent.mouseDown(trigger)
+  await new Promise((resolve) => window.setTimeout(resolve, 10))
+  fireEvent.mouseUp(trigger)
+  fireEvent.click(trigger)
   expect(queryByRole('listbox', { name: 'Card type' })).toBeNull()
 })
 
@@ -113,8 +119,8 @@ test('returns focus to a caller-owned surface after selection when requested', a
       value={TestValue.Basic}
     />,
   )
-  fireEvent.mouseDown(getByRole('button', { name: 'Card type: Basic' }))
-  fireEvent.mouseDown(getByRole('option', { name: 'Cloze' }))
+  fireEvent.click(getByRole('button', { name: 'Card type: Basic' }))
+  fireEvent.click(getByRole('option', { name: 'Cloze' }))
 
   await waitFor(() => expect(document.activeElement).toBe(returnTarget))
   returnTarget.remove()
