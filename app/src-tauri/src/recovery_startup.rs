@@ -3,7 +3,7 @@ use std::{
     io,
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
     },
 };
 
@@ -41,10 +41,41 @@ pub(crate) enum ApplicationLaunchMode {
     Recovery,
 }
 
+#[derive(Debug)]
+pub(crate) struct ApplicationLaunchContext {
+    mode: RwLock<ApplicationLaunchMode>,
+}
+
 #[derive(Clone, Copy, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct ApplicationLaunchContext {
-    pub(crate) mode: ApplicationLaunchMode,
+pub(crate) struct ApplicationLaunchContextSnapshot {
+    mode: ApplicationLaunchMode,
+}
+
+impl ApplicationLaunchContext {
+    pub(crate) fn new(mode: ApplicationLaunchMode) -> Self {
+        Self {
+            mode: RwLock::new(mode),
+        }
+    }
+
+    pub(crate) fn mode(&self) -> ApplicationLaunchMode {
+        *self
+            .mode
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn transition_to_normal(&self) {
+        *self
+            .mode
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = ApplicationLaunchMode::Normal;
+    }
+
+    fn snapshot(&self) -> ApplicationLaunchContextSnapshot {
+        ApplicationLaunchContextSnapshot { mode: self.mode() }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -109,12 +140,10 @@ pub(crate) fn take_show_main_after_restart_request(
 }
 
 pub(crate) fn launch_context(pair: DatabasePairState) -> ApplicationLaunchContext {
-    ApplicationLaunchContext {
-        mode: match pair {
-            DatabasePairState::Fresh => ApplicationLaunchMode::Recovery,
-            DatabasePairState::Existing => ApplicationLaunchMode::Normal,
-        },
-    }
+    ApplicationLaunchContext::new(match pair {
+        DatabasePairState::Fresh => ApplicationLaunchMode::Recovery,
+        DatabasePairState::Existing => ApplicationLaunchMode::Normal,
+    })
 }
 
 #[cfg(feature = "e2e")]
@@ -304,8 +333,32 @@ impl RecoveryCommandError {
 #[tauri::command]
 pub(crate) fn load_application_launch_context(
     context: State<'_, ApplicationLaunchContext>,
-) -> ApplicationLaunchContext {
-    *context
+) -> ApplicationLaunchContextSnapshot {
+    context.snapshot()
+}
+
+fn complete_development_recovery(
+    app: AppHandle,
+    context: &ApplicationLaunchContext,
+    paths: DatabasePaths,
+) -> Result<bool, RecoveryCommandError> {
+    if !tauri::is_dev() {
+        return Ok(false);
+    }
+
+    crate::initialize_normal_runtime_after_recovery(&app, paths).map_err(|error| {
+        RecoveryCommandError::internal(format!("Could not start the new Dara library: {error}"))
+    })?;
+    context.transition_to_normal();
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| RecoveryCommandError::internal("Could not find the Dara window."))?;
+    window.eval("window.location.reload()").map_err(|error| {
+        RecoveryCommandError::internal(format!(
+            "The library is ready, but Dara could not refresh its window: {error}"
+        ))
+    })?;
+    Ok(true)
 }
 
 #[tauri::command]
@@ -315,7 +368,7 @@ pub(crate) fn start_fresh_install(
     data_lock: State<'_, AppDataLock>,
     state: State<'_, FreshInstallRecoveryState>,
 ) -> Result<(), RecoveryCommandError> {
-    if context.mode != ApplicationLaunchMode::Recovery {
+    if context.mode() != ApplicationLaunchMode::Recovery {
         return Err(RecoveryCommandError::not_fresh_install());
     }
     let _operation = state.begin_operation()?;
@@ -337,6 +390,9 @@ pub(crate) fn start_fresh_install(
         RecoveryCommandError::internal(format!("Could not create Dara data: {error}"))
     })?;
     drop(database);
+    if complete_development_recovery(app.clone(), &context, paths.clone())? {
+        return Ok(());
+    }
     request_show_main_after_restart(&paths).map_err(|error| {
         RecoveryCommandError::internal(format!(
             "Could not prepare Dara to show the new library: {error}"
@@ -352,7 +408,7 @@ pub(crate) async fn discover_remote_backups(
     state: State<'_, FreshInstallRecoveryState>,
     input: DiscoverRemoteBackupsInput,
 ) -> Result<RemoteCheckpointCatalog, RecoveryCommandError> {
-    if context.mode != ApplicationLaunchMode::Recovery {
+    if context.mode() != ApplicationLaunchMode::Recovery {
         return Err(RecoveryCommandError::not_fresh_install());
     }
     let state = state.inner().clone();
@@ -397,7 +453,7 @@ pub(crate) async fn restore_remote_backup(
     data_lock: State<'_, AppDataLock>,
     input: RestoreRemoteBackupInput,
 ) -> Result<(), RecoveryCommandError> {
-    if context.mode != ApplicationLaunchMode::Recovery {
+    if context.mode() != ApplicationLaunchMode::Recovery {
         return Err(RecoveryCommandError::not_fresh_install());
     }
     let state = state.inner().clone();
@@ -412,11 +468,13 @@ pub(crate) async fn restore_remote_backup(
     let data_lock = data_lock.try_clone().map_err(|error| {
         RecoveryCommandError::internal(format!("Could not retain the Dara data lock: {error}"))
     })?;
-    request_show_main_after_restart(&paths).map_err(|error| {
-        RecoveryCommandError::internal(format!(
-            "Could not prepare Dara to show the restored library: {error}"
-        ))
-    })?;
+    if !tauri::is_dev() {
+        request_show_main_after_restart(&paths).map_err(|error| {
+            RecoveryCommandError::internal(format!(
+                "Could not prepare Dara to show the restored library: {error}"
+            ))
+        })?;
+    }
     let session = state.take_session()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
         restore_session(&data_lock, &resource_dir, &selector, session)
@@ -425,7 +483,12 @@ pub(crate) async fn restore_remote_backup(
     .map_err(|_| RecoveryCommandError::internal("The restore task stopped unexpectedly."))?;
     drop(operation);
     match result {
-        Ok(()) => app.restart(),
+        Ok(()) => {
+            if complete_development_recovery(app.clone(), &context, paths)? {
+                return Ok(());
+            }
+            app.restart()
+        }
         Err(failure) => {
             let RestoreSessionFailure { error, session } = *failure;
             state.replace_session(session);
@@ -606,7 +669,7 @@ mod tests {
             DatabasePairState::Fresh
         );
         assert_eq!(
-            launch_context(DatabasePairState::Fresh).mode,
+            launch_context(DatabasePairState::Fresh).mode(),
             ApplicationLaunchMode::Recovery
         );
         assert!(!paths.main.exists());
@@ -625,8 +688,27 @@ mod tests {
             DatabasePairState::Existing
         );
         assert_eq!(
-            launch_context(DatabasePairState::Existing).mode,
+            launch_context(DatabasePairState::Existing).mode(),
             ApplicationLaunchMode::Normal
+        );
+    }
+
+    #[test]
+    fn launch_context_transitions_from_recovery_to_normal() {
+        let context = launch_context(DatabasePairState::Fresh);
+
+        assert_eq!(context.mode(), ApplicationLaunchMode::Recovery);
+        assert_eq!(
+            serde_json::to_value(context.snapshot()).expect("serialize recovery context"),
+            serde_json::json!({ "mode": "RECOVERY" })
+        );
+
+        context.transition_to_normal();
+
+        assert_eq!(context.mode(), ApplicationLaunchMode::Normal);
+        assert_eq!(
+            serde_json::to_value(context.snapshot()).expect("serialize normal context"),
+            serde_json::json!({ "mode": "NORMAL" })
         );
     }
 
