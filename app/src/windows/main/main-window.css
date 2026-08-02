@@ -895,8 +895,19 @@ body {
 }
 
 .home-activity .react-activity-calendar {
+  /*
+   * react-activity-calendar measures its weekday labels after the first paint.
+   * Reserve that measured 20px label width plus its 8px gap immediately so the
+   * centered graph does not shift when the library's client effect runs.
+   */
+  --home-activity-weekday-label-offset: 28px;
+
   margin: 0 auto;
   color: var(--muted);
+}
+
+.home-activity .react-activity-calendar__calendar {
+  margin-left: var(--home-activity-weekday-label-offset) !important;
 }
 
 .home-activity .react-activity-calendar__scroll-container {
@@ -911,6 +922,7 @@ body {
 
 .home-activity .react-activity-calendar__footer {
   justify-content: center;
+  margin-left: var(--home-activity-weekday-label-offset) !important;
 }
 
 .home-activity .react-activity-calendar__legend-colors {
