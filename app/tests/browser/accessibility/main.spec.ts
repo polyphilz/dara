@@ -31,6 +31,8 @@ test('Browse and Settings have no detectable accessibility violations', async ({
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
 
   await page.getByRole('button', { name: 'Settings' }).click()
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeFocused()
+  await expect(
+    page.getByRole('heading', { name: 'Settings', exact: true }),
+  ).toBeFocused()
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
 })
