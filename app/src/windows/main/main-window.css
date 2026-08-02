@@ -88,9 +88,7 @@ body {
   padding: 12px 14px;
   border: 1px solid color-mix(in srgb, #a05d22 28%, var(--line));
   border-radius: 9px;
-  color: #a05d22;
   background: color-mix(in srgb, #a05d22 7%, var(--surface));
-  font-size: 10px;
 }
 
 .restore-takeover-banner > div {
@@ -99,14 +97,6 @@ body {
   gap: 4px;
 }
 
-.restore-takeover-banner strong {
-  color: var(--ink);
-  font-size: 11px;
-}
-
-.restore-takeover-banner span {
-  line-height: 1.45;
-}
 
 .restore-takeover-banner button {
   flex: 0 0 auto;
@@ -135,16 +125,6 @@ body {
 .update-notification strong,
 .update-notification span {
   margin: 0;
-}
-
-.update-notification strong {
-  font-size: 11px;
-}
-
-.update-notification span {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.45;
 }
 
 .update-notification-actions {
@@ -207,11 +187,6 @@ body {
 
 .settings-dialog > div:first-child > span {
   margin-bottom: 5px;
-  color: var(--accent);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .setting-section {
@@ -222,16 +197,8 @@ body {
   border-top: 1px solid var(--line);
 }
 
-.setting-section-heading h2 {
-  font-size: 13px;
-  letter-spacing: -0.01em;
-}
-
 .setting-section-heading p {
   margin-top: 7px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.55;
 }
 
 .setting-section-body {
@@ -262,20 +229,6 @@ body {
   gap: 5px;
 }
 
-.setting-row strong,
-.retention-heading strong,
-.diagnostic-action strong {
-  font-size: 12px;
-}
-
-.setting-row span,
-.retention-heading span,
-.diagnostic-action span,
-.setting-note {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.45;
-}
 
 .setting-section-footer {
   justify-content: flex-end;
@@ -338,15 +291,7 @@ body {
   background: var(--accent-soft);
 }
 
-.shortcut-recorder-error,
-.setting-inline-error,
 .shortcut-recorder-hint {
-  color: #a63232 !important;
-  font-size: 9px !important;
-}
-
-.shortcut-recorder-hint {
-  color: var(--muted) !important;
   white-space: nowrap;
 }
 
@@ -379,8 +324,10 @@ body {
   border-radius: 999px;
   color: var(--accent);
   background: var(--accent-soft);
-  font-size: 8px;
-  font-weight: 700;
+  font-size: var(--type-size-eyebrow);
+  font-weight: var(--type-weight-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
+  text-transform: uppercase;
   white-space: nowrap;
 }
 
@@ -395,7 +342,7 @@ body {
   width: 29px;
   height: 29px;
   place-items: center;
-  font-size: 15px;
+  font-size: var(--type-size-subheading);
 }
 
 .percentage-control input[type='range'] {
@@ -414,8 +361,8 @@ body {
 .percentage-control output {
   min-width: 43px;
   color: var(--accent);
-  font-size: 15px;
-  font-weight: 750;
+  font-size: var(--type-size-subheading);
+  font-weight: var(--type-weight-subheading);
   text-align: center;
 }
 
@@ -435,8 +382,8 @@ body {
 
 .zoom-stepper output {
   min-width: 45px;
-  font-size: 11px;
-  font-weight: 650;
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
   text-align: center;
 }
 
@@ -458,17 +405,6 @@ body {
   gap: 5px;
 }
 
-.diagnostics-overview-heading strong,
-.diagnostics-item strong {
-  font-size: 11px;
-}
-
-.diagnostics-overview-heading span,
-.diagnostics-item span {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.45;
-}
 
 .diagnostics-list {
   margin: 0;
@@ -488,9 +424,6 @@ body {
 
 .diagnostics-item dt {
   padding-top: 1px;
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
 }
 
 .diagnostics-item dd {
@@ -505,17 +438,10 @@ body {
   overflow-wrap: anywhere;
 }
 
-.diagnostics-item.warning strong,
-.diagnostics-item.warning span {
-  color: #a05d22;
-}
-
 .diagnostics-message {
   margin: 0;
   padding: 11px 16px;
   border-top: 1px solid var(--line);
-  color: var(--muted);
-  font-size: 10px;
 }
 
 .diagnostics-message.error {
@@ -523,7 +449,6 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  color: #a63232;
   background: color-mix(in srgb, #a63232 6%, var(--surface));
 }
 
@@ -539,10 +464,7 @@ body {
 .scheduling-result {
   margin: 0;
   padding: 11px 16px;
-  color: #31714b;
   background: color-mix(in srgb, #31714b 7%, transparent);
-  font-size: 10px;
-  line-height: 1.45;
 }
 
 .settings-banner,
@@ -551,9 +473,7 @@ body {
   padding: 11px 13px;
   border: 1px solid color-mix(in srgb, #a63232 25%, var(--line));
   border-radius: 8px;
-  color: #a63232;
   background: color-mix(in srgb, #a63232 6%, var(--surface));
-  font-size: 10px;
 }
 
 .settings-load-error {
@@ -580,18 +500,13 @@ body {
   background: color-mix(in srgb, var(--surface) 96%, #fff);
 }
 
-.settings-dialog h2 {
-  font-size: 18px;
-  letter-spacing: -0.025em;
-}
-
 .settings-dialog-copy {
   display: grid;
   gap: 9px;
   margin-top: 16px;
   color: var(--muted);
-  font-size: 11px;
-  line-height: 1.55;
+  font-size: var(--type-size-body);
+  line-height: var(--type-leading-body);
 }
 
 .settings-dialog-actions {
@@ -613,11 +528,12 @@ body {
 }
 
 .recalculation-progress span {
-  font-size: 9px;
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .settings-dialog .dialog-error {
-  color: #a63232;
+  color: var(--text-danger);
 }
 
 .offsite-backup-section {
@@ -646,30 +562,17 @@ body {
   gap: 5px;
 }
 
-.offsite-backup-intro strong {
-  font-size: 12px;
-}
-
-.offsite-backup-intro span,
-.offsite-backup-privacy,
-.offsite-backup-loading,
-.offsite-backup-load-error,
-.offsite-backup-live,
-.offsite-backup-warning {
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.45;
-}
-
 .backup-state-pill {
   padding: 4px 8px;
   border-radius: 999px;
-  font-size: 9px !important;
-  font-weight: 750;
+  font-size: var(--type-size-eyebrow) !important;
+  font-weight: var(--type-weight-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
+  text-transform: uppercase;
 }
 
 .backup-state-pill.healthy {
-  color: #31714b;
+  color: var(--text-success);
   background: color-mix(in srgb, #31714b 11%, transparent);
 }
 
@@ -679,7 +582,7 @@ body {
 }
 
 .backup-state-pill.warning {
-  color: #a05d22;
+  color: var(--text-warning);
   background: color-mix(in srgb, #a05d22 11%, transparent);
 }
 
@@ -705,11 +608,6 @@ body {
   gap: 6px;
 }
 
-.offsite-backup-field label {
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
-}
 
 .offsite-backup-field input {
   width: 100%;
@@ -721,7 +619,7 @@ body {
   color: var(--ink);
   background: var(--surface);
   font: inherit;
-  font-size: 10px;
+  font-size: var(--type-size-control-value);
 }
 
 .offsite-backup-field input:hover:not(:disabled) {
@@ -735,7 +633,7 @@ body {
 }
 
 .offsite-backup-field input[aria-invalid='true'] {
-  border-color: #a63232;
+  border-color: var(--text-danger);
 }
 
 .offsite-backup-field input:disabled {
@@ -749,11 +647,6 @@ body {
   justify-content: space-between;
 }
 
-.offsite-backup-field-error {
-  color: #a63232;
-  font-size: 8px;
-  line-height: 1.35;
-}
 
 .offsite-backup-form-actions {
   grid-column: 1 / -1;
@@ -779,9 +672,6 @@ body {
 
 .offsite-backup-status-item dt {
   padding-top: 1px;
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 700;
 }
 
 .offsite-backup-status-item dd {
@@ -791,23 +681,8 @@ body {
   margin: 0;
 }
 
-.offsite-backup-status-item strong {
-  font-size: 10px;
-}
-
 .offsite-backup-status-item span {
-  color: var(--muted);
-  font-size: 9px;
-  line-height: 1.45;
   overflow-wrap: anywhere;
-}
-
-.offsite-backup-status-item.healthy strong {
-  color: #31714b;
-}
-
-.offsite-backup-status-item.warning strong {
-  color: #a05d22;
 }
 
 .offsite-backup-actions {
@@ -837,7 +712,6 @@ body {
 }
 
 .offsite-backup-warning {
-  color: #a05d22;
   background: color-mix(in srgb, #a05d22 6%, transparent);
 }
 
@@ -854,12 +728,12 @@ body {
 }
 
 .offsite-backup-live .success {
-  color: #31714b;
+  color: var(--text-success);
 }
 
 .offsite-backup-live .error,
 .offsite-backup-load-error {
-  color: #a63232;
+  color: var(--text-danger);
 }
 
 .offsite-backup-load-error {
@@ -933,8 +807,6 @@ body {
   display: grid;
   min-height: 125px;
   place-items: center;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .main-window .home-review-card {
@@ -964,9 +836,14 @@ body {
 .home-review-card-heading {
   align-items: center;
   justify-content: space-between;
-  color: #d67e20;
-  font-size: 19px;
-  font-weight: 700;
+  /*
+   * The Heading role renders below the WCAG large-text threshold, so this
+   * accent is darkened in light appearance to hold 4.5:1 on the card surface.
+   */
+  color: #b05c0c;
+  font-size: var(--type-size-heading);
+  font-weight: var(--type-weight-heading);
+  letter-spacing: var(--type-tracking-heading);
 }
 
 .home-reviewed-today {
@@ -976,13 +853,16 @@ body {
 
 .home-reviewed-today strong {
   color: var(--ink);
-  font-size: 31px;
-  line-height: 1;
+  font-size: var(--type-size-metric);
+  font-weight: var(--type-weight-metric);
+  line-height: var(--type-leading-metric);
+  letter-spacing: var(--type-tracking-metric);
 }
 
 .home-reviewed-today > span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--type-size-supporting);
+  line-height: var(--type-leading-supporting);
 }
 
 .home-queue-counts {
@@ -997,12 +877,16 @@ body {
 }
 
 .home-queue-counts strong {
-  font-size: 14px;
+  font-size: var(--type-size-subheading);
+  font-weight: var(--type-weight-subheading);
+  letter-spacing: var(--type-tracking-subheading);
 }
 
 .home-queue-counts span span {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: var(--type-tracking-label);
 }
 
 .home-error {
@@ -1015,9 +899,7 @@ body {
   padding: 15px 17px;
   border: 1px solid color-mix(in srgb, #a63232 24%, var(--line));
   border-radius: 9px;
-  color: #a63232;
   background: color-mix(in srgb, #a63232 7%, var(--surface));
-  font-size: 12px;
 }
 
 .main-window .home-error + .home-review-card {
@@ -1044,8 +926,6 @@ body {
 
 .source {
   margin: 24px 0 0;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .reveal-action {
@@ -1070,11 +950,13 @@ body {
 }
 
 .grade-button span {
-  font-weight: 650;
+  font-weight: var(--type-weight-label);
 }
 
 .grade-button small {
   color: var(--muted);
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .grade-button kbd {
@@ -1082,7 +964,9 @@ body {
   top: 8px;
   right: 9px;
   color: var(--muted);
-  font: 11px/1 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .grade-button.grade-focused {
@@ -1092,15 +976,11 @@ body {
 
 .key-hint {
   margin: 11px 0 0;
-  color: var(--muted);
-  font-size: 11px;
   text-align: center;
 }
 
 .notice {
   margin: 0 0 14px;
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .status-screen {
@@ -1108,28 +988,16 @@ body {
   text-align: center;
 }
 
-.status-screen h2 {
-  margin: 0;
-  font-size: 25px;
-}
-
 .status-screen > p:not(.notice) {
   margin: 12px 0 0;
-  color: var(--muted);
 }
 
 .status-screen button {
   margin-top: 22px;
 }
 
-.status-screen .status-error {
-  color: #a63232;
-}
-
 .error-banner {
   margin: 18px 0 0;
-  color: #a63232;
-  font-size: 13px;
 }
 
 .card-browser {
@@ -1141,7 +1009,7 @@ body {
   border: 1px solid var(--line);
   border-radius: 13px;
   background: var(--surface);
-  font-size: 11px;
+  font-size: var(--type-size-supporting);
 }
 
 .card-browser-sidebar {
@@ -1168,7 +1036,7 @@ body {
 
 .card-search > span {
   color: var(--muted);
-  font-size: 14px;
+  font-size: var(--type-size-subheading);
 }
 
 .card-search input {
@@ -1178,31 +1046,25 @@ body {
   outline: 0;
   color: var(--ink);
   background: transparent;
-  font-size: 11px;
+  font-size: var(--type-size-control-value);
 }
 
 .card-search kbd,
 .card-detail-actions kbd {
   color: var(--muted);
-  font: 10px/1 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .card-result-summary {
   display: flex;
   justify-content: space-between;
   padding: 5px 16px 8px;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 
 .semantic-search-status {
   margin: -2px 16px 8px;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.35;
 }
 
 .semantic-search-status-shimmering {
@@ -1286,9 +1148,9 @@ body {
 
 .card-result-title {
   overflow: hidden;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1.35;
+  font-size: var(--type-size-body);
+  font-weight: var(--type-weight-body);
+  line-height: var(--type-leading-body);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1299,7 +1161,9 @@ body {
   align-items: center;
   justify-content: space-between;
   color: var(--muted);
-  font-size: 9px;
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
+  line-height: var(--type-leading-caption);
 }
 
 .suspended-badge {
@@ -1307,13 +1171,11 @@ body {
   border-radius: 999px;
   color: var(--accent);
   background: var(--accent-soft);
-  font-weight: 700;
+  font-weight: var(--type-weight-label);
 }
 
 .card-result-empty {
   padding: 28px 14px;
-  color: var(--muted);
-  font-size: 10px;
   text-align: center;
 }
 
@@ -1349,22 +1211,12 @@ body {
   gap: 8px;
 }
 
-.card-type-label {
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-}
-
 .occlusion-mode-badge,
 .detail-status {
   padding: 3px 7px;
   border: 1px solid var(--line);
   border-radius: 999px;
-  color: var(--muted);
   background: color-mix(in srgb, var(--surface) 76%, var(--accent-soft));
-  font-size: 9px;
-  font-weight: 700;
   white-space: nowrap;
 }
 
@@ -1386,9 +1238,7 @@ body {
   gap: 16px;
   padding: 8px 12px;
   border-bottom: 1px solid color-mix(in srgb, #a63232 24%, var(--line));
-  color: #8e2f2f;
   background: color-mix(in srgb, #a63232 7%, var(--surface));
-  font-size: 10px;
 }
 
 .delete-confirmation > div {
@@ -1419,20 +1269,14 @@ body {
 .card-detail-content > section > span {
   display: block;
   margin-bottom: 10px;
-  color: var(--muted);
-  font-size: 9px;
-  font-weight: 750;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
 }
 
 .card-detail-content .source {
   margin-top: 0;
-  font-size: 10px;
 }
 
 .card-detail-content .dara-markdown {
-  font-size: 14px;
+  font-size: var(--type-size-subheading);
 }
 
 .review-card-siblings {
@@ -1468,15 +1312,16 @@ body {
   border-radius: 7px;
   color: #fff;
   background: var(--accent);
-  font-size: 11px;
-  font-weight: 800;
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-label);
 }
 
 .review-card-sibling-name {
   min-width: 0;
   overflow: hidden;
-  font-size: 11px;
-  font-weight: 700;
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  letter-spacing: var(--type-tracking-label);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1487,22 +1332,23 @@ body {
   border-radius: 999px;
   color: var(--accent);
   background: color-mix(in srgb, var(--accent-soft) 65%, var(--surface));
-  font-size: 9px;
+  font-size: var(--type-size-caption);
 }
 
 .review-card-sibling-date {
   display: grid;
   gap: 3px;
   color: var(--ink);
-  font-size: 10px;
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
   white-space: nowrap;
 }
 
 .review-card-sibling-date small {
   color: var(--muted);
-  font-size: 8px;
-  font-weight: 750;
-  letter-spacing: 0.05em;
+  font-size: var(--type-size-eyebrow);
+  font-weight: var(--type-weight-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
   text-transform: uppercase;
 }
 
@@ -1518,14 +1364,11 @@ body {
 
 .card-browser-placeholder h2 {
   margin: 0;
-  color: var(--ink);
-  font-size: 14px;
 }
 
 .card-browser-placeholder p {
   max-width: 320px;
   margin: 8px 0 0;
-  font-size: 10px;
 }
 
 .card-browser-error {
@@ -1537,9 +1380,7 @@ body {
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, #a63232 24%, var(--line));
   border-radius: 8px;
-  color: #a63232;
   background: var(--surface);
-  font-size: 10px;
 }
 
 @media (max-width: 640px) {
@@ -1581,8 +1422,16 @@ body {
   background: #191817;
 }
 
+:root[data-appearance='DARK'] .home-review-card-heading {
+  color: #d67e20;
+}
+
 @media (prefers-color-scheme: dark) {
   :root:not([data-appearance='LIGHT']) body {
     background: #191817;
+  }
+
+  :root:not([data-appearance='LIGHT']) .home-review-card-heading {
+    color: #d67e20;
   }
 }

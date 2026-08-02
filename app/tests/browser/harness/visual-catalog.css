@@ -1,9 +1,18 @@
 .visual-catalog {
   width: 1000px;
-  min-height: 720px;
   padding: 28px;
   color: var(--ink);
   background: var(--canvas);
+}
+
+/* Each group is one focused snapshot; both fit the 1000x720 viewport. */
+.catalog-group {
+  width: 944px;
+  background: var(--canvas);
+}
+
+.catalog-group + .catalog-group {
+  margin-top: 26px;
 }
 
 .visual-catalog h1,
@@ -14,15 +23,68 @@
 
 .visual-catalog h1 {
   margin-bottom: 22px;
-  font-size: 24px;
+  font-size: var(--type-size-title);
+  font-weight: var(--type-weight-title);
+  letter-spacing: var(--type-tracking-title);
 }
 
 .visual-catalog h2 {
   margin: 20px 0 10px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--type-size-supporting);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.catalog-type-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+}
+
+.catalog-type-row {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.catalog-type-role {
+  justify-self: start;
+}
+
+.catalog-tone-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.catalog-semantic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 18px;
+  align-items: baseline;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.catalog-semantic-grid input {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: transparent;
+  font-size: var(--type-size-body);
 }
 
 .catalog-grid {
@@ -45,7 +107,8 @@
 
 .catalog-state > span:first-child {
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--type-size-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
   text-transform: uppercase;
 }
 
@@ -71,14 +134,18 @@
   border: 1px solid var(--line);
   border-radius: 9px;
   background: var(--surface);
-  font-size: 11px;
+  font-size: var(--type-size-supporting);
+  line-height: var(--type-leading-supporting);
 }
 
-.catalog-feedback-grid [role='alert'],
+.catalog-feedback-grid [role='alert'] {
+  color: var(--text-danger);
+}
+
 .catalog-warning {
-  color: #a63232;
+  color: var(--text-warning);
 }
 
 .catalog-success {
-  color: #39734c;
+  color: var(--text-success);
 }

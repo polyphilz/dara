@@ -58,7 +58,11 @@
   border-radius: 6px;
   color: var(--ink);
   background: transparent;
-  font: 650 12px/1.1 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-leading-label);
+  letter-spacing: var(--type-tracking-label);
   cursor: pointer;
 }
 
@@ -110,7 +114,9 @@
   outline: none;
   color: var(--ink);
   caret-color: var(--accent);
-  font: 15px/1.55 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-content-editor);
+  line-height: var(--type-leading-content-editor);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
@@ -258,8 +264,11 @@
   color: var(--code-block-muted);
   background: var(--code-block-label-background);
   content: attr(data-language-label);
-  font: 650 9px/1.35 var(--font-family-app);
-  letter-spacing: 0.055em;
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-eyebrow);
+  font-weight: var(--type-weight-eyebrow);
+  line-height: var(--type-leading-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
   pointer-events: none;
   text-transform: uppercase;
 }
@@ -316,12 +325,6 @@
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12px;
-}
-
-.formula-dialog-heading span {
-  color: var(--muted);
-  font-size: 10px;
 }
 
 .formula-preview {
@@ -341,7 +344,9 @@
   outline: none;
   color: var(--ink);
   background: transparent;
-  font: 12px/1.4 var(--font-family-app);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-control-value);
+  line-height: var(--type-leading-body);
 }
 
 .formula-dialog > input:focus {

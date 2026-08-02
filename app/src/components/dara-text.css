@@ -1,0 +1,108 @@
+.dara-text {
+  font-family: var(--font-family-app);
+  font-style: normal;
+}
+
+/* Caller-owned layout classes must always win over this element reset. */
+:where(.dara-text) {
+  margin: 0;
+}
+
+.dara-text-display {
+  font-size: var(--type-size-display);
+  font-weight: var(--type-weight-display);
+  line-height: var(--type-leading-display);
+  letter-spacing: var(--type-tracking-display);
+}
+
+.dara-text-title {
+  font-size: var(--type-size-title);
+  font-weight: var(--type-weight-title);
+  line-height: var(--type-leading-title);
+  letter-spacing: var(--type-tracking-title);
+}
+
+.dara-text-heading {
+  font-size: var(--type-size-heading);
+  font-weight: var(--type-weight-heading);
+  line-height: var(--type-leading-heading);
+  letter-spacing: var(--type-tracking-heading);
+}
+
+.dara-text-subheading {
+  font-size: var(--type-size-subheading);
+  font-weight: var(--type-weight-subheading);
+  line-height: var(--type-leading-subheading);
+  letter-spacing: var(--type-tracking-subheading);
+}
+
+.dara-text-body {
+  font-size: var(--type-size-body);
+  font-weight: var(--type-weight-body);
+  line-height: var(--type-leading-body);
+  letter-spacing: var(--type-tracking-body);
+}
+
+.dara-text-supporting {
+  font-size: var(--type-size-supporting);
+  font-weight: var(--type-weight-supporting);
+  line-height: var(--type-leading-supporting);
+  letter-spacing: var(--type-tracking-supporting);
+}
+
+.dara-text-label {
+  font-size: var(--type-size-label);
+  font-weight: var(--type-weight-label);
+  line-height: var(--type-leading-label);
+  letter-spacing: var(--type-tracking-label);
+}
+
+.dara-text-caption {
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
+  line-height: var(--type-leading-caption);
+  letter-spacing: var(--type-tracking-caption);
+}
+
+.dara-text-eyebrow {
+  font-size: var(--type-size-eyebrow);
+  font-weight: var(--type-weight-eyebrow);
+  line-height: var(--type-leading-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
+  text-transform: uppercase;
+}
+
+.dara-text-metric {
+  font-size: var(--type-size-metric);
+  font-weight: var(--type-weight-metric);
+  line-height: var(--type-leading-metric);
+  letter-spacing: var(--type-tracking-metric);
+}
+
+.dara-text-tone-default {
+  color: var(--ink);
+}
+
+.dara-text-tone-muted {
+  color: var(--muted);
+}
+
+.dara-text-tone-accent {
+  color: var(--accent);
+}
+
+.dara-text-tone-success {
+  color: var(--text-success);
+}
+
+.dara-text-tone-warning {
+  color: var(--text-warning);
+}
+
+.dara-text-tone-danger {
+  color: var(--text-danger);
+}
+
+.dara-text-tone-inherit {
+  color: currentcolor;
+}

@@ -1,5 +1,10 @@
 import { DaraButton } from '../components/DaraButton.tsx'
 import { DaraButtonSize } from '../components/dara-button-types.ts'
+import { DaraText } from '../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../components/dara-text-types.ts'
 import {
   UpdateCheckOrigin,
   UpdatePhase,
@@ -26,6 +31,7 @@ export function UpdateNotification({
   const busy =
     state.phase === UpdatePhase.Downloading ||
     state.phase === UpdatePhase.Installing
+  const failed = state.phase === UpdatePhase.Error
 
   return (
     <aside
@@ -35,8 +41,24 @@ export function UpdateNotification({
       role={state.phase === UpdatePhase.Error ? 'alert' : 'status'}
     >
       <div>
-        <strong>{content.heading}</strong>
-        <span>{content.detail}</span>
+        <DaraText
+          as="strong"
+          tone={failed ? DaraTextTone.Danger : DaraTextTone.Default}
+          variant={DaraTextVariant.Subheading}
+        >
+          {content.heading}
+        </DaraText>
+        <DaraText
+          as="span"
+          tone={failed ? DaraTextTone.Danger : DaraTextTone.Muted}
+          variant={
+            state.phase === UpdatePhase.Downloading
+              ? DaraTextVariant.Caption
+              : DaraTextVariant.Supporting
+          }
+        >
+          {content.detail}
+        </DaraText>
       </div>
       <div className="update-notification-actions">
         {state.phase === UpdatePhase.Available && (

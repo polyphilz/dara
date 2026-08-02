@@ -37,7 +37,9 @@ const component =
     ? (await import('./visual-catalog.tsx')).VisualCatalog
     : surface === BrowserHarnessSurface.Main
       ? (await import('./main-surface.tsx')).MainWindow
-      : (await import('../../../src/windows/quick-add/QuickAddWindow.tsx')).QuickAddWindow
+      : surface === BrowserHarnessSurface.Recovery
+        ? (await import('./recovery-surface.tsx')).RecoveryWindow
+        : (await import('../../../src/windows/quick-add/QuickAddWindow.tsx')).QuickAddWindow
 const Component = component
 
 createRoot(document.getElementById('root')!).render(<StrictMode><Component /></StrictMode>)

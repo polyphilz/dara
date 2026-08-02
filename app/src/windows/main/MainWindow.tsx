@@ -40,6 +40,11 @@ import { ClozeMarkdownRenderer } from '../../cloze/ClozeMarkdownRenderer.tsx'
 import { ClozeProjection } from '../../cloze/cloze.ts'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import { DaraButtonVariant } from '../../components/dara-button-types.ts'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import { OcclusionReview } from '../../occlusion/OcclusionReview.tsx'
 import { loadRestoredOffsiteBackupTakeoverRequired } from '../../backup/index.ts'
 import { DaraEvent } from '../../lib/tauri-contracts.ts'
@@ -494,13 +499,22 @@ function MainWindowContent() {
           role="alert"
         >
           <div>
-            <strong id="restored-backup-heading">
+            <DaraText
+              as="strong"
+              id="restored-backup-heading"
+              tone={DaraTextTone.Warning}
+              variant={DaraTextVariant.Label}
+            >
               This Dara was restored from an off-site backup.
-            </strong>
-            <span>
+            </DaraText>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Warning}
+              variant={DaraTextVariant.Supporting}
+            >
               New backups are paused until you confirm that this Mac should
               take over.
-            </span>
+            </DaraText>
           </div>
           {mode !== MainWindowMode.Settings && (
             <DaraButton onClick={showSettings} type="button">
@@ -570,7 +584,16 @@ function ReviewContent({
     case ReviewControllerPhase.Question:
       return (
         <section className="review-stage">
-          {state.notice && <p className="notice">{state.notice}</p>}
+          {state.notice && (
+            <DaraText
+              as="p"
+              className="notice"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
+              {state.notice}
+            </DaraText>
+          )}
           <article className="review-card">
             <CardQuestion
               content={state.card.context.cardContent}
@@ -585,7 +608,14 @@ function ReviewContent({
           >
             Reveal answer
           </DaraButton>
-          <p className="key-hint">Space to reveal</p>
+          <DaraText
+            as="p"
+            className="key-hint"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Caption}
+          >
+            Space to reveal
+          </DaraText>
         </section>
       )
     case ReviewControllerPhase.Revealed:
@@ -595,7 +625,14 @@ function ReviewContent({
       return (
         <section className="review-stage">
           {'notice' in state && state.notice && (
-            <p className="notice">{state.notice}</p>
+            <DaraText
+              as="p"
+              className="notice"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
+              {state.notice}
+            </DaraText>
           )}
           <article className="review-card">
             <CardAnswer
@@ -624,9 +661,14 @@ function ReviewContent({
               </DaraButton>
             ))}
           </div>
-          <p className="key-hint">
+          <DaraText
+            as="p"
+            className="key-hint"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Caption}
+          >
             {saving ? 'Saving…' : '1–4 to grade · Tab to choose · Enter to submit'}
-          </p>
+          </DaraText>
         </section>
       )
     }
@@ -767,9 +809,28 @@ function StatusScreen({
 }) {
   return (
     <section className="status-screen" aria-live="polite">
-      {notice && <p className="notice">{notice}</p>}
-      <h2>{message}</h2>
-      {detail && <p className={error ? 'status-error' : undefined}>{detail}</p>}
+      {notice && (
+        <DaraText
+          as="p"
+          className="notice"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Supporting}
+        >
+          {notice}
+        </DaraText>
+      )}
+      <DaraText as="h2" variant={DaraTextVariant.Title}>
+        {message}
+      </DaraText>
+      {detail && (
+        <DaraText
+          as="p"
+          tone={error ? DaraTextTone.Danger : DaraTextTone.Muted}
+          variant={DaraTextVariant.Body}
+        >
+          {detail}
+        </DaraText>
+      )}
       {children}
     </section>
   )

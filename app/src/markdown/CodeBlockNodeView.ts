@@ -146,7 +146,7 @@ class CodeBlockView implements NodeView {
             caretColor: 'var(--accent)',
             color: 'var(--code-block-ink)',
             fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-            fontSize: '13px',
+            fontSize: 'var(--type-size-content-code)',
           },
           '.cm-cursor, .cm-dropCursor': {
             borderLeftColor: 'var(--accent)',

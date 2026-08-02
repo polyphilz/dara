@@ -5,6 +5,11 @@ import {
   type OcclusionDefinition,
   type OcclusionMask,
 } from '../review/contracts.ts'
+import { DaraText } from '../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../components/dara-text-types.ts'
 import { OcclusionImageFrame } from './OcclusionImageFrame.tsx'
 
 const REVIEW_IMAGE_MAXIMUM_VIEWPORT_RATIO = 0.62
@@ -73,7 +78,16 @@ export function OcclusionReview({
   }, [revealed])
 
   if (!target) {
-    return <p className="occlusion-render-error">This mask layer is unavailable.</p>
+    return (
+      <DaraText
+        as="p"
+        className="occlusion-render-error"
+        tone={DaraTextTone.Danger}
+        variant={DaraTextVariant.Supporting}
+      >
+        This mask layer is unavailable.
+      </DaraText>
+    )
   }
 
   return (

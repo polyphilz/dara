@@ -33,6 +33,32 @@ test('offers only start-fresh and restore choices on a fresh installation', () =
   expect(queryByLabelText('R2 account ID')).toBeNull()
 })
 
+test('keeps recovery heading, field label, and error semantics after the typography migration', () => {
+  const gateway = gatewayFixture()
+  const { getByLabelText, getByRole, getByText } = render(
+    <RecoveryWindow gateway={gateway} />,
+  )
+
+  expect(
+    getByRole('heading', { level: 1, name: 'How would you like to begin?' }),
+  ).toBeTruthy()
+  expect(
+    getByText('This device does not have any Dara data yet.').tagName,
+  ).toBe('P')
+
+  fireEvent.click(getByRole('button', { name: /restore from backup/i }))
+
+  expect(getByRole('heading', { level: 1, name: 'Find your off-site backup' })).toBeTruthy()
+  const accountField = getByLabelText('R2 account ID')
+  expect(accountField.tagName).toBe('INPUT')
+
+  fireEvent.click(getByRole('button', { name: 'Find backups' }))
+
+  const error = getByText('Enter the 32-character lowercase R2 account ID.')
+  expect(accountField.getAttribute('aria-describedby')).toBe(error.id)
+  expect(accountField.getAttribute('aria-invalid')).toBe('true')
+})
+
 test('validates R2 details locally before trying discovery', () => {
   const gateway = gatewayFixture()
   const { getByRole, getByText } = render(

@@ -5,6 +5,8 @@ import {
 } from './shortcut-accelerator.ts'
 import { DaraButton } from './DaraButton.tsx'
 import { DaraButtonSize } from './dara-button-types.ts'
+import { DaraText } from './DaraText.tsx'
+import { DaraTextTone, DaraTextVariant } from './dara-text-types.ts'
 
 interface DaraShortcutRecorderProps {
   accelerator: string
@@ -96,12 +98,26 @@ export function DaraShortcutRecorder({
         {recording ? 'Press shortcut…' : formatAccelerator(accelerator)}
       </DaraButton>
       {error && (
-        <span className="shortcut-recorder-error" id={`${label}-shortcut-error`} role="alert">
+        <DaraText
+          as="span"
+          className="shortcut-recorder-error"
+          id={`${label}-shortcut-error`}
+          role="alert"
+          tone={DaraTextTone.Danger}
+          variant={DaraTextVariant.Supporting}
+        >
           {error}
-        </span>
+        </DaraText>
       )}
       {recording && !error && (
-        <span className="shortcut-recorder-hint">Press a complete shortcut · Esc to cancel</span>
+        <DaraText
+          as="span"
+          className="shortcut-recorder-hint"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Caption}
+        >
+          Press a complete shortcut · Esc to cancel
+        </DaraText>
       )}
     </div>
   )

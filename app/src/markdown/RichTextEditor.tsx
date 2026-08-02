@@ -59,6 +59,11 @@ import {
   DaraButtonVariant,
 } from '../components/dara-button-types.ts'
 import { DaraInput } from '../components/DaraInput.tsx'
+import { DaraText } from '../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../components/dara-text-types.ts'
 import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
 import {
   ImageDisplayWidthStep,
@@ -1022,8 +1027,16 @@ function FormulaDialog({
       role="dialog"
     >
       <div className="formula-dialog-heading">
-        <strong>{dialog.display ? 'Display equation' : 'Inline equation'}</strong>
-        <span>LaTeX-style formula</span>
+        <DaraText as="strong" variant={DaraTextVariant.Label}>
+          {dialog.display ? 'Display equation' : 'Inline equation'}
+        </DaraText>
+        <DaraText
+          as="span"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Caption}
+        >
+          LaTeX-style formula
+        </DaraText>
       </div>
       <div aria-live="polite" className="formula-preview" ref={previewRef} />
       <DaraInput
@@ -1139,8 +1152,16 @@ function LinkDialog({
       role="dialog"
     >
       <div className="formula-dialog-heading">
-        <strong>Link</strong>
-        <span>Absolute HTTP URL</span>
+        <DaraText as="strong" variant={DaraTextVariant.Label}>
+          Link
+        </DaraText>
+        <DaraText
+          as="span"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Caption}
+        >
+          Absolute HTTP URL
+        </DaraText>
       </div>
       <DaraInput
         aria-label="Link URL"

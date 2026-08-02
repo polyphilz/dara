@@ -13,6 +13,11 @@ import { DaraInput } from '../../components/DaraInput.tsx'
 import { DaraButton } from '../../components/DaraButton.tsx'
 import { DaraButtonVariant } from '../../components/dara-button-types.ts'
 import { DaraSelect } from '../../components/DaraSelect.tsx'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import {
   RichTextEditor,
   type RichTextEditorHandle,
@@ -388,16 +393,34 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
         {editing ? (
           <header className="card-editor-header">
             <div>
-              <p>{typeLabel} card</p>
-              <h1>Edit card</h1>
+              <DaraText
+                as="p"
+                tone={DaraTextTone.Accent}
+                variant={DaraTextVariant.Eyebrow}
+              >
+                {typeLabel} card
+              </DaraText>
+              <DaraText as="h1" variant={DaraTextVariant.Title}>
+                Edit card
+              </DaraText>
             </div>
-            <span>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
               {quick ? 'Esc to cancel' : 'Rich text · Markdown saved automatically'}
-            </span>
+            </DaraText>
           </header>
         ) : (
           <div className="card-type-picker">
-            <span>Card type</span>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Eyebrow}
+            >
+              Card type
+            </DaraText>
             <DaraSelect
               ariaLabel="Card type"
               disabled={saving || mediaPending}
@@ -454,10 +477,14 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
 
         <div className={cardType === CardContentType.Occlusion ? 'occlusion-card-fields' : undefined}>
           <div className="card-editor-field">
-            <span>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Eyebrow}
+            >
               {primaryLabel}{' '}
               {cardType === CardContentType.Occlusion && <small>optional</small>}
-            </span>
+            </DaraText>
             <RichTextEditor
               ariaLabel={primaryLabel}
               disabled={saving}
@@ -482,17 +509,26 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
               value={front}
             />
             {cardType === CardContentType.Cloze && (
-              <small className="cloze-syntax-hint">
+              <DaraText
+                as="small"
+                className="cloze-syntax-hint"
+                tone={DaraTextTone.Muted}
+                variant={DaraTextVariant.Supporting}
+              >
                 Use {'{{c1::answer}}'} or {'{{c1::answer::hint}}'}
-              </small>
+              </DaraText>
             )}
           </div>
 
           <div className="card-editor-field card-editor-secondary-field">
-            <span>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Eyebrow}
+            >
               {secondaryLabel}{' '}
               {cardType !== CardContentType.Basic && <small>optional</small>}
-            </span>
+            </DaraText>
             <RichTextEditor
               ariaLabel={secondaryLabel}
               disabled={saving}
@@ -518,9 +554,13 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
         </div>
 
         <label className="card-editor-field card-editor-secondary-field">
-          <span>
+          <DaraText
+            as="span"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Eyebrow}
+          >
             Source <small>optional</small>
-          </span>
+          </DaraText>
           <DaraInput
             disabled={saving}
             onChange={(event) => setSource(event.target.value)}
@@ -575,9 +615,15 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
         </footer>
 
         {error && (
-          <p className="card-editor-error" role="alert">
+          <DaraText
+            as="p"
+            className="card-editor-error"
+            role="alert"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
             {error}
-          </p>
+          </DaraText>
         )}
       </section>
     )

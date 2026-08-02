@@ -4,6 +4,11 @@ import {
   DaraButtonVariant,
   type DaraButtonVariant as DaraButtonVariantType,
 } from '../../components/dara-button-types.ts'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import {
   ConfirmationDialogInitialFocus,
   type ConfirmationDialogInitialFocus as ConfirmationDialogInitialFocusType,
@@ -91,8 +96,16 @@ export function ConfirmationDialog({
         ref={formRef}
       >
         <div>
-          <span>Confirm change</span>
-          <h2>{title}</h2>
+          <DaraText
+            as="span"
+            tone={DaraTextTone.Accent}
+            variant={DaraTextVariant.Eyebrow}
+          >
+            Confirm change
+          </DaraText>
+          <DaraText as="h2" variant={DaraTextVariant.Heading}>
+            {title}
+          </DaraText>
         </div>
         <div className="settings-dialog-copy">{children}</div>
         <div className="settings-dialog-actions">

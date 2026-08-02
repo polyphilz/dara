@@ -14,6 +14,11 @@ import {
 } from '../../components/dara-button-types.ts'
 import { DaraSelect } from '../../components/DaraSelect.tsx'
 import { DaraShortcutRecorder } from '../../components/DaraShortcutRecorder.tsx'
+import { DaraText } from '../../components/DaraText.tsx'
+import {
+  DaraTextTone,
+  DaraTextVariant,
+} from '../../components/dara-text-types.ts'
 import { DaraToggle } from '../../components/DaraToggle.tsx'
 import {
   tauriDiagnosticsGateway,
@@ -334,16 +339,30 @@ export function Settings({
   if (!snapshot) {
     return (
       <section aria-labelledby="settings-heading" className="settings-screen settings-loading">
-        <h1 id="settings-heading">Settings</h1>
+        <DaraText as="h1" id="settings-heading" variant={DaraTextVariant.Title}>
+          Settings
+        </DaraText>
         {loadingError ? (
           <div className="settings-load-error" role="alert">
-            <span>{loadingError}</span>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Danger}
+              variant={DaraTextVariant.Supporting}
+            >
+              {loadingError}
+            </DaraText>
             <DaraButton onClick={() => void reload()} type="button">
               Try again
             </DaraButton>
           </div>
         ) : (
-          <p>Loading settings…</p>
+          <DaraText
+            as="p"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
+            Loading settings…
+          </DaraText>
         )}
       </section>
     )
@@ -359,7 +378,17 @@ export function Settings({
         Settings
       </h1>
 
-      {mutationError && <div className="settings-banner error" role="alert">{mutationError}</div>}
+      {mutationError && (
+        <DaraText
+          as="div"
+          className="settings-banner error"
+          role="alert"
+          tone={DaraTextTone.Danger}
+          variant={DaraTextVariant.Supporting}
+        >
+          {mutationError}
+        </DaraText>
+      )}
 
       <SettingSection description="How Dara starts and stays close at hand." title="General">
         <SettingRow
@@ -379,7 +408,15 @@ export function Settings({
           label="Launch at login"
         />
         {snapshot.launchAtLoginError && (
-          <p className="setting-inline-error" role="alert">{snapshot.launchAtLoginError}</p>
+          <DaraText
+            as="p"
+            className="setting-inline-error"
+            role="alert"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
+            {snapshot.launchAtLoginError}
+          </DaraText>
         )}
         <SettingRow
           control={
@@ -427,7 +464,16 @@ export function Settings({
           label="Home"
         />
         {snapshot.shortcutErrors.map((error) => (
-          <p className="setting-inline-error" key={error} role="alert">{error}</p>
+          <DaraText
+            as="p"
+            className="setting-inline-error"
+            key={error}
+            role="alert"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
+            {error}
+          </DaraText>
         ))}
         <div className="setting-section-footer">
           <DaraButton
@@ -445,12 +491,28 @@ export function Settings({
         <div className="retention-setting">
           <div className="retention-heading">
             <div>
-              <strong>Desired retention</strong>
-              <span id="retention-description">
+              <DaraText as="strong" variant={DaraTextVariant.Label}>
+                Desired retention
+              </DaraText>
+              <DaraText
+                as="span"
+                id="retention-description"
+                tone={DaraTextTone.Muted}
+                variant={DaraTextVariant.Supporting}
+              >
                 Higher values mean more reviews and less forgetting. Lower values reduce workload.
-              </span>
+              </DaraText>
             </div>
-            {retentionChanged && <span className="unsaved-pill">Not applied</span>}
+            {retentionChanged && (
+              <DaraText
+                as="span"
+                className="unsaved-pill"
+                tone={DaraTextTone.Accent}
+                variant={DaraTextVariant.Eyebrow}
+              >
+                Not applied
+              </DaraText>
+            )}
           </div>
           <DaraPercentageControl
             describedBy="retention-description"
@@ -492,7 +554,14 @@ export function Settings({
             )}
           </div>
           {reviewSaveInFlight && (
-            <p className="setting-note">Finish saving the current review before updating the schedule.</p>
+            <DaraText
+            as="p"
+            className="setting-note"
+            tone={DaraTextTone.Muted}
+            variant={DaraTextVariant.Supporting}
+          >
+            Finish saving the current review before updating the schedule.
+          </DaraText>
           )}
         </div>
       </SettingSection>
@@ -590,8 +659,16 @@ export function Settings({
         <DiagnosticsPanel gateway={diagnosticsGateway} />
         <div className="diagnostic-action">
           <div>
-            <strong>Scheduling data</strong>
-            <span>Check that every reviewed card matches its history.</span>
+            <DaraText as="strong" variant={DaraTextVariant.Label}>
+              Scheduling data
+            </DaraText>
+            <DaraText
+              as="span"
+              tone={DaraTextTone.Muted}
+              variant={DaraTextVariant.Supporting}
+            >
+              Check that every reviewed card matches its history.
+            </DaraText>
           </div>
           <div>
             <DaraButton
@@ -611,9 +688,27 @@ export function Settings({
             </DaraButton>
           </div>
         </div>
-        {schedulingNotice && <p className="scheduling-result" role="status">{schedulingNotice}</p>}
+        {schedulingNotice && (
+          <DaraText
+            as="p"
+            className="scheduling-result"
+            role="status"
+            tone={DaraTextTone.Success}
+            variant={DaraTextVariant.Supporting}
+          >
+            {schedulingNotice}
+          </DaraText>
+        )}
         {schedulingError && confirmation === null && (
-          <p className="scheduling-result error" role="alert">{schedulingError}</p>
+          <DaraText
+            as="p"
+            className="scheduling-result error"
+            role="alert"
+            tone={DaraTextTone.Danger}
+            variant={DaraTextVariant.Supporting}
+          >
+            {schedulingError}
+          </DaraText>
         )}
       </SettingSection>
 
@@ -639,29 +734,43 @@ export function Settings({
           onConfirm={() => void runRetentionUpdate()}
           title="Recalculate reviewed cards?"
         >
-          <p>
+          <DaraText as="p" variant={DaraTextVariant.Body}>
             Dara will rebuild every reviewed card’s schedule using {retentionPercent}% desired
             retention. Your cards and review history will not change.
-          </p>
-          <p>
+          </DaraText>
+          <DaraText as="p" variant={DaraTextVariant.Body}>
             The current schedule stays active unless the entire recalculation succeeds.
-          </p>
+          </DaraText>
           {recalculationProgress && (
             <div className="recalculation-progress" role="status">
               <progress
                 max={Math.max(1, recalculationProgress.totalCards)}
                 value={recalculationProgress.completedCards}
               />
-              <span>
+              <DaraText
+                as="span"
+                tone={DaraTextTone.Muted}
+                variant={DaraTextVariant.Caption}
+              >
                 {recalculationProgress.finalizing
                   ? 'Saving the new schedule…'
                   : recalculationProgress.totalCards === 0
                     ? 'Preparing reviewed cards…'
                     : `${recalculationProgress.completedCards} of ${recalculationProgress.totalCards} cards`}
-              </span>
+              </DaraText>
             </div>
           )}
-          {schedulingError && <p className="dialog-error" role="alert">{schedulingError}</p>}
+          {schedulingError && (
+            <DaraText
+              as="p"
+              className="dialog-error"
+              role="alert"
+              tone={DaraTextTone.Danger}
+              variant={DaraTextVariant.Body}
+            >
+              {schedulingError}
+            </DaraText>
+          )}
         </ConfirmationDialog>
       )}
 
@@ -678,10 +787,10 @@ export function Settings({
           onConfirm={() => void runSchedulingRepair()}
           title="Repair scheduling data?"
         >
-          <p>
+          <DaraText as="p" variant={DaraTextVariant.Body}>
             Dara will replace only scheduling caches that differ from their review history.
             Cards and review history remain untouched.
-          </p>
+          </DaraText>
         </ConfirmationDialog>
       )}
     </section>
@@ -702,8 +811,16 @@ function SettingSection({
   return (
     <section className={`setting-section${className ? ` ${className}` : ''}`}>
       <div className="setting-section-heading">
-        <h2>{title}</h2>
-        <p>{description}</p>
+        <DaraText as="h2" variant={DaraTextVariant.Subheading}>
+          {title}
+        </DaraText>
+        <DaraText
+          as="p"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Supporting}
+        >
+          {description}
+        </DaraText>
       </div>
       <div className="setting-section-body">{children}</div>
     </section>
@@ -722,8 +839,16 @@ function SettingRow({
   return (
     <div className="setting-row">
       <div>
-        <strong>{label}</strong>
-        <span>{description}</span>
+        <DaraText as="strong" variant={DaraTextVariant.Label}>
+          {label}
+        </DaraText>
+        <DaraText
+          as="span"
+          tone={DaraTextTone.Muted}
+          variant={DaraTextVariant.Supporting}
+        >
+          {description}
+        </DaraText>
       </div>
       {control}
     </div>
