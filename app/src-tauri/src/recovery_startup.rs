@@ -129,6 +129,14 @@ fn request_show_main_after_restart(paths: &DatabasePaths) -> Result<(), io::Erro
     }
 }
 
+fn prepare_recovery_restart(paths: &DatabasePaths) -> Result<(), RecoveryCommandError> {
+    request_show_main_after_restart(paths).map_err(|error| {
+        RecoveryCommandError::internal(format!(
+            "Could not prepare Dara to show the recovered library: {error}"
+        ))
+    })
+}
+
 pub(crate) fn take_show_main_after_restart_request(
     paths: &DatabasePaths,
 ) -> Result<bool, io::Error> {
@@ -347,18 +355,30 @@ fn complete_development_recovery(
         return Ok(false);
     }
 
-    crate::initialize_normal_runtime_after_recovery(&app, paths).map_err(|error| {
-        RecoveryCommandError::internal(format!("Could not start the new Dara library: {error}"))
-    })?;
-    context.transition_to_normal();
-    let window = app
-        .get_webview_window(MAIN_LABEL)
-        .ok_or_else(|| RecoveryCommandError::internal("Could not find the Dara window."))?;
-    window.eval("window.location.reload()").map_err(|error| {
-        RecoveryCommandError::internal(format!(
-            "The library is ready, but Dara could not refresh its window: {error}"
-        ))
-    })?;
+    let completion = (|| {
+        crate::initialize_normal_runtime_after_recovery(&app, paths.clone()).map_err(|error| {
+            RecoveryCommandError::internal(format!("Could not start the new Dara library: {error}"))
+        })?;
+        context.transition_to_normal();
+        let window = app
+            .get_webview_window(MAIN_LABEL)
+            .ok_or_else(|| RecoveryCommandError::internal("Could not find the Dara window."))?;
+        window.eval("window.location.reload()").map_err(|error| {
+            RecoveryCommandError::internal(format!(
+                "The library is ready, but Dara could not refresh its window: {error}"
+            ))
+        })?;
+        Ok::<_, RecoveryCommandError>(())
+    })();
+
+    if let Err(error) = completion {
+        log::warn!(
+            "could not finish development recovery in-process; restarting Dara instead: {error:?}"
+        );
+        prepare_recovery_restart(&paths)?;
+        app.restart()
+    }
+
     Ok(true)
 }
 
@@ -394,11 +414,7 @@ pub(crate) fn start_fresh_install(
     if complete_development_recovery(app.clone(), &context, paths.clone())? {
         return Ok(());
     }
-    request_show_main_after_restart(&paths).map_err(|error| {
-        RecoveryCommandError::internal(format!(
-            "Could not prepare Dara to show the new library: {error}"
-        ))
-    })?;
+    prepare_recovery_restart(&paths)?;
     app.restart()
 }
 
@@ -470,11 +486,7 @@ pub(crate) async fn restore_remote_backup(
         RecoveryCommandError::internal(format!("Could not retain the Dara data lock: {error}"))
     })?;
     if !tauri::is_dev() {
-        request_show_main_after_restart(&paths).map_err(|error| {
-            RecoveryCommandError::internal(format!(
-                "Could not prepare Dara to show the restored library: {error}"
-            ))
-        })?;
+        prepare_recovery_restart(&paths)?;
     }
     let session = state.take_session()?;
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -749,7 +761,7 @@ mod tests {
         let paths = DatabasePaths::new(directory.path());
 
         assert!(!take_show_main_after_restart_request(&paths).expect("no request"));
-        request_show_main_after_restart(&paths).expect("request main window");
+        prepare_recovery_restart(&paths).expect("prepare recovery restart");
         assert!(take_show_main_after_restart_request(&paths).expect("pending request"));
         assert!(!take_show_main_after_restart_request(&paths).expect("consumed request"));
     }
