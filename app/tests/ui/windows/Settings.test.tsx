@@ -44,6 +44,26 @@ beforeEach(() => {
   eventMocks.listen.mockResolvedValue(() => undefined)
 })
 
+test('aligns the loading state with the settings section heading', () => {
+  const fixture = settingsFixture()
+  fixture.gateway.loadSettings.mockImplementationOnce(
+    () => new Promise<SettingsSnapshot>(() => undefined),
+  )
+  const { getByRole, getByText } = renderSettings(
+    fixture.gateway,
+    schedulerFixture(fixture),
+  )
+
+  const pageHeading = getByRole('heading', { name: 'Settings' })
+  const loadingHeading = getByText('Loading settings…')
+
+  expect(pageHeading.classList.contains('visually-hidden')).toBe(true)
+  expect(loadingHeading.tagName).toBe('H2')
+  expect(
+    loadingHeading.parentElement?.classList.contains('setting-section-heading'),
+  ).toBe(true)
+})
+
 test('stages retention, explains the recalculation, and changes nothing on cancel', async () => {
   const fixture = settingsFixture()
   const settingsGateway = fixture.gateway

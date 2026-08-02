@@ -339,31 +339,34 @@ export function Settings({
   if (!snapshot) {
     return (
       <section aria-labelledby="settings-heading" className="settings-screen settings-loading">
-        <DaraText as="h1" id="settings-heading" variant={DaraTextVariant.Title}>
+        <h1 className="visually-hidden" id="settings-heading">
           Settings
-        </DaraText>
-        {loadingError ? (
-          <div className="settings-load-error" role="alert">
+        </h1>
+        <section className="setting-section">
+          <div className="setting-section-heading">
             <DaraText
-              as="span"
-              tone={DaraTextTone.Danger}
-              variant={DaraTextVariant.Supporting}
+              as="h2"
+              tone={loadingError ? DaraTextTone.Danger : DaraTextTone.Muted}
+              variant={DaraTextVariant.Subheading}
             >
-              {loadingError}
+              {loadingError ? 'Could not load settings' : 'Loading settings…'}
             </DaraText>
-            <DaraButton onClick={() => void reload()} type="button">
-              Try again
-            </DaraButton>
           </div>
-        ) : (
-          <DaraText
-            as="p"
-            tone={DaraTextTone.Muted}
-            variant={DaraTextVariant.Supporting}
-          >
-            Loading settings…
-          </DaraText>
-        )}
+          {loadingError && (
+            <div className="settings-load-error" role="alert">
+              <DaraText
+                as="span"
+                tone={DaraTextTone.Danger}
+                variant={DaraTextVariant.Supporting}
+              >
+                {loadingError}
+              </DaraText>
+              <DaraButton onClick={() => void reload()} type="button">
+                Try again
+              </DaraButton>
+            </div>
+          )}
+        </section>
       </section>
     )
   }

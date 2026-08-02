@@ -155,10 +155,6 @@ body {
   color: var(--muted);
 }
 
-.settings-loading h1 {
-  color: var(--ink);
-}
-
 .setting-row,
 .retention-heading,
 .diagnostic-action,
