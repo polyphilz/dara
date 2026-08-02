@@ -60,7 +60,9 @@ async function openSettings(page: Page) {
     `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewBasic}&surface=${BrowserHarnessSurface.Main}`,
   )
   await page.getByRole('button', { name: 'Settings' }).click()
-  await expect(page.getByRole('heading', { name: 'Settings' })).toBeFocused()
+  await expect(
+    page.getByRole('heading', { name: 'Settings', exact: true }),
+  ).toBeFocused()
 }
 
 test('the design system catalog survives 200% text enlargement', async ({ page }) => {
