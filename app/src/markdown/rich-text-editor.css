@@ -260,6 +260,8 @@
   max-width: 100%;
   margin: 0.75em 0;
   border-radius: 8px;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .dara-editor-image img {
@@ -267,7 +269,6 @@
   width: 100%;
   height: auto;
   border-radius: 8px;
-  user-select: none;
 }
 
 .dara-editor-image:hover,

@@ -112,7 +112,7 @@ export function pendingImageNodeView(): NodeView {
   const dom = document.createElement('div')
   dom.className = 'dara-editor-image-pending'
   dom.contentEditable = 'false'
-  dom.setAttribute('aria-label', 'Processing pasted image')
+  dom.setAttribute('aria-label', 'Processing image')
   dom.setAttribute('role', 'status')
   dom.textContent = 'Processing image…'
   return { dom }

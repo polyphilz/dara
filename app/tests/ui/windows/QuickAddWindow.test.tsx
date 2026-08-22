@@ -72,7 +72,9 @@ test('keeps Quick Add open while choosing an occlusion image file', async () => 
   const { container, getByRole } = render(<QuickAddWindow />)
   fireEvent.click(getByRole('button', { name: 'Card type: Basic' }))
   fireEvent.click(getByRole('option', { name: 'Image occlusion' }))
-  const input = container.querySelector<HTMLInputElement>('input[type="file"]')!
+  const input = container.querySelector<HTMLInputElement>(
+    'input.occlusion-file-input',
+  )!
 
   fireEvent.click(input)
   expect(mocks.setQuickAddFileDialogOpen).toHaveBeenCalledWith(true)
@@ -84,6 +86,39 @@ test('keeps Quick Add open while choosing an occlusion image file', async () => 
   await waitFor(() =>
     expect(getByRole('application', { name: 'Editable image masks' })).toBeTruthy(),
   )
+})
+
+test('keeps Quick Add open while choosing an inline editor image', async () => {
+  const image = {
+    id: '01980c8e-6c00-7000-8000-000000000302',
+    mimeType: 'image/webp',
+    naturalHeight: 400,
+    naturalWidth: 800,
+    ocrStatus: ImageOcrStatus.Pending,
+  }
+  mocks.ingestImageFile.mockResolvedValue(image)
+  const { getByTestId } = render(<QuickAddWindow />)
+  const editor = getByTestId('front-editor')
+
+  fireEvent.mouseDown(
+    editor.querySelector<HTMLButtonElement>(
+      'button[aria-label="Insert image"]',
+    )!,
+  )
+  expect(mocks.setQuickAddFileDialogOpen).toHaveBeenLastCalledWith(true)
+
+  const input = editor.querySelector<HTMLInputElement>(
+    'input.rich-text-image-input',
+  )!
+  const file = new File(['png'], 'diagram.png', { type: 'image/png' })
+  fireEvent.change(input, { target: { files: [file] } })
+
+  expect(mocks.setQuickAddFileDialogOpen).toHaveBeenLastCalledWith(false)
+  expect(mocks.ingestImageFile).toHaveBeenCalledWith(file, expect.any(String))
+  await waitFor(() => {
+    expect(editor.querySelector('.dara-editor-image img')).not.toBeNull()
+  })
+  expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
 })
 
 test('focuses Front and follows the logical editor and form focus order', async () => {

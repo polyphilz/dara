@@ -1,16 +1,19 @@
 import {
   forwardRef,
-  useCallback,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
-  type ChangeEvent,
   type DragEvent,
   type ClipboardEvent,
 } from 'react'
 import { ingestClipboardImage, ingestImageFile } from '../media/gateway.ts'
 import { DaraButton } from '../components/DaraButton.tsx'
+import {
+  DaraFilePicker,
+  type DaraFilePickerHandle,
+} from '../components/DaraFilePicker.tsx'
+import { DaraImageIcon } from '../components/DaraImageIcon.tsx'
 import {
   DaraButtonSize,
   DaraButtonVariant,
@@ -55,10 +58,9 @@ export const OcclusionImagePicker = forwardRef<
   },
   ref,
 ) {
-  const inputRef = useRef<HTMLInputElement>(null)
+  const filePickerRef = useRef<DaraFilePickerHandle>(null)
   const dropZoneRef = useRef<HTMLButtonElement>(null)
   const activeRef = useRef(true)
-  const fileDialogOpenRef = useRef(false)
   const leaseIdRef = useRef(leaseId)
   const [pending, setPending] = useState(false)
   const [dragging, setDragging] = useState(false)
@@ -68,42 +70,12 @@ export const OcclusionImagePicker = forwardRef<
     activeRef.current = true
     return () => {
       activeRef.current = false
-      if (fileDialogOpenRef.current) {
-        onFileDialogOpenChange?.(false)
-      }
     }
-  }, [onFileDialogOpenChange])
-
-  const setFileDialogOpen = useCallback(
-    (open: boolean) => {
-      if (fileDialogOpenRef.current === open) {
-        return
-      }
-      fileDialogOpenRef.current = open
-      onFileDialogOpenChange?.(open)
-    },
-    [onFileDialogOpenChange],
-  )
-
-  useEffect(() => {
-    const closeOnFocusReturn = () => setFileDialogOpen(false)
-    window.addEventListener('focus', closeOnFocusReturn)
-    return () => window.removeEventListener('focus', closeOnFocusReturn)
-  }, [setFileDialogOpen])
-
-  useEffect(() => {
-    const input = inputRef.current
-    if (!input) {
-      return
-    }
-    const closeOnCancel = () => setFileDialogOpen(false)
-    input.addEventListener('cancel', closeOnCancel)
-    return () => input.removeEventListener('cancel', closeOnCancel)
-  }, [setFileDialogOpen])
+  }, [])
 
   const open = () => {
     if (!disabled && !pending) {
-      inputRef.current?.click()
+      filePickerRef.current?.open()
     }
   }
   const focus = () => {
@@ -177,20 +149,13 @@ export const OcclusionImagePicker = forwardRef<
   }
 
   const fileInput = (
-    <input
+    <DaraFilePicker
       accept={OcclusionImageFileAccept}
-      aria-hidden="true"
       className="occlusion-file-input"
       disabled={disabled || pending}
-      onChange={(event: ChangeEvent<HTMLInputElement>) => {
-        setFileDialogOpen(false)
-        processFile(event.target.files?.[0])
-        event.target.value = ''
-      }}
-      onClick={() => setFileDialogOpen(true)}
-      ref={inputRef}
-      tabIndex={-1}
-      type="file"
+      onFile={processFile}
+      onFileDialogOpenChange={onFileDialogOpenChange}
+      ref={filePickerRef}
     />
   )
 
@@ -223,11 +188,7 @@ export const OcclusionImagePicker = forwardRef<
         variant={DaraButtonVariant.Custom}
       >
         <span className="occlusion-picker-icon" aria-hidden="true">
-          <svg viewBox="0 0 24 24">
-            <rect height="16" rx="2" width="18" x="3" y="4" />
-            <circle cx="8.5" cy="9" r="1.5" />
-            <path d="m4 18 4.5-4.5 3.5 3.5 2.5-2.5 5.5 5.5" />
-          </svg>
+          <DaraImageIcon />
         </span>
         <strong>{pending ? 'Processing image…' : 'Add an image'}</strong>
         <span>{pending ? 'Re-encoding and saving locally' : 'Paste, drag and drop, or click to choose'}</span>

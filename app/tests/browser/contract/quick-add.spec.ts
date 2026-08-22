@@ -54,3 +54,23 @@ test('code-block indentation renders one WebKit caret at the indent', async ({ p
   expect(caret.cursorLeft).toBeGreaterThan(caret.lineLeft)
   expect(caret.nativeCaretColor).toBe('rgba(0, 0, 0, 0)')
 })
+
+test('selected images suppress WebKit native selection tint', async ({ page }) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const front = page.getByRole('textbox', { name: 'Front' })
+
+  const webkitUserSelect = await front.evaluate((editor) => {
+    const image = document.createElement('figure')
+    image.className = 'dara-editor-image dara-editor-image-selected'
+    editor.append(image)
+    const value = getComputedStyle(image).getPropertyValue(
+      '-webkit-user-select',
+    )
+    image.remove()
+    return value
+  })
+
+  expect(webkitUserSelect).toBe('none')
+})
