@@ -57,9 +57,14 @@
   font-size: 1.14em;
 }
 
-.dara-markdown ul,
-.dara-markdown ol {
+.dara-markdown ul {
   padding-inline-start: 1.55em;
+}
+
+/* See the ordered-list note in rich-text-editor.css: numeric markers need
+   enough room that "10. " clears the text column. */
+.dara-markdown ol {
+  padding-inline-start: 2.5em;
 }
 
 .dara-markdown li + li {

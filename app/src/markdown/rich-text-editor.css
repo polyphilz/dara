@@ -213,9 +213,15 @@
   color: var(--muted);
 }
 
-.dara-rich-text-content ul,
-.dara-rich-text-content ol {
+.dara-rich-text-content ul {
   padding-left: 24px;
+}
+
+/* Markers sit in this padding, right-aligned to the text column. In the app's
+   monospace face 1ch is 0.5625em, so a two-digit "10. " marker needs 2.25em;
+   anything less makes the numbers hang out over the body text. */
+.dara-rich-text-content ol {
+  padding-left: 2.5em;
 }
 
 .dara-rich-text-content code {
