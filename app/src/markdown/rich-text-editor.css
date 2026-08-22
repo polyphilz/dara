@@ -23,6 +23,10 @@
     box-shadow 120ms ease;
 }
 
+.rich-text-editor {
+  position: relative;
+}
+
 .rich-text-editor:focus-within {
   border-color: rgba(178, 79, 46, 0.55);
   box-shadow: 0 0 0 3px var(--accent-soft);
@@ -392,7 +396,10 @@
   text-align: center;
 }
 
-.dara-math-node:hover,
+/*
+ * Only real selection and keyboard focus draw the outline. Hover says
+ * "clickable" with the pointer alone.
+ */
 .dara-math-selected,
 .dara-math-node:focus-visible {
   outline: 2px solid var(--accent);
@@ -407,20 +414,42 @@
   background: var(--surface);
 }
 
+/*
+ * The math editor is a single-line popover floating over the prose rather than
+ * a panel that reflows it. It keeps the .formula-dialog class so Quick Add's
+ * Escape allowlist still recognises it.
+ */
+.formula-dialog-compact {
+  position: absolute;
+  z-index: 40;
+  width: min(400px, calc(100% - 20px));
+  /* --surface is translucent; compositing it over --canvas makes the popover
+     opaque so the prose it covers cannot read through it. */
+  background: linear-gradient(var(--surface), var(--surface)), var(--canvas);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(24, 23, 22, 0.22);
+}
+
+.formula-dialog-compact > input {
+  flex: 1;
+  min-width: 0;
+}
+
+.formula-done-key {
+  margin-left: 6px;
+  opacity: 0.75;
+}
+
 .formula-dialog-heading {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-}
-
-.formula-preview {
-  min-height: 42px;
-  padding: 9px;
-  overflow-x: auto;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  text-align: center;
 }
 
 .formula-dialog > input {
@@ -441,14 +470,12 @@
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-.formula-symbols,
 .formula-dialog-actions {
   display: flex;
   align-items: center;
   gap: 5px;
 }
 
-.formula-symbols button:hover,
 .formula-dialog-actions button:hover:not(:disabled) {
   border-color: var(--accent);
 }
