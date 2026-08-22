@@ -44,6 +44,7 @@ import { errorMessage } from '../../review/errors.ts'
 import { createUuidV7 } from '../../review/uuid-v7.ts'
 import {
   ingestClipboardImage,
+  ingestImageFile as ingestMediaImageFile,
   renewMediaLease,
 } from '../../media/gateway.ts'
 import {
@@ -489,8 +490,10 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
               ariaLabel={primaryLabel}
               disabled={saving}
               ingestImage={() => ingestClipboardImage(mediaLeaseId)}
+              ingestImageFile={(file) => ingestMediaImageFile(file, mediaLeaseId)}
               key={`primary-${cardType}-${mediaLeaseId}`}
               onChange={setFront}
+              onFileDialogOpenChange={onFileDialogOpenChange}
               onMediaError={(cause) => setError(errorMessage(cause))}
               onPendingMediaChange={(pending) => {
                 setPrimaryMediaPending(pending)
@@ -533,8 +536,10 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
               ariaLabel={secondaryLabel}
               disabled={saving}
               ingestImage={() => ingestClipboardImage(mediaLeaseId)}
+              ingestImageFile={(file) => ingestMediaImageFile(file, mediaLeaseId)}
               key={`secondary-${cardType}-${mediaLeaseId}`}
               onChange={setBack}
+              onFileDialogOpenChange={onFileDialogOpenChange}
               onMediaError={(cause) => setError(errorMessage(cause))}
               onPendingMediaChange={(pending) => {
                 setSecondaryMediaPending(pending)

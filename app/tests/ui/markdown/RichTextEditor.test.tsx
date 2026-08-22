@@ -16,6 +16,7 @@ import {
   parseDaraMarkdown,
   serializeDaraMarkdown,
 } from '../../../src/markdown/markdown-conversion.ts'
+import { ImageOcrStatus } from '../../../src/media/image-reference.ts'
 
 test('parses rich Markdown and serializes one canonical spelling', () => {
   const source = [
@@ -517,7 +518,7 @@ test('image paste stays pending until durable ingestion returns an image ID', as
   })
   expect(ingestImage).toHaveBeenCalledTimes(1)
   expect(
-    rendered.getByRole('status', { name: 'Processing pasted image' }),
+    rendered.getByRole('status', { name: 'Processing image' }),
   ).toBeTruthy()
   expect(pending).toHaveBeenLastCalledWith(true)
 
@@ -538,6 +539,68 @@ test('image paste stays pending until durable ingestion returns an image ID', as
     `{{image:${imageId};width=100%}}`,
   )
   expect(pending).toHaveBeenLastCalledWith(false)
+})
+
+test('image toolbar inserts a chosen file at the current selection', async () => {
+  const imageId = '01980c8e-6c00-7000-8000-000000000203'
+  const image = {
+    id: imageId,
+    mimeType: 'image/webp',
+    naturalHeight: 600,
+    naturalWidth: 800,
+    ocrStatus: ImageOcrStatus.Pending,
+  }
+  const ingestImageFile = vi.fn().mockResolvedValue(image)
+  const fileDialogOpen = vi.fn()
+  function Harness() {
+    const [value, setValue] = useState('Before after')
+    return (
+      <RichTextEditor
+        ariaLabel="Editor"
+        ingestImageFile={ingestImageFile}
+        onChange={setValue}
+        onFileDialogOpenChange={fileDialogOpen}
+        value={value}
+      />
+    )
+  }
+  const rendered = render(<Harness />)
+  const textbox = rendered.getByRole('textbox', { name: 'Editor' })
+  const view = editorView(textbox)
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(
+        TextSelection.create(view.state.doc, 1 + 'Before'.length),
+      ),
+    )
+    view.focus()
+  })
+
+  fireEvent.mouseDown(rendered.getByRole('button', { name: 'Insert image' }))
+  const input = rendered.container.querySelector<HTMLInputElement>(
+    'input.rich-text-image-input',
+  )!
+  expect(input.accept).toBe('image/*')
+  expect(fileDialogOpen).toHaveBeenLastCalledWith(true)
+
+  const file = new File(['png'], 'diagram.png', { type: 'image/png' })
+  fireEvent.change(input, { target: { files: [file] } })
+
+  expect(fileDialogOpen).toHaveBeenLastCalledWith(false)
+  expect(ingestImageFile).toHaveBeenCalledWith(file)
+  await waitFor(() => {
+    expect(rendered.container.querySelector('.dara-editor-image img')).not.toBeNull()
+  })
+  expect(
+    view.state.doc.children.map((node) => [node.type.name, node.textContent]),
+  ).toEqual([
+    ['paragraph', 'Before'],
+    ['dara_image', ''],
+    ['paragraph', ' after'],
+  ])
+  expect(serializeDaraMarkdown(view.state.doc)).toContain(
+    `{{image:${imageId};width=100%}}`,
+  )
 })
 
 describe('keyboard structure', () => {

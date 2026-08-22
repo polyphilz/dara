@@ -58,6 +58,11 @@ import {
 } from 'react'
 import { DaraButton } from '../components/DaraButton.tsx'
 import {
+  DaraFilePicker,
+  type DaraFilePickerHandle,
+} from '../components/DaraFilePicker.tsx'
+import { DaraImageIcon } from '../components/DaraImageIcon.tsx'
+import {
   DaraButtonSize,
   DaraButtonVariant,
 } from '../components/dara-button-types.ts'
@@ -101,7 +106,9 @@ interface RichTextEditorProps {
   ariaLabel: string
   disabled?: boolean
   ingestImage?: () => Promise<ImageRecord>
+  ingestImageFile?: (file: File) => Promise<ImageRecord>
   onChange: (value: string) => void
+  onFileDialogOpenChange?: (open: boolean) => void
   onMediaError?: (error: unknown) => void
   onPendingMediaChange?: (pending: boolean) => void
   placeholder?: string
@@ -132,7 +139,9 @@ export const RichTextEditor = forwardRef<
     ariaLabel,
     disabled = false,
     ingestImage = unavailableImageIngestion,
+    ingestImageFile,
     onChange,
+    onFileDialogOpenChange,
     onMediaError,
     onPendingMediaChange,
     placeholder,
@@ -141,9 +150,11 @@ export const RichTextEditor = forwardRef<
   ref,
 ) {
   const hostRef = useRef<HTMLDivElement>(null)
+  const imageFilePickerRef = useRef<DaraFilePickerHandle>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const ingestImageRef = useRef(ingestImage)
+  const ingestImageFileRef = useRef(ingestImageFile)
   const onMediaErrorRef = useRef(onMediaError)
   const onPendingMediaChangeRef = useRef(onPendingMediaChange)
   const disabledRef = useRef(disabled)
@@ -160,6 +171,7 @@ export const RichTextEditor = forwardRef<
 
   onChangeRef.current = onChange
   ingestImageRef.current = ingestImage
+  ingestImageFileRef.current = ingestImageFile
   onMediaErrorRef.current = onMediaError
   onPendingMediaChangeRef.current = onPendingMediaChange
   disabledRef.current = disabled
@@ -236,7 +248,7 @@ export const RichTextEditor = forwardRef<
             return false
           }
           clipboardEvent.preventDefault()
-          beginImagePaste(
+          beginImageIngestion(
             editorView,
             ingestImageRef.current,
             onMediaErrorRef,
@@ -323,12 +335,36 @@ export const RichTextEditor = forwardRef<
       <EditorToolbar
         ariaLabel={ariaLabel}
         disabled={disabled}
+        onImage={
+          ingestImageFile
+            ? () => imageFilePickerRef.current?.open()
+            : undefined
+        }
         onLink={() => view && openLinkDialogRef.current(view)}
         onMath={(display) => {
           setLinkDialog(null)
           setMathDialog({ display, formula: '' })
         }}
         view={view}
+      />
+      <DaraFilePicker
+        accept="image/*"
+        className="rich-text-image-input"
+        disabled={disabled || !ingestImageFile}
+        onFile={(file) => {
+          const editorView = viewRef.current
+          const ingest = ingestImageFileRef.current
+          if (editorView && ingest) {
+            beginImageIngestion(
+              editorView,
+              () => ingest(file),
+              onMediaErrorRef,
+              viewRef,
+            )
+          }
+        }}
+        onFileDialogOpenChange={onFileDialogOpenChange}
+        ref={imageFilePickerRef}
       />
       <div className="rich-text-editor-surface" ref={hostRef} />
       {mathDialog && view && (
@@ -369,14 +405,14 @@ function clipboardContainsImage(data: DataTransfer | null): boolean {
   return Array.from(data.items).some((item) => item.type.startsWith('image/'))
 }
 
-function beginImagePaste(
+function beginImageIngestion(
   view: EditorView,
   ingestImage: () => Promise<ImageRecord>,
   onMediaErrorRef: { current: ((error: unknown) => void) | undefined },
   viewRef: { current: EditorView | null },
 ) {
   pendingImageRequestSequence += 1
-  const requestId = `image-paste-${pendingImageRequestSequence}`
+  const requestId = `image-ingestion-${pendingImageRequestSequence}`
   const pendingNode = daraEditorSchema.nodes.dara_image_pending!.create({
     requestId,
   })
@@ -643,12 +679,14 @@ function insertHardBreak(): Command {
 function EditorToolbar({
   ariaLabel,
   disabled,
+  onImage,
   onLink,
   onMath,
   view,
 }: {
   ariaLabel: string
   disabled: boolean
+  onImage?: () => void
   onLink: () => void
   onMath: (display: boolean) => void
   view: EditorView | null
@@ -710,6 +748,13 @@ function EditorToolbar({
         shortcut="⌘K"
       >
         <LinkIcon />
+      </ToolbarButton>
+      <ToolbarButton
+        disabled={disabled || !view || !onImage}
+        label="Insert image"
+        onPress={() => onImage?.()}
+      >
+        <DaraImageIcon className="toolbar-icon" />
       </ToolbarButton>
       <span aria-hidden="true" className="toolbar-divider" />
       {commandButton(

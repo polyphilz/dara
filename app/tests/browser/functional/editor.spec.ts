@@ -66,6 +66,25 @@ test('hash shortcuts create styled H1 through H3 headings only', async ({
   expect(sizes[1]).toBeGreaterThan(sizes[2] ?? 0)
 })
 
+test('image toolbar button opens an image-only file chooser', async ({
+  page,
+}) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const editor = page.getByTestId('front-editor')
+  const fileChooserPromise = page.waitForEvent('filechooser')
+
+  await editor.getByRole('button', { name: 'Insert image' }).click()
+
+  const fileChooser = await fileChooserPromise
+  expect(fileChooser.isMultiple()).toBe(false)
+  await expect(editor.locator('input.rich-text-image-input')).toHaveAttribute(
+    'accept',
+    'image/*',
+  )
+})
+
 test('code-language listbox survives a held pointer click and applies selection', async ({ page }) => {
   await page.goto(
     `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
