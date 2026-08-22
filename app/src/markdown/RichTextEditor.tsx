@@ -46,6 +46,7 @@ import {
 import katex from 'katex'
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -67,12 +68,8 @@ import {
   DaraButtonVariant,
 } from '../components/dara-button-types.ts'
 import { DaraInput } from '../components/DaraInput.tsx'
-import { DaraText } from '../components/DaraText.tsx'
-import {
-  DaraTextTone,
-  DaraTextVariant,
-} from '../components/dara-text-types.ts'
 import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
+import { native } from '../lib/native.ts'
 import {
   ImageDisplayWidthStep,
   initialImageDisplayWidth,
@@ -109,6 +106,7 @@ interface RichTextEditorProps {
   ingestImageFile?: (file: File) => Promise<ImageRecord>
   onChange: (value: string) => void
   onFileDialogOpenChange?: (open: boolean) => void
+  openExternalUrl?: (url: string) => Promise<void> | void
   onMediaError?: (error: unknown) => void
   onPendingMediaChange?: (pending: boolean) => void
   placeholder?: string
@@ -142,6 +140,7 @@ export const RichTextEditor = forwardRef<
     ingestImageFile,
     onChange,
     onFileDialogOpenChange,
+    openExternalUrl = native.openExternalUrl,
     onMediaError,
     onPendingMediaChange,
     placeholder,
@@ -153,6 +152,7 @@ export const RichTextEditor = forwardRef<
   const imageFilePickerRef = useRef<DaraFilePickerHandle>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
+  const openExternalUrlRef = useRef(openExternalUrl)
   const ingestImageRef = useRef(ingestImage)
   const ingestImageFileRef = useRef(ingestImageFile)
   const onMediaErrorRef = useRef(onMediaError)
@@ -170,6 +170,7 @@ export const RichTextEditor = forwardRef<
   const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null)
 
   onChangeRef.current = onChange
+  openExternalUrlRef.current = openExternalUrl
   ingestImageRef.current = ingestImage
   ingestImageFileRef.current = ingestImageFile
   onMediaErrorRef.current = onMediaError
@@ -239,6 +240,25 @@ export const RichTextEditor = forwardRef<
       },
       editable: () => !disabledRef.current,
       handleDOMEvents: {
+        click(editorView, event) {
+          const target = event.target
+          const anchor =
+            target instanceof Element ? target.closest('a[href]') : null
+          if (!anchor || !editorView.dom.contains(anchor)) {
+            return false
+          }
+          event.preventDefault()
+          const url = externalHttpUrl(anchor.getAttribute('href') ?? undefined)
+          if (!url) {
+            return true
+          }
+          Promise.resolve(openExternalUrlRef.current(url)).catch(
+            (error: unknown) => {
+              console.error('Could not open external editor link', error)
+            },
+          )
+          return true
+        },
         paste(editorView, event) {
           const clipboardEvent = event as ClipboardEvent
           if (
@@ -384,6 +404,7 @@ export const RichTextEditor = forwardRef<
       {linkDialog && view && (
         <LinkDialog
           dialog={linkDialog}
+          view={view}
           onCancel={() => {
             setLinkDialog(null)
             view.focus()
@@ -1200,6 +1221,52 @@ function commitMath(
   view.focus()
 }
 
+interface AnchoredPopoverPlacement {
+  left: number
+  top: number
+}
+
+function useAnchoredPopoverPlacement(
+  view: EditorView,
+  popoverRef: { readonly current: HTMLElement | null },
+  nodePosition?: number,
+): AnchoredPopoverPlacement | null {
+  const [placement, setPlacement] =
+    useState<AnchoredPopoverPlacement | null>(null)
+
+  useLayoutEffect(() => {
+    const popover = popoverRef.current
+    const shell = view.dom.closest('.rich-text-editor')
+    if (!popover || !(shell instanceof HTMLElement)) {
+      return
+    }
+    const node =
+      nodePosition === undefined ? null : view.nodeDOM(nodePosition)
+    const anchor =
+      node instanceof HTMLElement
+        ? node.getBoundingClientRect()
+        : view.coordsAtPos(view.state.selection.from)
+    const shellRect = shell.getBoundingClientRect()
+    const gap = 6
+    const margin = 10
+    const rightmost = shell.clientWidth - popover.offsetWidth - margin
+    const left = Math.min(
+      Math.max(margin, anchor.left - shellRect.left),
+      Math.max(margin, rightmost),
+    )
+    let top = anchor.bottom - shellRect.top + gap
+    if (top + popover.offsetHeight > shell.clientHeight - margin) {
+      top = Math.max(
+        margin,
+        anchor.top - shellRect.top - popover.offsetHeight - gap,
+      )
+    }
+    setPlacement({ left, top })
+  }, [nodePosition, popoverRef, view])
+
+  return placement
+}
+
 function FormulaDialog({
   dialog,
   onCancel,
@@ -1214,39 +1281,11 @@ function FormulaDialog({
   const [formula, setFormula] = useState(dialog.formula)
   const inputRef = useRef<HTMLInputElement>(null)
   const formRef = useRef<HTMLFormElement>(null)
-  const [placement, setPlacement] = useState<{
-    left: number
-    top: number
-  } | null>(null)
-
-  // Sit just under the equation being edited rather than at a fixed corner of
-  // the editor, flipping above it when there is no room below.
-  useLayoutEffect(() => {
-    const form = formRef.current
-    const shell = view.dom.closest('.rich-text-editor')
-    if (!form || !(shell instanceof HTMLElement)) {
-      return
-    }
-    const node =
-      dialog.position === undefined ? null : view.nodeDOM(dialog.position)
-    const anchor =
-      node instanceof HTMLElement
-        ? node.getBoundingClientRect()
-        : view.coordsAtPos(view.state.selection.from)
-    const shellRect = shell.getBoundingClientRect()
-    const gap = 6
-    const margin = 10
-    const rightmost = shell.clientWidth - form.offsetWidth - margin
-    const left = Math.min(
-      Math.max(margin, anchor.left - shellRect.left),
-      Math.max(margin, rightmost),
-    )
-    let top = anchor.bottom - shellRect.top + gap
-    if (top + form.offsetHeight > shell.clientHeight - margin) {
-      top = Math.max(margin, anchor.top - shellRect.top - form.offsetHeight - gap)
-    }
-    setPlacement({ left, top })
-  }, [dialog.position, view])
+  const placement = useAnchoredPopoverPlacement(
+    view,
+    formRef,
+    dialog.position,
+  )
 
   const formulaRef = useRef(formula)
   formulaRef.current = formula
@@ -1290,7 +1329,7 @@ function FormulaDialog({
   return (
     <form
       aria-label={dialog.display ? 'Display math editor' : 'Inline math editor'}
-      className="formula-dialog formula-dialog-compact"
+      className="formula-dialog editor-inline-popover"
       ref={formRef}
       style={{
         left: placement?.left ?? 0,
@@ -1339,24 +1378,66 @@ function LinkDialog({
   dialog,
   onCancel,
   onConfirm,
+  view,
 }: {
   dialog: LinkDialogState
   onCancel: () => void
   onConfirm: (href: string | null) => void
+  view: EditorView
 }) {
   const [href, setHref] = useState(dialog.href)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  const placement = useAnchoredPopoverPlacement(view, formRef)
+  const hrefRef = useRef(href)
+  hrefRef.current = href
+
+  const confirmHref = useCallback(
+    (value: string) => {
+      const entered = value.trim()
+      if (!entered) {
+        onConfirm(null)
+        return
+      }
+      const safeHref = externalHttpUrl(entered)
+      if (!safeHref) {
+        setError('Use a complete http:// or https:// URL.')
+        return
+      }
+      onConfirm(safeHref)
+    },
+    [onConfirm],
+  )
 
   useEffect(() => {
-    inputRef.current?.focus()
-    inputRef.current?.select()
+    const input = inputRef.current
+    if (!input) {
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    })
+    return () => cancelAnimationFrame(frame)
   }, [])
+
+  useEffect(() => {
+    const handlePointerDown = (event: globalThis.MouseEvent) => {
+      if (formRef.current?.contains(event.target as Node)) {
+        return
+      }
+      confirmHref(hrefRef.current)
+    }
+    document.addEventListener('mousedown', handlePointerDown, true)
+    return () => document.removeEventListener('mousedown', handlePointerDown, true)
+  }, [confirmHref])
 
   return (
     <form
       aria-label="Link editor"
-      className="formula-dialog"
+      className="formula-dialog editor-inline-popover link-dialog-compact"
+      noValidate
       onKeyDown={(event) => {
         event.stopPropagation()
         if (event.key === 'Escape') {
@@ -1366,51 +1447,43 @@ function LinkDialog({
       }}
       onSubmit={(event) => {
         event.preventDefault()
-        const entered = href.trim()
-        if (!entered) {
-          onConfirm(null)
-          return
-        }
-        const safeHref = externalHttpUrl(entered)
-        if (!safeHref) {
-          setError('Links must use http:// or https://.')
-          return
-        }
-        onConfirm(safeHref)
+        confirmHref(href)
       }}
+      ref={formRef}
       role="dialog"
+      style={{
+        left: placement?.left ?? 0,
+        top: placement?.top ?? 0,
+        visibility: placement ? 'visible' : 'hidden',
+      }}
     >
-      <div className="formula-dialog-heading">
-        <DaraText as="strong" variant={DaraTextVariant.Label}>
-          Link
-        </DaraText>
-        <DaraText
-          as="span"
-          tone={DaraTextTone.Muted}
-          variant={DaraTextVariant.Caption}
-        >
-          Absolute HTTP URL
-        </DaraText>
-      </div>
       <DaraInput
+        aria-invalid={error ? 'true' : undefined}
         aria-label="Link URL"
         onChange={(event) => {
           setHref(event.target.value)
           setError(null)
         }}
+        placeholder="https://example.com"
         ref={inputRef}
         type="url"
         value={href}
       />
-      {error && <span role="alert">{error}</span>}
-      <div className="formula-dialog-actions">
-        <DaraButton onClick={onCancel} variant={DaraButtonVariant.Ghost}>
-          Cancel
-        </DaraButton>
-        <DaraButton type="submit" variant={DaraButtonVariant.Primary}>
-          Apply
-        </DaraButton>
-      </div>
+      <DaraButton
+        size={DaraButtonSize.Compact}
+        type="submit"
+        variant={DaraButtonVariant.Primary}
+      >
+        Done
+        <span aria-hidden="true" className="formula-done-key">
+          ↵
+        </span>
+      </DaraButton>
+      {error && (
+        <span className="link-dialog-error" role="alert">
+          {error}
+        </span>
+      )}
     </form>
   )
 }

@@ -83,17 +83,6 @@
   border-top: 1px solid var(--line);
 }
 
-.dara-markdown a {
-  color: var(--accent);
-  text-underline-offset: 0.14em;
-}
-
-.dara-markdown a:focus-visible {
-  outline: 3px solid var(--accent-soft);
-  outline-offset: 2px;
-  border-radius: 2px;
-}
-
 .dara-markdown-inert-link,
 .dara-markdown-inert-image {
   color: var(--muted);

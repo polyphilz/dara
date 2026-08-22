@@ -140,6 +140,11 @@ export class FakeDaraBackend {
         requireEmptyPayload(payload, command)
         this.#dismissedQuickAdd += 1
         return null
+      case DaraIpcCommand.OpenExternalUrl: {
+        const envelope = requireRecord(payload, command)
+        requireString(envelope.url, 'url', command)
+        return null
+      }
       case DaraIpcCommand.LoadHomeStats:
         requireRecord(payload, command)
         return {

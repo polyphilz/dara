@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   ingestClipboardImage: vi.fn(),
   ingestImageFile: vi.fn(),
   listen: vi.fn(),
+  openExternalUrl: vi.fn(),
   renewMediaLease: vi.fn(),
   setQuickAddFileDialogOpen: vi.fn(),
 }))
@@ -30,6 +31,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 vi.mock('../../../src/lib/native.ts', () => ({
   native: {
     dismissQuickAdd: mocks.dismissQuickAdd,
+    openExternalUrl: mocks.openExternalUrl,
     setQuickAddFileDialogOpen: mocks.setQuickAddFileDialogOpen,
   },
 }))

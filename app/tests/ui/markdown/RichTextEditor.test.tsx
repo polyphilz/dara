@@ -199,8 +199,8 @@ test.each([
   expect(serializeDaraMarkdown(view.state.doc)).toBe('~~word~~')
 })
 
-test('link editing uses an app-owned Dara input', () => {
-  const { getByRole, view } = controlledEditor('word')
+test('link editing uses the compact anchored input and validates URLs', async () => {
+  const { getByRole, queryByText, view } = controlledEditor('word')
   act(() => {
     view.dispatch(
       view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)),
@@ -209,12 +209,60 @@ test('link editing uses an app-owned Dara input', () => {
 
   fireEvent.mouseDown(getByRole('button', { name: 'Link' }))
   const input = getByRole('textbox', { name: 'Link URL' })
+  const dialog = getByRole('dialog', { name: 'Link editor' })
+  expect(dialog.classList.contains('editor-inline-popover')).toBe(true)
+  expect(queryByText('Absolute HTTP URL')).toBeNull()
   expectWritingAssistanceDisabled(input)
+  await waitFor(() => expect(document.activeElement).toBe(input))
+
+  fireEvent.change(input, { target: { value: 'example.com' } })
+  fireEvent.click(getByRole('button', { name: 'Done' }))
+  expect(getByRole('alert').textContent).toBe(
+    'Use a complete http:// or https:// URL.',
+  )
+
   fireEvent.change(input, { target: { value: 'https://example.com' } })
-  fireEvent.click(getByRole('button', { name: 'Apply' }))
+  fireEvent.click(getByRole('button', { name: 'Done' }))
 
   expect(serializeDaraMarkdown(view.state.doc)).toBe(
     '[word](https://example.com/)',
+  )
+})
+
+test('clicking an editor link opens it through the app-owned external opener', () => {
+  const openExternalUrl = vi.fn().mockResolvedValue(undefined)
+  const { container } = controlledEditor(
+    '[Open docs](https://example.com/docs?q=dara)',
+    openExternalUrl,
+  )
+  const link = container.querySelector<HTMLAnchorElement>(
+    '.dara-rich-text-content a',
+  )!
+
+  const clickAllowed = fireEvent.click(link)
+
+  expect(clickAllowed).toBe(false)
+  expect(openExternalUrl).toHaveBeenCalledWith(
+    'https://example.com/docs?q=dara',
+  )
+})
+
+test('clicking away from a valid link popover commits it', () => {
+  const { getByRole, view } = controlledEditor('word')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)),
+    )
+  })
+  fireEvent.mouseDown(getByRole('button', { name: 'Link' }))
+  fireEvent.change(getByRole('textbox', { name: 'Link URL' }), {
+    target: { value: 'https://example.com/reference' },
+  })
+
+  fireEvent.mouseDown(document.body)
+
+  expect(serializeDaraMarkdown(view.state.doc)).toBe(
+    '[word](https://example.com/reference)',
   )
 })
 
@@ -798,11 +846,19 @@ describe('keyboard structure', () => {
   })
 })
 
-function controlledEditor(initialValue: string) {
+function controlledEditor(
+  initialValue: string,
+  openExternalUrl?: (url: string) => Promise<void> | void,
+) {
   function Harness() {
     const [value, setValue] = useState(initialValue)
     return (
-      <RichTextEditor ariaLabel="Editor" onChange={setValue} value={value} />
+      <RichTextEditor
+        ariaLabel="Editor"
+        onChange={setValue}
+        openExternalUrl={openExternalUrl}
+        value={value}
+      />
     )
   }
 
