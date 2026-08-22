@@ -28,8 +28,10 @@ import {
   wrapInList,
 } from 'prosemirror-schema-list'
 import {
+  AllSelection,
   EditorState,
   NodeSelection,
+  Plugin,
   Selection,
   type Command,
 } from 'prosemirror-state'
@@ -86,7 +88,6 @@ import {
   serializeDaraMarkdown,
 } from './markdown-conversion.ts'
 import { externalHttpUrl } from './url-policy.ts'
-import { CodeLanguageMenu } from './CodeLanguageMenu.tsx'
 
 export interface RichTextEditorHandle {
   focus: () => void
@@ -184,6 +185,7 @@ export const RichTextEditor = forwardRef<
       plugins: [
         history(),
         editorInputRules(),
+        codeBlockSelectAll(),
         keymap(editorKeyBindings((editorView) => openLinkDialogRef.current(editorView))),
         keymap(baseKeymap),
         dropCursor(),
@@ -504,6 +506,24 @@ const focusEditorToolbar: Command = (_state, _dispatch, view) => {
   return true
 }
 
+/**
+ * CodeMirror never receives the outer document's select-all, so flag the state
+ * on the editor and let CSS tint the block. Deliberately an editor attribute
+ * rather than a node decoration: changing decorations rebuilds the node view,
+ * which resets CodeMirror and breaks its own Command-A handling.
+ */
+function codeBlockSelectAll(): Plugin {
+  return new Plugin({
+    props: {
+      attributes(state): Record<string, string> {
+        return state.selection instanceof AllSelection
+          ? { 'data-select-all': 'true' }
+          : {}
+      },
+    },
+  })
+}
+
 function editorInputRules() {
   const bulletList = daraEditorSchema.nodes.bullet_list!
   const codeBlock = daraEditorSchema.nodes.code_block!
@@ -719,7 +739,6 @@ function EditorToolbar({
         toggleTextBlock('code_block'),
         blockIsActive(view, 'code_block'),
       )}
-      <CodeLanguageControl disabled={disabled} view={view} />
       <ToolbarButton
         disabled={disabled || !view}
         label="Inline math"
@@ -738,31 +757,6 @@ function EditorToolbar({
       {commandButton('Undo', <HistoryIcon direction="undo" />, undo, false, '⌘Z')}
       {commandButton('Redo', <HistoryIcon direction="redo" />, redo, false, '⇧⌘Z')}
     </div>
-  )
-}
-
-function CodeLanguageControl({
-  disabled,
-  view,
-}: {
-  disabled: boolean
-  view: EditorView | null
-}) {
-  const language = activeCodeLanguage(view)
-  if (language === undefined) {
-    return null
-  }
-  return (
-    <CodeLanguageMenu
-      disabled={disabled}
-      language={language}
-      onReturnFocus={() => view?.focus()}
-      onSelect={(nextLanguage) => {
-        if (view) {
-          setCodeLanguage(view, nextLanguage)
-        }
-      }}
-    />
   )
 }
 
@@ -1011,36 +1005,7 @@ function blockIsActive(view: EditorView | null, nodeName: string): boolean {
   return false
 }
 
-function activeCodeLanguage(view: EditorView | null): string | null | undefined {
-  if (!view) {
-    return undefined
-  }
-  const { $from } = view.state.selection
-  for (let depth = $from.depth; depth >= 0; depth -= 1) {
-    const node = $from.node(depth)
-    if (node.type.name === 'code_block') {
-      return node.attrs.language ?? null
-    }
-  }
-  return undefined
-}
 
-function setCodeLanguage(view: EditorView, language: string | null): void {
-  const { $from } = view.state.selection
-  for (let depth = $from.depth; depth >= 1; depth -= 1) {
-    const node = $from.node(depth)
-    if (node.type.name === 'code_block') {
-      view.dispatch(
-        view.state.tr.setNodeMarkup($from.before(depth), undefined, {
-          ...node.attrs,
-          language,
-        }),
-      )
-      view.focus()
-      return
-    }
-  }
-}
 
 function toggleList(nodeName: 'bullet_list' | 'ordered_list'): Command {
   return (state, dispatch) => {
@@ -1249,8 +1214,13 @@ function FormulaDialog({
     }
     // Focus with the caret parked at the end rather than selecting the
     // formula, so re-opening an equation is ready to append to, not overtype.
-    input.focus()
-    input.setSelectionRange(input.value.length, input.value.length)
+    // Deferred a frame: opening from a click leaves ProseMirror still
+    // restoring focus to the editor, which would otherwise win.
+    const frame = requestAnimationFrame(() => {
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    })
+    return () => cancelAnimationFrame(frame)
   }, [])
 
   return (
@@ -1418,6 +1388,7 @@ class MathNodeView implements NodeView {
     }`
     this.dom.contentEditable = 'false'
     this.dom.tabIndex = 0
+    this.dom.addEventListener('mousedown', this.suppressTextSelection)
     this.dom.addEventListener('click', this.edit)
     this.dom.addEventListener('keydown', this.handleKeyDown)
     this.render()
@@ -1436,6 +1407,7 @@ class MathNodeView implements NodeView {
   deselectNode = () => this.dom.classList.remove('dara-math-selected')
 
   destroy = () => {
+    this.dom.removeEventListener('mousedown', this.suppressTextSelection)
     this.dom.removeEventListener('click', this.edit)
     this.dom.removeEventListener('keydown', this.handleKeyDown)
   }
@@ -1448,6 +1420,12 @@ class MathNodeView implements NodeView {
       event.preventDefault()
       this.edit()
     }
+  }
+
+  // Keeps a click from sweeping a text highlight over the rendered maths while
+  // leaving the document's own select-all free to cover it.
+  private suppressTextSelection = (event: globalThis.MouseEvent) => {
+    event.preventDefault()
   }
 
   private edit = () => {

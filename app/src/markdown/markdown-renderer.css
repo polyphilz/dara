@@ -115,6 +115,24 @@
   padding: 0.12em 0.3em;
 }
 
+.dara-markdown pre[data-language-label] {
+  position: relative;
+}
+
+.dara-markdown pre[data-language-label]::after {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  color: var(--muted);
+  content: attr(data-language-label);
+  font-size: var(--type-size-eyebrow);
+  font-weight: var(--type-weight-eyebrow);
+  letter-spacing: var(--type-tracking-eyebrow);
+  line-height: var(--type-leading-eyebrow);
+  pointer-events: none;
+  text-transform: uppercase;
+}
+
 .dara-markdown pre {
   max-width: 100%;
   overflow: auto;

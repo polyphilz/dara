@@ -432,13 +432,14 @@ test('validation focuses the missing field and composition Escape does not dismi
   )
 })
 
-test('the app-owned code-language menu closes without dismissing Quick Add', () => {
-  const { getByRole, queryByRole } = render(<QuickAddWindow />)
+test('the app-owned code-language menu closes without dismissing Quick Add', async () => {
+  const { findByRole, getByRole, queryByRole } = render(<QuickAddWindow />)
   const front = getByRole('textbox', { name: 'Front' })
   const source = getByRole('textbox', { name: /Source/ })
   replaceEditorDocument(front, '```typescript\nconst answer = 42\n```')
 
-  const trigger = getByRole('button', {
+  // The picker now lives in the code block itself, which lazy-loads CodeMirror.
+  const trigger = await findByRole('button', {
     name: 'Code language: TypeScript',
   })
   fireEvent.click(trigger)
@@ -469,7 +470,7 @@ test('the math dialog consumes Escape before Quick Add dismissal', () => {
   expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
 })
 
-test('Escape from a nested code block dismisses Quick Add', async () => {
+test('Escape leaves a code block first, then dismisses Quick Add', async () => {
   const { container, getByRole } = render(<QuickAddWindow />)
   const front = getByRole('textbox', { name: 'Front' })
   replaceEditorDocument(front, '```python\npass\n```')
@@ -486,8 +487,12 @@ test('Escape from a nested code block dismisses Quick Add', async () => {
     throw new Error('CodeMirror content not found')
   }
 
+  // Tab indents inside the block, so Escape is its exit: the first press
+  // releases the code block rather than closing the window.
   fireEvent.keyDown(codeContent, { key: 'Escape' })
+  expect(mocks.dismissQuickAdd).not.toHaveBeenCalled()
 
+  fireEvent.keyDown(front, { key: 'Escape' })
   await waitFor(() => expect(mocks.dismissQuickAdd).toHaveBeenCalledTimes(1))
 })
 
@@ -527,7 +532,7 @@ test('Control-Enter exits a front code block without submitting or focusing Back
   expect(mocks.createCardContent).not.toHaveBeenCalled()
 })
 
-test('a nested code block is not an extra Tab stop between Front and Back', async () => {
+test('Tab indents inside a code block and Escape releases it to the fields', async () => {
   const user = userEvent.setup()
   const { container, getByRole } = render(<QuickAddWindow />)
   const front = getByRole('textbox', { name: 'Front' })
@@ -552,11 +557,13 @@ test('a nested code block is not an extra Tab stop between Front and Back', asyn
   expect(codeContent.tabIndex).toBe(-1)
   act(() => codeView.focus())
 
+  // Tab is the code editor's indent, not a field jump. Escape is the way out;
+  // that hand-off is asserted in the browser suite, where focus is real.
   await user.tab()
-  expect(document.activeElement).toBe(back)
+  expect(codeView.state.doc.toString()).toBe('  pass')
   await user.tab({ shift: true })
-  expect(front.contains(document.activeElement)).toBe(true)
-  expect(document.activeElement).toBe(codeContent)
+  expect(codeView.state.doc.toString()).toBe('pass')
+  expect(back.contains(document.activeElement)).toBe(false)
 })
 
 function replaceEditorDocument(element: HTMLElement, value: string) {

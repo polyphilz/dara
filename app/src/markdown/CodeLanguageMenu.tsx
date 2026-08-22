@@ -3,6 +3,7 @@ import {
   type DaraSelectOption,
 } from '../components/DaraSelect.tsx'
 import {
+  codeLanguageAliases,
   codeLanguageDefinitions,
   codeLanguageDisplayName,
 } from './languages.ts'
@@ -12,6 +13,8 @@ interface CodeLanguageMenuProps {
   language: string | null
   onReturnFocus: () => void
   onSelect: (language: string | null) => void
+  tabIndex?: number
+  triggerClassName?: string
 }
 
 export function CodeLanguageMenu({
@@ -19,6 +22,8 @@ export function CodeLanguageMenu({
   language,
   onReturnFocus,
   onSelect,
+  tabIndex = -1,
+  triggerClassName = 'toolbar-button code-language-trigger',
 }: CodeLanguageMenuProps) {
   const value = language ?? ''
   return (
@@ -29,9 +34,11 @@ export function CodeLanguageMenu({
       onSelect={(nextLanguage) => onSelect(nextLanguage || null)}
       options={languageOptions(language)}
       popoverClassName="code-language-popover"
-      tabIndex={-1}
+      searchable
+      searchPlaceholder="Search languages"
+      tabIndex={tabIndex}
       title="Code language"
-      triggerClassName="toolbar-button code-language-trigger"
+      triggerClassName={triggerClassName}
       value={value}
     />
   )
@@ -42,11 +49,13 @@ function languageOptions(language: string | null): DaraSelectOption<string>[] {
     (definition) => definition.canonical === language,
   )
   return [
-    { label: 'Plain code', value: '' },
+    { label: codeLanguageDisplayName(null), value: '' },
     ...(language && !known
       ? [{ label: codeLanguageDisplayName(language), value: language }]
       : []),
     ...codeLanguageDefinitions.map((definition) => ({
+      // Aliases let "ts" find TypeScript and "py" find Python.
+      keywords: codeLanguageAliases[definition.canonical] ?? [],
       label: codeLanguageDisplayName(definition.canonical),
       value: definition.canonical,
     })),

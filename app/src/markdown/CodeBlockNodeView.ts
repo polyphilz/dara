@@ -1,4 +1,4 @@
-import { defaultKeymap } from '@codemirror/commands'
+import { defaultKeymap, indentLess, indentMore } from '@codemirror/commands'
 import {
   HighlightStyle,
   syntaxHighlighting,
@@ -20,7 +20,10 @@ import type { Node as ProseMirrorNode } from 'prosemirror-model'
 import { AllSelection, Selection, TextSelection } from 'prosemirror-state'
 import { redo, undo } from 'prosemirror-history'
 import type { EditorView, NodeView } from 'prosemirror-view'
+import { createElement } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { DARA_WRITING_ASSISTANCE_ATTRIBUTES } from '../components/writing-assistance.ts'
+import { CodeBlockHeader } from './CodeBlockHeader.tsx'
 import { codeLanguageDisplayName } from './languages.ts'
 
 const daraCodeHighlightStyle = HighlightStyle.define([
@@ -89,6 +92,8 @@ export function codeBlockNodeView(
 
 class CodeBlockView implements NodeView {
   readonly dom: HTMLElement
+  private readonly header: HTMLElement
+  private readonly headerRoot: Root
   private readonly cm: CodeMirrorView
   private readonly editable = new Compartment()
   private readonly language = new Compartment()
@@ -111,6 +116,9 @@ class CodeBlockView implements NodeView {
       doc: node.textContent,
       extensions: [
         highlightSpecialChars(),
+        // WebKit can paint two native carets at a shrink-wrapped line
+        // boundary. Use CodeMirror's single overlay caret; the theme below
+        // keeps native, text-hugging selection instead of its rectangle layer.
         drawSelection(),
         syntaxHighlighting(daraCodeHighlightStyle, { fallback: true }),
         CodeMirrorView.editorAttributes.of({
@@ -140,28 +148,80 @@ class CodeBlockView implements NodeView {
           '&.cm-focused': {
             outline: 'none',
           },
+          '.cm-scroller': { overflow: 'auto' },
           '.cm-content': {
+            alignItems: 'flex-start',
+            display: 'flex',
+            flexDirection: 'column',
             minHeight: '86px',
-            padding: '12px 14px',
+            // CodeMirror normally puts 6px of the left inset on every line.
+            // Keep the text in the same place while letting selected lines
+            // shrink-wrap their contents instead of filling the editor.
+            padding: '12px 20px',
             caretColor: 'var(--accent)',
             color: 'var(--code-block-ink)',
             fontFamily: 'ui-monospace, SFMono-Regular, monospace',
             fontSize: 'var(--type-size-content-code)',
           },
+          '.cm-line': {
+            // flex-start shrink-wraps each line without width: fit-content's
+            // ambiguous WebKit caret boundary. The minimum keeps empty-line
+            // selection visible.
+            minWidth: '1ch',
+            padding: '0',
+          },
           '.cm-cursor, .cm-dropCursor': {
             borderLeftColor: 'var(--accent)',
           },
-          '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-            backgroundColor: 'var(--code-block-selection)',
+          // Hide drawSelection()'s full-width rectangles, but keep its overlay
+          // caret. The more-specific !important rule restores native selection
+          // after CodeMirror hides it, preserving the Notion-like line shape.
+          '.cm-selectionLayer': { display: 'none' },
+          '.cm-content .cm-line::selection, .cm-content .cm-line *::selection': {
+            backgroundColor: 'var(--code-block-selection) !important',
           },
           '.cm-gutters': { display: 'none' },
-          '.cm-scroller': { overflow: 'auto' },
         }),
       ],
     })
-    this.dom = this.cm.dom
+    // The node view owns a wrapper so the header can sit above CodeMirror
+    // without CodeMirror treating it as document content.
+    this.dom = document.createElement('div')
+    this.dom.className = 'dara-code-block'
+    this.header = document.createElement('div')
+    this.header.className = 'dara-code-block-header-host'
+    this.header.contentEditable = 'false'
+    // After the editor in DOM order so Tab out of the code lands on the
+    // header controls; it is positioned over the top-right visually.
+    this.dom.append(this.cm.dom, this.header)
+    this.headerRoot = createRoot(this.header)
     this.setLanguageData(node.attrs.language)
+    this.renderHeader()
     void this.configureLanguage(node.attrs.language)
+  }
+
+  private renderHeader() {
+    this.headerRoot.render(
+      createElement(CodeBlockHeader, {
+        code: () => this.node.textContent,
+        disabled: !this.outerView.editable,
+        language: (this.node.attrs.language as string | null) ?? null,
+        onReturnFocus: () => this.cm.focus(),
+        onSelectLanguage: (language: string | null) => {
+          const position = this.getPos()
+          if (position === undefined) {
+            return
+          }
+          this.outerView.dispatch(
+            this.outerView.state.tr.setNodeMarkup(position, undefined, {
+              ...this.node.attrs,
+              language,
+            }),
+          )
+          this.cm.focus()
+        },
+      }),
+    )
   }
 
   update = (node: ProseMirrorNode): boolean => {
@@ -191,6 +251,7 @@ class CodeBlockView implements NodeView {
       this.setLanguageData(node.attrs.language)
       void this.configureLanguage(node.attrs.language)
     }
+    this.renderHeader()
     return true
   }
 
@@ -207,6 +268,10 @@ class CodeBlockView implements NodeView {
 
   destroy = () => {
     this.destroyed = true
+    // Unmounting synchronously here would land inside ProseMirror's own
+    // update, which React warns about.
+    const root = this.headerRoot
+    queueMicrotask(() => root.unmount())
     this.cm.destroy()
   }
 
@@ -270,6 +335,15 @@ class CodeBlockView implements NodeView {
           return true
         },
       },
+      { key: 'Tab', run: indentMore },
+      { key: 'Shift-Tab', run: indentLess },
+      {
+        // Tab no longer leaves the block, so Escape is the documented exit.
+        // The selection has to move past the node first: focusing the outer
+        // view while the selection still sits inside sends focus straight back.
+        key: 'Escape',
+        run: () => this.escapeToDocument(),
+      },
       { key: 'Mod-a', run: () => this.selectAll() },
       { key: 'Alt-F10', run: () => this.focusToolbar() },
       {
@@ -315,6 +389,31 @@ class CodeBlockView implements NodeView {
       return false
     }
     toolbar.focus()
+    return true
+  }
+
+  private escapeToDocument(): boolean {
+    const position = this.getPos()
+    if (position === undefined) {
+      return false
+    }
+    const { doc } = this.outerView.state
+    const after = position + this.node.nodeSize
+    if (after >= doc.content.size) {
+      // Nothing follows the block, so there is nowhere for focus to land and
+      // it would bounce straight back in. Open a paragraph after it instead.
+      if (!exitCode(this.outerView.state, this.outerView.dispatch)) {
+        return false
+      }
+      this.outerView.focus()
+      return true
+    }
+    this.outerView.dispatch(
+      this.outerView.state.tr
+        .setSelection(Selection.near(doc.resolve(after), 1))
+        .scrollIntoView(),
+    )
+    this.outerView.focus()
     return true
   }
 

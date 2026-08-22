@@ -345,27 +345,92 @@
   box-shadow: none !important;
 }
 
-.dara-code-block-editor[data-language-label]:not([data-language-label=''])::after {
-  position: absolute;
-  z-index: 2;
-  top: 9px;
-  right: 11px;
-  padding: 2px 6px;
-  border-radius: 5px;
-  color: var(--code-block-muted);
-  background: var(--code-block-label-background);
-  content: attr(data-language-label);
-  font-family: var(--font-family-app);
-  font-size: var(--type-size-eyebrow);
-  font-weight: var(--type-weight-eyebrow);
-  line-height: var(--type-leading-eyebrow);
-  letter-spacing: var(--type-tracking-eyebrow);
-  pointer-events: none;
-  text-transform: uppercase;
+/*
+ * The code block owns a hover/focus-revealed header: the language picker and a
+ * copy button, laid over the top-right of the editor.
+ */
+.dara-code-block {
+  position: relative;
 }
 
-.dara-code-block-editor[data-language-label]:not([data-language-label='']) .cm-content {
-  padding-top: 31px !important;
+/*
+ * CodeMirror owns its own editable, so a select-all in the outer document
+ * cannot paint across the code. Ring the block instead of flooding it: a solid
+ * fill reads as a broken text selection rather than "this block is included".
+ */
+.dara-rich-text-content[data-select-all='true'] .dara-code-block-editor {
+  box-shadow: inset 0 0 0 2px var(--accent) !important;
+}
+
+.dara-code-block-header {
+  position: absolute;
+  user-select: none;
+  z-index: 3;
+  top: 7px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--code-block-border);
+  border-radius: 8px;
+  background: var(--code-block-background);
+  opacity: 0;
+  transition: opacity 110ms ease;
+}
+
+.dara-code-block:hover .dara-code-block-header,
+.dara-code-block:focus-within .dara-code-block-header,
+.dara-code-block-header:focus-within {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dara-code-block-header {
+    transition: none;
+  }
+}
+
+.rich-text-editor .dara-code-block-language,
+.rich-text-editor .dara-code-block-copy {
+  display: flex;
+  min-height: 24px;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--code-block-muted);
+  background: transparent;
+  cursor: pointer;
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-caption);
+  line-height: var(--type-leading-caption);
+}
+
+.rich-text-editor .dara-code-block-language:hover:not(:disabled),
+.rich-text-editor .dara-code-block-copy:hover:not(:disabled),
+.rich-text-editor .dara-code-block-language[aria-expanded='true'] {
+  color: var(--code-block-ink);
+  background: var(--code-block-label-background);
+}
+
+.rich-text-editor .dara-code-block-language:focus-visible,
+.rich-text-editor .dara-code-block-copy:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dara-code-block-icon {
+  display: block;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
 }
 
 .dara-rich-text-content table {
@@ -490,7 +555,7 @@
   --code-block-ink: #f0f2f4;
   --code-block-label-background: rgba(255, 255, 255, 0.055);
   --code-block-muted: #aeb5bd;
-  --code-block-selection: rgba(112, 148, 180, 0.32);
+  --code-block-selection: #293b54;
   --code-syntax-comment: #8e969f;
   --code-syntax-function: #c6a77e;
   --code-syntax-invalid: #dc8a8a;
@@ -510,7 +575,7 @@
     --code-block-ink: #f0f2f4;
     --code-block-label-background: rgba(255, 255, 255, 0.055);
     --code-block-muted: #aeb5bd;
-    --code-block-selection: rgba(112, 148, 180, 0.32);
+    --code-block-selection: #293b54;
     --code-syntax-comment: #8e969f;
     --code-syntax-function: #c6a77e;
     --code-syntax-invalid: #dc8a8a;

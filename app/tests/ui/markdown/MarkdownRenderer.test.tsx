@@ -149,3 +149,22 @@ test('the external URL policy accepts only absolute HTTP(S) destinations', () =>
   expect(externalHttpUrl('javascript:alert(1)')).toBeNull()
   expect(externalHttpUrl('file:///tmp/private')).toBeNull()
 })
+
+test('a fenced code block is labelled with its language in the review view', () => {
+  const { container } = render(
+    <MarkdownRenderer source={'```typescript\nconst answer = 42\n```'} />,
+  )
+
+  const pre = container.querySelector('pre')
+  expect(pre?.getAttribute('data-language-label')).toBe('TypeScript')
+})
+
+test('an unlabelled fenced block carries no language label', () => {
+  const { container } = render(
+    <MarkdownRenderer source={'```\nplain\n```'} />,
+  )
+
+  expect(container.querySelector('pre')?.hasAttribute('data-language-label')).toBe(
+    false,
+  )
+})
