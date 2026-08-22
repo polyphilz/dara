@@ -8,7 +8,10 @@ import {
   type RichTextEditorHandle,
 } from '../../../src/markdown/RichTextEditor.tsx'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
-import { daraEditorSchema } from '../../../src/markdown/editor-schema.ts'
+import {
+  daraEditorSchema,
+  HeadingLevel,
+} from '../../../src/markdown/editor-schema.ts'
 import {
   parseDaraMarkdown,
   serializeDaraMarkdown,
@@ -647,6 +650,43 @@ describe('keyboard structure', () => {
 
     expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
     expect(view.state.doc.textContent).toBe('```')
+  })
+
+  test.each([
+    ['#', HeadingLevel.H1],
+    ['##', HeadingLevel.H2],
+    ['###', HeadingLevel.H3],
+  ] as const)('%s followed by Space starts heading level %s', (marker, level) => {
+    const { textbox, view } = controlledEditor('')
+
+    typeText(view, `${marker} Heading`)
+
+    expect(view.state.doc.firstChild?.type.name).toBe('heading')
+    expect(view.state.doc.firstChild?.attrs.level).toBe(level)
+    expect(textbox.querySelector(`h${level}`)?.textContent).toBe('Heading')
+    expect(serializeDaraMarkdown(view.state.doc)).toBe(`${marker} Heading`)
+  })
+
+  test.each(['####', '#####', '######'] as const)(
+    '%s followed by Space remains plain text',
+    (marker) => {
+      const { view } = controlledEditor('')
+
+      typeText(view, `${marker} Heading`)
+
+      expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
+      expect(view.state.doc.textContent).toBe(`${marker} Heading`)
+    },
+  )
+
+  test('Backspace immediately after heading conversion restores the typed prefix', () => {
+    const { textbox, view } = controlledEditor('')
+
+    typeText(view, '## ')
+    fireEvent.keyDown(textbox, { key: 'Backspace' })
+
+    expect(view.state.doc.firstChild?.type.name).toBe('paragraph')
+    expect(view.state.doc.textContent).toBe('## ')
   })
 
   test.each(['-', '*', '•'])(

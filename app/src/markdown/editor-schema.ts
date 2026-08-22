@@ -9,6 +9,15 @@ import {
 } from 'prosemirror-schema-list'
 import { tableNodes } from 'prosemirror-tables'
 
+export const HeadingLevel = {
+  H1: 1,
+  H2: 2,
+  H3: 3,
+} as const
+
+export type HeadingLevel =
+  (typeof HeadingLevel)[keyof typeof HeadingLevel]
+
 const codeBlock: NodeSpec = {
   ...basicSchema.spec.nodes.get('code_block'),
   attrs: {

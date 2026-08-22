@@ -235,6 +235,25 @@
   margin: 0.55em 0;
 }
 
+.dara-rich-text-content h1,
+.dara-rich-text-content h2,
+.dara-rich-text-content h3 {
+  margin: 1.1em 0 0.45em;
+  line-height: var(--type-leading-content-heading);
+}
+
+.dara-rich-text-content h1 {
+  font-size: 1.45em;
+}
+
+.dara-rich-text-content h2 {
+  font-size: 1.28em;
+}
+
+.dara-rich-text-content h3 {
+  font-size: 1.14em;
+}
+
 .dara-editor-image {
   position: relative;
   min-width: 10%;

@@ -73,7 +73,11 @@ import {
   initialImageDisplayWidth,
   type ImageRecord,
 } from '../media/image-reference.ts'
-import { daraEditorSchema } from './editor-schema.ts'
+import {
+  daraEditorSchema,
+  HeadingLevel,
+  type HeadingLevel as HeadingLevelValue,
+} from './editor-schema.ts'
 import {
   imageNodeView,
   pendingImageNodeView,
@@ -527,10 +531,14 @@ function codeBlockSelectAll(): Plugin {
 function editorInputRules() {
   const bulletList = daraEditorSchema.nodes.bullet_list!
   const codeBlock = daraEditorSchema.nodes.code_block!
+  const heading = daraEditorSchema.nodes.heading!
   const orderedList = daraEditorSchema.nodes.ordered_list!
   return inputRules({
     rules: [
       textblockTypeInputRule(/^```$/, codeBlock, { language: null }),
+      textblockTypeInputRule(/^(#{1,3})\s$/, heading, (match) => ({
+        level: headingLevelFromMarker(match[1]),
+      })),
       inlineCodeInputRule(),
       inlineMathInputRule(),
       wrappingInputRule(/^[-*•]\s$/, bulletList),
@@ -543,6 +551,17 @@ function editorInputRules() {
       ),
     ],
   })
+}
+
+function headingLevelFromMarker(marker: string | undefined): HeadingLevelValue {
+  switch (marker) {
+    case '##':
+      return HeadingLevel.H2
+    case '###':
+      return HeadingLevel.H3
+    default:
+      return HeadingLevel.H1
+  }
 }
 
 function inlineCodeInputRule(): InputRule {
