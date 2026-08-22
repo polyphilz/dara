@@ -103,10 +103,9 @@ const allowlist = [
   },
   {
     file: 'src/markdown/markdown-renderer.css',
-    pattern:
-      /^\s*font-size: (?:1\.45|1\.28|1\.14|0\.78|0\.84|0\.76|0\.8)em;$/,
+    pattern: /^\s*font-size: (?:0\.78|0\.84|0\.76|0\.8)em;$/,
     reason:
-      'Rendered Markdown hierarchy and inline constructs scale relative to the selected authored-content role.',
+      'Rendered Markdown inline constructs scale relative to the selected authored-content role.',
   },
   {
     file: 'src/markdown/rich-text-editor.css',

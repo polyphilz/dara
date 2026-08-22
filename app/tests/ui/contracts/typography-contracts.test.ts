@@ -230,7 +230,7 @@ describe('accepts the central typography system', () => {
   test('approved relative authored-content ratios pass', () => {
     expect(
       violations(
-        '.dara-markdown h1 {\n  font-size: 1.45em;\n}\n',
+        '.dara-markdown figcaption {\n  font-size: 0.78em;\n}\n',
         'src/markdown/markdown-renderer.css',
       ),
     ).toEqual([])

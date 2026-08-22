@@ -88,9 +88,11 @@ test('editor links open through the external URL command in WebKit', async ({
   await front.fill('Open docs')
   await front.press('ControlOrMeta+a')
   await editor.getByRole('button', { name: 'Link' }).click()
-  await editor
-    .getByRole('textbox', { name: 'Link URL' })
-    .fill('https://example.com/docs')
+  const linkInput = editor.getByRole('textbox', { name: 'Link URL' })
+  await expect(linkInput).toBeFocused()
+  await expect(linkInput).toHaveValue('https://')
+  await linkInput.fill('https://example.com/docs')
+  await expect(linkInput).toHaveValue('https://example.com/docs')
   await editor.getByRole('button', { name: 'Done' }).click()
 
   const link = front.locator('a[href="https://example.com/docs"]')
