@@ -529,9 +529,12 @@ function inlineCodeInputRule(): InputRule {
       if (!code) {
         return null
       }
-      return state.tr
+      const tr = state.tr
         .delete(start, start + 1)
         .addMark(start, end - 1, code.create())
+      // Closing the backtick leaves the caret just inside the new mark, so
+      // clear it from the stored marks and let typing continue as plain text.
+      return tr.removeStoredMark(code)
     },
     { inCodeMark: false },
   )
