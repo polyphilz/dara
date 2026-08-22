@@ -537,7 +537,6 @@ function MainWindowContent() {
           onSaved={() => {
             controller.notifyCardCreated()
             refreshHomeStats()
-            cancelCreate()
           }}
         />
       ) : mode === MainWindowMode.Browse ? (

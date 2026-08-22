@@ -262,8 +262,8 @@ test('Escape is inert in the persistent Add view and preserves the draft', async
   )
 })
 
-test('saving in the main editor creates the card and returns home', async () => {
-  const { findByRole, getByRole } = render(<MainWindow />)
+test('saving in Add resets in place for rapid card entry', async () => {
+  const { findByRole, getByRole, queryByRole } = render(<MainWindow />)
   fireEvent.click(await findByRole('button', { name: 'Add' }))
   await findByRole('region', { name: 'Add a card' })
 
@@ -286,9 +286,32 @@ test('saving in the main editor creates the card and returns home', async () => 
     )
   })
   expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(1)
+  await waitFor(() => {
+    expect(getByRole('textbox', { name: 'Front' }).textContent).toBe('')
+  })
+  expect(getByRole('textbox', { name: 'Back' }).textContent).toBe('')
   expect(
-    await findByRole('region', { name: 'Review activity' }),
-  ).toBeTruthy()
+    (getByRole('textbox', { name: /Source/ }) as HTMLInputElement).value,
+  ).toBe('')
+  expect(document.activeElement).toBe(getByRole('textbox', { name: 'Front' }))
+  expect(getByRole('region', { name: 'Add a card' })).toBeTruthy()
+  expect(queryByRole('region', { name: 'Review activity' })).toBeNull()
+
+  replaceEditorDocument(getByRole('textbox', { name: 'Front' }), 'second front')
+  replaceEditorDocument(getByRole('textbox', { name: 'Back' }), 'second back')
+  fireEvent.click(getByRole('button', { name: /Add ⌘↵/ }))
+
+  await waitFor(() => expect(mocks.createCardContent).toHaveBeenCalledTimes(2))
+  expect(mocks.createCardContent.mock.calls[1]?.[0]).toEqual({
+    backMd: 'second back',
+    frontMd: 'second front',
+    source: null,
+    type: CardContentType.Basic,
+  })
+  expect(mocks.createCardContent.mock.calls[1]?.[1]).not.toBe(
+    mocks.createCardContent.mock.calls[0]?.[1],
+  )
+  expect(mocks.notifyCardCreated).toHaveBeenCalledTimes(2)
   expect(mocks.showQuickAdd).not.toHaveBeenCalled()
 })
 
