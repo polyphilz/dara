@@ -2,7 +2,7 @@
   "name": "dara",
   "private": true,
   "version": "0.1.0",
-  "packageManager": "pnpm@10.4.0",
+  "packageManager": "pnpm@11.22.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -130,10 +130,5 @@
     "typescript": "~6.0.2",
     "vite": "^8.1.1",
     "vitest": "4.1.10"
-  },
-  "pnpm": {
-    "overrides": {
-      "@wdio/native-utils": "2.5.0"
-    }
   }
 }

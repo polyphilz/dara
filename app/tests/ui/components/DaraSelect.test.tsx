@@ -55,6 +55,9 @@ test('opens an app-owned listbox and supports keyboard selection', async () => {
   fireEvent.keyDown(trigger, { key: 'ArrowDown' })
   const listbox = getByRole('listbox', { name: 'Card type' })
   expect(listbox.classList.contains('dara-select-popover')).toBe(true)
+  expect(
+    Array.from(listbox.children).map((child) => child.getAttribute('role')),
+  ).toEqual(['option', 'option'])
   await waitFor(() => {
     expect(document.activeElement).toBe(
       getByRole('option', { name: 'Basic' }),

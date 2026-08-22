@@ -255,6 +255,34 @@ export function DaraSelect<Value extends string>({
   ]
     .filter(Boolean)
     .join(' ')
+  const optionButtons = visibleOptions.map((option, index) => {
+    const selected = option.value === value
+    return (
+      <DaraButton
+        aria-selected={selected}
+        className={
+          selected
+            ? 'dara-select-option dara-select-option-selected'
+            : 'dara-select-option'
+        }
+        key={option.value}
+        onClick={() => selectValue(option.value)}
+        ref={(element) => {
+          optionRefs.current[index] = element
+        }}
+        role="option"
+        size={DaraButtonSize.Custom}
+        tabIndex={selected ? 0 : -1}
+        type="button"
+        variant={DaraButtonVariant.Custom}
+      >
+        <span aria-hidden="true" className="dara-select-check">
+          {selected ? '✓' : ''}
+        </span>
+        {option.label}
+      </DaraButton>
+    )
+  })
 
   return (
     <>
@@ -316,40 +344,17 @@ export function DaraSelect<Value extends string>({
               {searchable && !visibleOptions.length && (
                 <p className="dara-select-empty">No matches</p>
               )}
-              <div
-                aria-label={searchable ? ariaLabel : undefined}
-                className={searchable ? 'dara-select-list' : undefined}
-                role={searchable ? 'listbox' : undefined}
-              >
-              {visibleOptions.map((option, index) => {
-                const selected = option.value === value
-                return (
-                  <DaraButton
-                    aria-selected={selected}
-                    className={
-                      selected
-                        ? 'dara-select-option dara-select-option-selected'
-                        : 'dara-select-option'
-                    }
-                    key={option.value}
-                    onClick={() => selectValue(option.value)}
-                    ref={(element) => {
-                      optionRefs.current[index] = element
-                    }}
-                    role="option"
-                    size={DaraButtonSize.Custom}
-                    tabIndex={selected ? 0 : -1}
-                    type="button"
-                    variant={DaraButtonVariant.Custom}
-                  >
-                    <span aria-hidden="true" className="dara-select-check">
-                      {selected ? '✓' : ''}
-                    </span>
-                    {option.label}
-                  </DaraButton>
-                )
-              })}
-              </div>
+              {searchable ? (
+                <div
+                  aria-label={ariaLabel}
+                  className="dara-select-list"
+                  role="listbox"
+                >
+                  {optionButtons}
+                </div>
+              ) : (
+                optionButtons
+              )}
             </div>
           </div>,
           document.body,
