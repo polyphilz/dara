@@ -385,6 +385,27 @@ describe('keyboard structure', () => {
     expect(serializeDaraMarkdown(view.state.doc)).toBe('`what what`')
   })
 
+  test('typing after a closed backtick pair leaves inline code', () => {
+    const { view } = controlledEditor('')
+
+    typeText(view, '`what what`')
+    typeText(view, ' after')
+
+    const code = daraEditorSchema.marks.code!
+    const codeEnd = 1 + 'what what'.length
+
+    expect(view.state.doc.textContent).toBe('what what after')
+    expect(view.state.doc.rangeHasMark(1, codeEnd, code)).toBe(true)
+    expect(
+      view.state.doc.rangeHasMark(
+        codeEnd,
+        view.state.doc.content.size - 1,
+        code,
+      ),
+    ).toBe(false)
+    expect(serializeDaraMarkdown(view.state.doc)).toBe('`what what` after')
+  })
+
   test('Backspace after inline-code conversion restores the literal backticks', () => {
     const { textbox, view } = controlledEditor('')
 
