@@ -127,6 +127,40 @@ test('toolbar formatting operates on the selection and preserves editor focus', 
   expect(getByRole('button', { name: 'Bold' }).getAttribute('aria-pressed')).toBe('true')
 })
 
+test('indent toolbar buttons nest and unnest the caret list item', () => {
+  const { getByRole, view } = controlledEditor('- first\n- second')
+  // The document restructures between steps, so anchor on the end of the doc
+  // (always inside the second item) rather than a fixed offset.
+  const caretInSecondItem = () =>
+    act(() => {
+      view.dispatch(
+        view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+      )
+      view.focus()
+    })
+
+  caretInSecondItem()
+  fireEvent.mouseDown(getByRole('button', { name: 'Increase indent' }))
+
+  expect(serializeDaraMarkdown(view.state.doc)).toBe('- first\n  - second')
+
+  caretInSecondItem()
+  fireEvent.mouseDown(getByRole('button', { name: 'Decrease indent' }))
+
+  expect(serializeDaraMarkdown(view.state.doc)).toBe('- first\n- second')
+})
+
+test('indent toolbar buttons are disabled outside a list', () => {
+  const { getByRole } = controlledEditor('plain paragraph')
+
+  expect(
+    getByRole('button', { name: 'Increase indent' }).hasAttribute('disabled'),
+  ).toBe(true)
+  expect(
+    getByRole('button', { name: 'Decrease indent' }).hasAttribute('disabled'),
+  ).toBe(true)
+})
+
 test('keyboard shortcuts toggle bold and italic marks', () => {
   const { textbox, view } = controlledEditor('word')
   act(() => {
@@ -142,6 +176,23 @@ test('keyboard shortcuts toggle bold and italic marks', () => {
   const serialized = serializeDaraMarkdown(view.state.doc)
   expect(serialized).toContain('**')
   expect(serialized).toContain('*')
+})
+
+test.each([
+  ['s', 'Notion-style ⇧⌘S'],
+  ['x', 'the original ⇧⌘X'],
+])('%s toggles strikethrough via %s', (key) => {
+  const { textbox, view } = controlledEditor('word')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.create(view.state.doc, 1, 5)),
+    )
+    view.focus()
+  })
+
+  fireEvent.keyDown(textbox, { key, metaKey: true, shiftKey: true })
+
+  expect(serializeDaraMarkdown(view.state.doc)).toBe('~~word~~')
 })
 
 test('link editing uses an app-owned Dara input', () => {
