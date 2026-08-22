@@ -2,7 +2,10 @@ import {
   BrowserHarnessSurface,
   BrowserScenarioId,
 } from '../harness/scenarios.ts'
+import type { DaraBrowserTestApi } from '../harness/ipc-driver.ts'
 import { expect, test } from '../fixtures/test.ts'
+import { CardContentType } from '../../../src/review/contracts.ts'
+import { MainWindowRoutePath } from '../../../src/windows/main/main-window-routes.ts'
 
 const ACTIVITY_LAYOUT_SAMPLE_COUNT = 4
 const ACTIVITY_LAYOUT_SAMPLES_KEY = '__daraActivityCalendarLayoutSamples'
@@ -110,4 +113,57 @@ test('Add protects a dirty draft while explicit Cancel discards it', async ({
   await page.getByRole('button', { name: 'Cancel' }).click()
   await expect(page.getByRole('region', { name: 'Review activity' })).toBeVisible()
   await expect(dialog).toBeHidden()
+})
+
+test('Add saves consecutive cards without leaving the fresh form', async ({
+  page,
+}) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewBasic}&surface=${BrowserHarnessSurface.Main}`,
+  )
+  await page.getByRole('button', { name: 'Add' }).click()
+  const form = page.getByRole('region', { name: 'Add a card' })
+  const front = form.getByRole('textbox', { name: 'Front' })
+  const back = form.getByRole('textbox', { name: 'Back' })
+  const source = form.getByRole('textbox', { name: /Source/ })
+
+  await front.fill('First question')
+  await back.fill('First answer')
+  await source.fill('First source')
+  await page.keyboard.press('Meta+Enter')
+
+  await expect(page).toHaveURL(new RegExp(`#${MainWindowRoutePath.Add}$`))
+  await expect(form).toBeVisible()
+  await expect(front).toHaveText('')
+  await expect(back).toHaveText('')
+  await expect(source).toHaveValue('')
+  await expect(front).toBeFocused()
+
+  await front.fill('Second question')
+  await back.fill('Second answer')
+  await page.keyboard.press('Meta+Enter')
+  await expect(front).toHaveText('')
+  await expect(front).toBeFocused()
+
+  const snapshot = await page.evaluate(() =>
+    (window as Window & { __DARA_BROWSER_TEST__: DaraBrowserTestApi })
+      .__DARA_BROWSER_TEST__.snapshot(),
+  )
+  expect(snapshot.cards.map(({ content }) => content)).toEqual([
+    {
+      backMd: 'First answer',
+      frontMd: 'First question',
+      source: 'First source',
+      type: CardContentType.Basic,
+    },
+    {
+      backMd: 'Second answer',
+      frontMd: 'Second question',
+      source: null,
+      type: CardContentType.Basic,
+    },
+  ])
+  expect(new Set(snapshot.cards.map(({ mediaLeaseId }) => mediaLeaseId)).size).toBe(
+    2,
+  )
 })

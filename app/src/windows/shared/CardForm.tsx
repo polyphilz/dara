@@ -306,6 +306,7 @@ export const CardForm = forwardRef<CardFormHandle, CardFormProps>(
           setSource('')
           setOcclusion(null)
           await onSaved()
+          focusPrimary()
         }
       } catch (cause) {
         setError(errorMessage(cause))
