@@ -52,6 +52,7 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type ReactNode,
 } from 'react'
 import { DaraButton } from '../components/DaraButton.tsx'
 import {
@@ -469,6 +470,7 @@ function editorKeyBindings(openLink: (view: EditorView) => void): Record<string,
       openLink(view)
       return true
     },
+    'Mod-Shift-s': toggleMark(daraEditorSchema.marks.strike!),
     'Mod-Shift-x': toggleMark(daraEditorSchema.marks.strike!),
     'Alt-ArrowLeft': resizeSelectedImage(-ImageDisplayWidthStep),
     'Alt-ArrowRight': resizeSelectedImage(ImageDisplayWidthStep),
@@ -592,7 +594,7 @@ function EditorToolbar({
 }) {
   const commandButton = (
     label: string,
-    shortLabel: string,
+    shortLabel: ReactNode,
     command: Command,
     active = false,
     shortcut?: string,
@@ -634,15 +636,10 @@ function EditorToolbar({
       )}
       {commandButton(
         'Strikethrough',
-        'S',
+        <span className="toolbar-strike">S</span>,
         toggleMark(daraEditorSchema.marks.strike!),
         markIsActive(view, 'strike'),
-      )}
-      {commandButton(
-        'Inline code',
-        '</>',
-        toggleMark(daraEditorSchema.marks.code!),
-        markIsActive(view, 'code'),
+        '⇧⌘S',
       )}
       <ToolbarButton
         active={markIsActive(view, 'link')}
@@ -651,51 +648,73 @@ function EditorToolbar({
         onPress={onLink}
         shortcut="⌘K"
       >
-        Link
+        <LinkIcon />
       </ToolbarButton>
       <span aria-hidden="true" className="toolbar-divider" />
       {commandButton(
         'Bulleted list',
-        '• List',
+        <ListIcon variant="bulleted" />,
         toggleList('bullet_list'),
         blockIsActive(view, 'bullet_list'),
       )}
       {commandButton(
         'Numbered list',
-        '1. List',
+        <ListIcon variant="numbered" />,
         toggleList('ordered_list'),
         blockIsActive(view, 'ordered_list'),
       )}
       {commandButton(
+        'Decrease indent',
+        <IndentIcon direction="decrease" />,
+        liftListItem(daraEditorSchema.nodes.list_item!),
+        false,
+        '⌘[',
+      )}
+      {commandButton(
+        'Increase indent',
+        <IndentIcon direction="increase" />,
+        sinkListItem(daraEditorSchema.nodes.list_item!),
+        false,
+        '⌘]',
+      )}
+      <span aria-hidden="true" className="toolbar-divider" />
+      {commandButton(
         'Block quote',
-        'Quote',
+        <QuoteIcon />,
         toggleBlock('blockquote'),
         blockIsActive(view, 'blockquote'),
       )}
       {commandButton(
+        'Inline code',
+        <InlineCodeIcon />,
+        toggleMark(daraEditorSchema.marks.code!),
+        markIsActive(view, 'code'),
+        '⌘E',
+      )}
+      {commandButton(
         'Code block',
-        'Code',
+        <CodeBlockIcon />,
         toggleTextBlock('code_block'),
         blockIsActive(view, 'code_block'),
       )}
       <CodeLanguageControl disabled={disabled} view={view} />
-      <span aria-hidden="true" className="toolbar-divider" />
       <ToolbarButton
         disabled={disabled || !view}
         label="Inline math"
         onPress={() => onMath(false)}
       >
-        ƒx
+        <span className="toolbar-math">fx</span>
       </ToolbarButton>
       <ToolbarButton
         disabled={disabled || !view}
         label="Display math"
         onPress={() => onMath(true)}
       >
-        ∑
+        <span className="toolbar-math-symbol">∑</span>
       </ToolbarButton>
-      {commandButton('Undo', '↶', undo, false, '⌘Z')}
-      {commandButton('Redo', '↷', redo, false, '⇧⌘Z')}
+      <span aria-hidden="true" className="toolbar-divider" />
+      {commandButton('Undo', <HistoryIcon direction="undo" />, undo, false, '⌘Z')}
+      {commandButton('Redo', <HistoryIcon direction="redo" />, redo, false, '⇧⌘Z')}
     </div>
   )
 }
@@ -725,6 +744,153 @@ function CodeLanguageControl({
   )
 }
 
+/**
+ * The familiar indent/outdent glyph: stacked text lines whose middle rows are
+ * indented, with a chevron pointing the way the indent moves.
+ */
+function IndentIcon({ direction }: { direction: 'decrease' | 'increase' }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="toolbar-icon"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <path d="M4 5h16" />
+      <path d="M11 10h9" />
+      <path d="M11 14h9" />
+      <path d="M4 19h16" />
+      <path
+        d={direction === 'increase' ? 'm4 9 3.5 3-3.5 3' : 'm7.5 9-3.5 3 3.5 3'}
+      />
+    </svg>
+  )
+}
+
+/** The familiar list glyphs: markers down the left, text rules to the right. */
+function ListIcon({ variant }: { variant: 'bulleted' | 'numbered' }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="toolbar-icon"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <path d="M10 5h10" />
+      <path d="M10 12h10" />
+      <path d="M10 19h10" />
+      {variant === 'bulleted' ? (
+        <>
+          <circle className="toolbar-icon-dot" cx="4.5" cy="5" r="1.5" />
+          <circle className="toolbar-icon-dot" cx="4.5" cy="12" r="1.5" />
+          <circle className="toolbar-icon-dot" cx="4.5" cy="19" r="1.5" />
+        </>
+      ) : (
+        <>
+          <path className="toolbar-icon-numeral" d="m3.5 3.6 1.3-.9v4.6" />
+          <path
+            className="toolbar-icon-numeral"
+            d="M3.5 10.5c.3-.8 1.9-.8 1.9.3 0 1-1.9 1.7-1.9 3h2.1"
+          />
+          <path
+            className="toolbar-icon-numeral"
+            d="M3.5 17.1c.4-.6 1.9-.6 1.9.4 0 .6-.6.8-1.1.8.6 0 1.2.3 1.2 1 0 1-1.5 1.2-2 .5"
+          />
+        </>
+      )}
+    </svg>
+  )
+}
+
+/** A curved arrow, doubling back the way the history step travels. */
+function HistoryIcon({ direction }: { direction: 'redo' | 'undo' }) {
+  return (
+    <svg
+      aria-hidden="true"
+      className="toolbar-icon"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      {direction === 'undo' ? (
+        <>
+          <path d="M4.5 10h9.5a4.75 4.75 0 1 1 0 9.5H9" />
+          <path d="m8.5 5.5-4 4.5 4 4.5" />
+        </>
+      ) : (
+        <>
+          <path d="M19.5 10H10a4.75 4.75 0 1 0 0 9.5H15" />
+          <path d="m15.5 5.5 4 4.5-4 4.5" />
+        </>
+      )}
+    </svg>
+  )
+}
+
+/** A horizontal chain link, the near-universal mark for inserting a link. */
+function LinkIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="toolbar-icon"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <path d="M10.5 8.5H7.8a3.5 3.5 0 0 0 0 7h2.7" />
+      <path d="M13.5 8.5h2.7a3.5 3.5 0 0 1 0 7h-2.7" />
+      <path d="M8.8 12h6.4" />
+    </svg>
+  )
+}
+
+/** Opening double quotation marks: a round bowl with a tail sweeping up. */
+function QuoteIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="toolbar-icon"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <circle className="toolbar-icon-solid" cx="7.2" cy="14.4" r="3.2" />
+      <circle className="toolbar-icon-solid" cx="16.4" cy="14.4" r="3.2" />
+      <path className="toolbar-icon-tail" d="M5 12.8q0-5.2 3.5-6.9" />
+      <path className="toolbar-icon-tail" d="M14.2 12.8q0-5.2 3.5-6.9" />
+    </svg>
+  )
+}
+
+/** Bare angle brackets: code that lives inside a line of prose. */
+function InlineCodeIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="toolbar-icon"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <path d="m8 8.5-3.5 3.5 3.5 3.5" />
+      <path d="m16 8.5 3.5 3.5-3.5 3.5" />
+      <path d="m13.4 7-2.8 10" />
+    </svg>
+  )
+}
+
+/** The same brackets, framed: code that owns its own block. */
+function CodeBlockIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      className="toolbar-icon"
+      focusable="false"
+      viewBox="0 0 24 24"
+    >
+      <rect height="16" rx="2.5" width="19" x="2.5" y="4" />
+      <path className="toolbar-icon-hairline" d="m9.6 9.4-2.6 2.6 2.6 2.6" />
+      <path className="toolbar-icon-hairline" d="m14.4 9.4 2.6 2.6-2.6 2.6" />
+    </svg>
+  )
+}
+
 function ToolbarButton({
   active = false,
   children,
@@ -734,7 +900,7 @@ function ToolbarButton({
   shortcut,
 }: {
   active?: boolean
-  children: string
+  children: ReactNode
   disabled: boolean
   label: string
   onPress: () => void

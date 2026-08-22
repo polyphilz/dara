@@ -66,6 +66,87 @@
   cursor: pointer;
 }
 
+/* Buttons vertically centre their own content, so the icon only needs sizing
+   and a baseline nudge to sit level with the neighbouring text labels. */
+.rich-text-toolbar .toolbar-icon {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+  vertical-align: middle;
+}
+
+.rich-text-toolbar .toolbar-icon-dot {
+  fill: currentColor;
+  stroke: none;
+}
+
+/* Numerals are only a few pixels tall, so they need a lighter stroke than the
+   text rules or their counters fill in and the digits read as a smudge. */
+.rich-text-toolbar .toolbar-icon-numeral {
+  stroke-width: 1.4;
+}
+
+.rich-text-toolbar .toolbar-icon-hairline {
+  stroke-width: 1.6;
+}
+
+.rich-text-toolbar .toolbar-icon-tail {
+  stroke-width: 2.6;
+}
+
+.rich-text-toolbar .toolbar-icon-solid {
+  fill: currentColor;
+  stroke: none;
+}
+
+/*
+ * The font's own strikeout metric sits below the middle of a capital S, so the
+ * rule is drawn as a pseudo-element centred on the glyph instead.
+ */
+.rich-text-toolbar .toolbar-strike {
+  position: relative;
+  display: inline-block;
+}
+
+.rich-text-toolbar .toolbar-strike::after {
+  position: absolute;
+  top: 50%;
+  right: -1.5px;
+  left: -1.5px;
+  height: 1.5px;
+  background: currentColor;
+  content: '';
+  transform: translateY(-50%);
+}
+
+/*
+ * Both math buttons are labelled in the faces KaTeX renders their output in:
+ * KaTeX_Math italic for variables, and the Size1 face KaTeX uses for an inline
+ * \sum operator.
+ */
+.rich-text-toolbar .toolbar-math {
+  font-family: KaTeX_Math, 'Times New Roman', serif;
+  font-size: var(--type-size-body);
+  font-style: italic;
+}
+
+/*
+ * KaTeX_Size1 ships a single normal weight and base.css disables font
+ * synthesis, so the operator is weighted by stroking its outline instead. That
+ * keeps it in step with the 2px icons rather than reading as hairline type.
+ */
+.rich-text-toolbar .toolbar-math-symbol {
+  font-family: KaTeX_Size1, KaTeX_Main, 'Times New Roman', serif;
+  font-size: var(--type-size-caption);
+  font-style: normal;
+  -webkit-text-stroke: 0.5px currentColor;
+}
+
 .rich-text-toolbar .toolbar-button:hover:not(:disabled),
 .rich-text-toolbar .toolbar-button-active {
   color: var(--accent);
