@@ -419,7 +419,7 @@
 }
 
 .occlusion-review-mask {
-  opacity: 0.96;
+  opacity: 1;
 }
 
 .occlusion-review-overlay {
