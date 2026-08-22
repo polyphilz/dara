@@ -80,7 +80,7 @@ export function normalizeCodeLanguageLabel(label: string): string | null {
 }
 
 export function codeLanguageDisplayName(language: string | null): string {
-  return language ? (languageDisplayNames[language] ?? language) : 'Plain code'
+  return language ? (languageDisplayNames[language] ?? language) : 'Plain text'
 }
 
 export const codeLanguageAliases = Object.fromEntries(

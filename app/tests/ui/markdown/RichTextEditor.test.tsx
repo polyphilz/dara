@@ -336,7 +336,7 @@ test('a display equation keeps a paragraph that still has text', () => {
   expect(view.state.doc.firstChild?.textContent).toBe('has text')
 })
 
-test('an existing math node reopens the editor with its formula', () => {
+test('an existing math node reopens the editor with its formula', async () => {
   const { container, getByRole } = controlledEditor('before $E = mc^2$ after')
 
   const node = container.querySelector<HTMLElement>('.dara-math-inline')
@@ -345,7 +345,8 @@ test('an existing math node reopens the editor with its formula', () => {
 
   const input = getByRole('textbox', { name: 'Formula' }) as HTMLInputElement
   expect(input.value).toBe('E = mc^2')
-  expect(document.activeElement).toBe(input)
+  // Focus lands a frame later so ProseMirror cannot take it back.
+  await waitFor(() => expect(document.activeElement).toBe(input))
   // Caret at the end, nothing selected.
   expect(input.selectionStart).toBe(input.value.length)
   expect(input.selectionEnd).toBe(input.value.length)
@@ -389,7 +390,9 @@ test('code blocks lazy-load CodeMirror and synchronize code changes', async () =
   fireEvent.click(getByRole('option', { name: 'Python' }))
   expect(serializeDaraMarkdown(view.state.doc)).toContain('```python')
   await waitFor(() => {
-    const codeBlock = container.querySelector('.dara-code-block-editor')
+    // The language data now lives on the node view wrapper that holds both
+    // the header and CodeMirror.
+    const codeBlock = container.querySelector('.dara-code-block')
     expect(
       codeBlock,
       container.querySelector('.rich-text-editor-surface')?.innerHTML,
@@ -760,3 +763,62 @@ function typeText(view: ReturnType<typeof editorView>, text: string) {
     }
   }
 }
+
+test('the code block picker filters by language alias', async () => {
+  const { container, findByRole, getAllByRole, getByRole } = controlledEditor(
+    '```text\nvalue\n```',
+  )
+  await waitFor(() => {
+    expect(container.querySelector('.dara-code-block')).not.toBeNull()
+  })
+
+  fireEvent.click(await findByRole('button', { name: /^Code language:/ }))
+  const search = getByRole('textbox', { name: 'Search code language' })
+  // The popover focuses the search box on the next animation frame.
+  await waitFor(() => expect(document.activeElement).toBe(search))
+
+  fireEvent.change(search, { target: { value: 'ts' } })
+
+  expect(getAllByRole('option').map((option) => option.textContent)).toEqual([
+    'TypeScript',
+    'TSX',
+  ])
+
+  // One ArrowDown reaches the list; the search box does not eat a press.
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+  expect(document.activeElement).toBe(getAllByRole('option')[0])
+})
+
+test('the code block picker search suppresses platform text prediction', async () => {
+  const { container, findByRole, getByRole } = controlledEditor(
+    '```text\nvalue\n```',
+  )
+  await waitFor(() => {
+    expect(container.querySelector('.dara-code-block')).not.toBeNull()
+  })
+
+  fireEvent.click(await findByRole('button', { name: /^Code language:/ }))
+  const search = getByRole('textbox', { name: 'Search code language' })
+
+  expect(search.getAttribute('autocomplete')).toBe('off')
+  expect(search.getAttribute('autocorrect')).toBe('off')
+  expect(search.getAttribute('spellcheck')).toBe('false')
+  expect(search.getAttribute('writingsuggestions')).toBe('false')
+})
+
+test('the code block copy button writes the block text to the clipboard', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined)
+  vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText } })
+  const { container, findByRole } = controlledEditor(
+    '```text\nconst answer = 42\n```',
+  )
+  await waitFor(() => {
+    expect(container.querySelector('.dara-code-block')).not.toBeNull()
+  })
+
+  fireEvent.click(await findByRole('button', { name: 'Copy code' }))
+
+  expect(writeText).toHaveBeenCalledWith('const answer = 42')
+  expect(await findByRole('button', { name: 'Code copied' })).not.toBeNull()
+  vi.unstubAllGlobals()
+})

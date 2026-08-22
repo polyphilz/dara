@@ -7,10 +7,13 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { DaraButton } from './DaraButton.tsx'
+import { DARA_WRITING_ASSISTANCE_PROPS } from './writing-assistance.ts'
 import { DaraButtonSize, DaraButtonVariant } from './dara-button-types.ts'
 import './dara-select.css'
 
 export interface DaraSelectOption<Value extends string> {
+  /** Extra terms the search box should match, such as language aliases. */
+  keywords?: readonly string[]
   label: string
   value: Value
 }
@@ -25,6 +28,9 @@ interface DaraSelectProps<Value extends string> {
   onSelect: (value: Value) => void
   options: readonly DaraSelectOption<Value>[]
   popoverClassName?: string
+  /** Opt-in filter box above the options; other selects are unaffected. */
+  searchable?: boolean
+  searchPlaceholder?: string
   tabIndex?: number
   title?: string
   triggerClassName?: string
@@ -51,6 +57,8 @@ export function DaraSelect<Value extends string>({
   onSelect,
   options,
   popoverClassName,
+  searchable = false,
+  searchPlaceholder = 'Search',
   tabIndex = 0,
   title = ariaLabel,
   triggerClassName,
@@ -58,22 +66,33 @@ export function DaraSelect<Value extends string>({
 }: DaraSelectProps<Value>) {
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<MenuPosition | null>(null)
+  const [query, setQuery] = useState('')
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const searchRef = useRef<HTMLInputElement>(null)
   const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
   const menuId = useId()
+  const visibleOptions = filterOptions(options, searchable ? query : '')
   const selectedIndex = Math.max(
     0,
-    options.findIndex((option) => option.value === value),
+    visibleOptions.findIndex((option) => option.value === value),
   )
+  const initialFocusRef = useRef({ searchable, selectedIndex })
 
+  // This effect establishes focus when the menu opens. Filtering must not
+  // schedule another frame that can steal focus back from an option.
   useEffect(() => {
     if (!open) {
       return
     }
 
     const focusFrame = requestAnimationFrame(() => {
-      optionRefs.current[selectedIndex]?.focus()
+      const initialFocus = initialFocusRef.current
+      if (initialFocus.searchable) {
+        searchRef.current?.focus()
+        return
+      }
+      optionRefs.current[initialFocus.selectedIndex]?.focus()
     })
     const closeOnOutsidePointer = (event: PointerEvent) => {
       const target = event.target
@@ -90,7 +109,7 @@ export function DaraSelect<Value extends string>({
       cancelAnimationFrame(focusFrame)
       document.removeEventListener('pointerdown', closeOnOutsidePointer, true)
     }
-  }, [open, selectedIndex])
+  }, [open])
 
   const showMenu = () => {
     const trigger = triggerRef.current
@@ -100,6 +119,8 @@ export function DaraSelect<Value extends string>({
     const bounds = trigger.getBoundingClientRect()
     const fitsBelow =
       bounds.bottom + MENU_GAP + menuHeight <= window.innerHeight
+    initialFocusRef.current = { searchable, selectedIndex }
+    setQuery('')
     setPosition({
       left: Math.max(
         VIEWPORT_MARGIN,
@@ -157,6 +178,29 @@ export function DaraSelect<Value extends string>({
     }
   }
 
+  const handleSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      closeAndReturn()
+      return
+    }
+    if (event.key === 'Enter') {
+      const option = visibleOptions[0]
+      if (option) {
+        event.preventDefault()
+        event.stopPropagation()
+        selectValue(option.value)
+      }
+      return
+    }
+    if (event.key === 'ArrowDown') {
+      event.preventDefault()
+      event.stopPropagation()
+      optionRefs.current[0]?.focus()
+    }
+  }
+
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const current = optionRefs.current.indexOf(
       document.activeElement as HTMLButtonElement,
@@ -172,7 +216,7 @@ export function DaraSelect<Value extends string>({
       return
     }
     if (event.key === 'Enter' || event.key === ' ') {
-      const option = options[current]
+      const option = visibleOptions[current]
       if (option) {
         event.preventDefault()
         event.stopPropagation()
@@ -185,14 +229,17 @@ export function DaraSelect<Value extends string>({
     }
     event.preventDefault()
     event.stopPropagation()
+    if (!visibleOptions.length) {
+      return
+    }
     const next =
       event.key === 'Home'
         ? 0
         : event.key === 'End'
-          ? options.length - 1
+          ? visibleOptions.length - 1
           : event.key === 'ArrowDown'
-            ? (current + 1 + options.length) % options.length
-            : (current - 1 + options.length) % options.length
+            ? (current + 1 + visibleOptions.length) % visibleOptions.length
+            : (current - 1 + visibleOptions.length) % visibleOptions.length
     optionRefs.current[next]?.focus()
   }
 
@@ -201,7 +248,11 @@ export function DaraSelect<Value extends string>({
   const triggerClasses = ['dara-select-trigger', triggerClassName]
     .filter(Boolean)
     .join(' ')
-  const popoverClasses = ['dara-select-popover', popoverClassName]
+  const popoverClasses = [
+    'dara-select-popover',
+    searchable ? 'dara-select-popover-searchable' : null,
+    popoverClassName,
+  ]
     .filter(Boolean)
     .join(' ')
 
@@ -241,15 +292,36 @@ export function DaraSelect<Value extends string>({
             role="region"
           >
             <div
-              aria-label={ariaLabel}
+              aria-label={searchable ? undefined : ariaLabel}
               className={popoverClasses}
               id={menuId}
               onKeyDown={handleMenuKeyDown}
               ref={menuRef}
-              role="listbox"
+              role={searchable ? undefined : 'listbox'}
               style={{ ...position, width: menuWidth, maxHeight: menuHeight }}
             >
-              {options.map((option, index) => {
+              {searchable && (
+                <input
+                  {...DARA_WRITING_ASSISTANCE_PROPS}
+                  aria-label={`Search ${ariaLabel.toLowerCase()}`}
+                  className="dara-select-search"
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder={searchPlaceholder}
+                  ref={searchRef}
+                  type="text"
+                  value={query}
+                />
+              )}
+              {searchable && !visibleOptions.length && (
+                <p className="dara-select-empty">No matches</p>
+              )}
+              <div
+                aria-label={searchable ? ariaLabel : undefined}
+                className={searchable ? 'dara-select-list' : undefined}
+                role={searchable ? 'listbox' : undefined}
+              >
+              {visibleOptions.map((option, index) => {
                 const selected = option.value === value
                 return (
                   <DaraButton
@@ -277,10 +349,29 @@ export function DaraSelect<Value extends string>({
                   </DaraButton>
                 )
               })}
+              </div>
             </div>
           </div>,
           document.body,
         )}
     </>
+  )
+}
+
+function filterOptions<Value extends string>(
+  options: readonly DaraSelectOption<Value>[],
+  query: string,
+): readonly DaraSelectOption<Value>[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) {
+    return options
+  }
+  return options.filter(
+    (option) =>
+      option.label.toLowerCase().includes(needle) ||
+      option.value.toLowerCase().includes(needle) ||
+      option.keywords?.some((keyword) =>
+        keyword.toLowerCase().includes(needle),
+      ),
   )
 }

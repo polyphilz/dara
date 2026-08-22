@@ -40,7 +40,7 @@ test('code-language listbox survives a held pointer click and applies selection'
   await editor.getByRole('button', { name: 'Code block' }).click()
 
   const language = editor.getByRole('button', {
-    name: 'Code language: Plain code',
+    name: 'Code language: Plain text',
   })
   await language.click({ delay: 75 })
   const listbox = page.getByRole('listbox', { name: 'Code language' })
@@ -50,4 +50,73 @@ test('code-language listbox survives a held pointer click and applies selection'
   await expect(
     editor.getByRole('button', { name: 'Code language: TypeScript' }),
   ).toBeVisible()
+})
+
+test('code-block Command-A selection hugs text and blank lines', async ({ page }) => {
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const front = page.getByRole('textbox', { name: 'Front' })
+  await front.click()
+  await page.keyboard.type('```')
+  await page.keyboard.type('first line')
+  await page.keyboard.press('Enter')
+  await page.keyboard.press('Enter')
+  await page.keyboard.type('second longer line')
+
+  const code = page.locator('.dara-code-block').first()
+  const lines = code.locator('.cm-line')
+  await expect(lines).toHaveCount(3)
+  await page.keyboard.press('ControlOrMeta+a')
+
+  const selectionMetrics = await code.evaluate((block) => {
+    const content = block.querySelector<HTMLElement>('.cm-content')
+    const codeLines = Array.from(
+      block.querySelectorAll<HTMLElement>('.cm-line'),
+    )
+    if (!content || codeLines.length !== 3) {
+      throw new Error('Expected a three-line CodeMirror document')
+    }
+    return {
+      blankLineWidth: codeLines[1].getBoundingClientRect().width,
+      contentWidth: content.getBoundingClientRect().width,
+      selectionColor: getComputedStyle(
+        codeLines[0],
+        '::selection',
+      ).backgroundColor,
+      textLineWidth: codeLines[0].getBoundingClientRect().width,
+    }
+  })
+
+  expect(selectionMetrics.textLineWidth).toBeLessThan(
+    selectionMetrics.contentWidth,
+  )
+  expect(selectionMetrics.blankLineWidth).toBeGreaterThan(0)
+  expect(selectionMetrics.blankLineWidth).toBeLessThan(
+    selectionMetrics.textLineWidth,
+  )
+  expect(selectionMetrics.selectionColor).toBe('rgb(41, 59, 84)')
+})
+
+test('Tab indents inside a code block and Escape releases focus', async ({ page }) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const front = page.getByRole('textbox', { name: 'Front' })
+  await front.click()
+  await page.keyboard.type('```')
+  await page.keyboard.type('pass')
+  const code = page.locator('.dara-code-block-editor .cm-content').first()
+  await expect(code).toBeVisible()
+
+  await page.keyboard.press('Tab')
+  await expect(code).toHaveText('  pass')
+  await page.keyboard.press('Shift+Tab')
+  await expect(code).toHaveText('pass')
+
+  await page.keyboard.press('Escape')
+  await expect(
+    page.locator('.dara-code-block-editor .cm-editor.cm-focused'),
+  ).toHaveCount(0)
 })

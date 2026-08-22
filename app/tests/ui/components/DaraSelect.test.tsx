@@ -16,6 +16,20 @@ const options = [
   { label: 'Cloze', value: TestValue.Cloze },
 ] as const
 
+const LanguageValue = {
+  Java: 'java',
+  JavaScript: 'javascript',
+  Python: 'python',
+} as const
+
+type LanguageValue = (typeof LanguageValue)[keyof typeof LanguageValue]
+
+const languageOptions = [
+  { label: 'Java', value: LanguageValue.Java },
+  { label: 'JavaScript', value: LanguageValue.JavaScript },
+  { label: 'Python', value: LanguageValue.Python },
+] as const
+
 test('opens an app-owned listbox and supports keyboard selection', async () => {
   const onSelect = vi.fn()
 
@@ -56,6 +70,32 @@ test('opens an app-owned listbox and supports keyboard selection', async () => {
   expect(
     getByRole('button', { name: 'Card type: Cloze' }),
   ).toBeTruthy()
+})
+
+test('one ArrowDown keeps focus on the first filtered option', async () => {
+  const { getByRole } = render(
+    <DaraSelect<LanguageValue>
+      ariaLabel="Code language"
+      onSelect={vi.fn()}
+      options={languageOptions}
+      searchable
+      value={LanguageValue.Python}
+    />,
+  )
+
+  fireEvent.click(
+    getByRole('button', { name: 'Code language: Python' }),
+  )
+  const search = getByRole('textbox', { name: 'Search code language' })
+  await waitFor(() => expect(document.activeElement).toBe(search))
+
+  fireEvent.change(search, { target: { value: 'jav' } })
+  fireEvent.keyDown(search, { key: 'ArrowDown' })
+
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  expect(document.activeElement).toBe(
+    getByRole('option', { name: 'Java' }),
+  )
 })
 
 test('Escape closes the listbox and returns focus to its trigger', async () => {

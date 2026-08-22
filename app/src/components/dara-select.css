@@ -89,7 +89,7 @@
 }
 
 .dara-select-option:hover,
-.dara-select-option:focus-visible,
+.dara-select-option:focus,
 .dara-select-option-selected {
   outline: none;
   color: inherit;
@@ -114,4 +114,55 @@
     color: #f5f1ea;
     background: #292624;
   }
+}
+
+.dara-select-search {
+  width: 100%;
+  padding: 7px 8px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  outline: none;
+  color: var(--ink);
+  background: transparent;
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-control-value);
+  line-height: var(--type-leading-body);
+}
+
+.dara-select-search::placeholder {
+  color: var(--muted);
+}
+
+/* The search box stays put while only the options scroll. */
+.dara-select-popover-searchable {
+  padding-top: 0;
+  overflow: hidden;
+}
+
+.dara-select-popover-searchable .dara-select-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  width: calc(100% + 10px);
+  margin: 0 -5px;
+  padding: 8px 9px;
+  background: inherit;
+}
+
+.dara-select-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 3px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.dara-select-empty {
+  margin: 0;
+  padding: 10px 9px;
+  color: var(--muted);
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }

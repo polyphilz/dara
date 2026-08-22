@@ -1,6 +1,7 @@
 import {
   Children,
   Component,
+  isValidElement,
   useMemo,
   type ErrorInfo,
   type MouseEvent,
@@ -12,6 +13,7 @@ import {
   localMediaUrl,
   parseImageReferenceToken,
 } from '../media/image-reference.ts'
+import { codeLanguageDisplayName } from './languages.ts'
 import { rehypePlugins, remarkPlugins } from './renderer-config.ts'
 import { externalHttpUrl, markdownUrlTransform } from './url-policy.ts'
 
@@ -49,6 +51,19 @@ function rendererComponents(
   openExternalUrl: (url: string) => Promise<void> | void,
 ): Components {
   return {
+    // Read-only counterpart to the editor's header: the language, no controls.
+    pre({ children }) {
+      const language = codeBlockLanguage(children)
+      return (
+        <pre
+          data-language-label={
+            language ? codeLanguageDisplayName(language) : undefined
+          }
+        >
+          {children}
+        </pre>
+      )
+    },
     a({ children, href }) {
       const url = externalHttpUrl(href)
       if (!url) {
@@ -142,4 +157,17 @@ class MarkdownErrorBoundary extends Component<
     }
     return this.props.children
   }
+}
+
+function codeBlockLanguage(children: ReactNode): string | null {
+  for (const child of Children.toArray(children)) {
+    if (!isValidElement<{ className?: string }>(child)) {
+      continue
+    }
+    const match = /(?:^|\s)language-([\w+-]+)/.exec(child.props.className ?? '')
+    if (match?.[1]) {
+      return match[1]
+    }
+  }
+  return null
 }

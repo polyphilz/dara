@@ -10,8 +10,21 @@ test('shared listbox supports keyboard open, selection, Escape, and focus return
   await page.keyboard.press('Enter')
   const listbox = page.getByRole('listbox', { name: 'Catalog choice' })
   await expect(listbox).toBeVisible()
-  await expect(page.getByRole('option', { name: 'Second option' })).toBeFocused()
+  const selectedOption = page.getByRole('option', { name: 'Second option' })
+  const nextOption = page.getByRole('option', { name: 'Third option' })
+  await expect(selectedOption).toBeFocused()
+  const selectedHighlight = await selectedOption.evaluate(
+    (option) => getComputedStyle(option).backgroundColor,
+  )
   await page.keyboard.press('ArrowDown')
+  await expect(nextOption).toBeFocused()
+  await expect
+    .poll(() =>
+      nextOption.evaluate(
+        (option) => getComputedStyle(option).backgroundColor,
+      ),
+    )
+    .toBe(selectedHighlight)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('button', { name: 'Catalog choice: Third option' })).toBeVisible()
 

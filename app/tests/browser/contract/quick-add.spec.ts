@@ -11,3 +11,46 @@ test('Quick Add editor focus and real key events work in WebKit', async ({ page 
   await page.keyboard.press('Tab')
   await expect(page.getByRole('textbox', { name: 'Back' })).toBeFocused()
 })
+
+test('code-block indentation renders one WebKit caret at the indent', async ({ page }) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const front = page.getByRole('textbox', { name: 'Front' })
+  await front.click()
+  await page.keyboard.type('```')
+  await page.keyboard.type('first line')
+  await page.keyboard.press('Enter')
+
+  const code = page.locator('.dara-code-block-editor .cm-content').first()
+  await expect(code).toBeVisible()
+  await page.keyboard.press('Tab')
+  await page.keyboard.press('Shift+Tab')
+  await page.keyboard.press('Tab')
+
+  const cursor = page.locator('.cm-cursor-primary')
+  await expect(cursor).toHaveCount(1)
+  const caret = await code.evaluate((content) => {
+    const cursorElement = content
+      .closest('.cm-editor')
+      ?.querySelector<HTMLElement>('.cm-cursor-primary')
+    const indentedLine = content.querySelectorAll<HTMLElement>('.cm-line')[1]
+    if (!cursorElement || !indentedLine) {
+      throw new Error('Expected an indented line and CodeMirror cursor')
+    }
+    const cursorBounds = cursorElement.getBoundingClientRect()
+    const lineBounds = indentedLine.getBoundingClientRect()
+    return {
+      cursorCount: content
+        .closest('.cm-editor')
+        ?.querySelectorAll('.cm-cursor-primary').length,
+      cursorLeft: cursorBounds.left,
+      lineLeft: lineBounds.left,
+      nativeCaretColor: getComputedStyle(content).caretColor,
+    }
+  })
+
+  expect(caret.cursorCount).toBe(1)
+  expect(caret.cursorLeft).toBeGreaterThan(caret.lineLeft)
+  expect(caret.nativeCaretColor).toBe('rgba(0, 0, 0, 0)')
+})
