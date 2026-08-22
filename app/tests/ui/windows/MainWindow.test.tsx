@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   listen: vi.fn(),
   notifyCardCreated: vi.fn(),
   notifyClockChanged: vi.fn(),
+  openExternalUrl: vi.fn(),
   refresh: vi.fn(),
   reveal: vi.fn(),
   renewMediaLease: vi.fn(),
@@ -61,7 +62,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 vi.mock('../../../src/lib/native.ts', () => ({
-  native: { showQuickAdd: mocks.showQuickAdd },
+  native: {
+    openExternalUrl: mocks.openExternalUrl,
+    showQuickAdd: mocks.showQuickAdd,
+  },
 }))
 
 vi.mock('../../../src/media/gateway.ts', () => ({

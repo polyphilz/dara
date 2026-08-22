@@ -500,11 +500,11 @@
 }
 
 /*
- * The math editor is a single-line popover floating over the prose rather than
- * a panel that reflows it. It keeps the .formula-dialog class so Quick Add's
- * Escape allowlist still recognises it.
+ * Inline editor controls float over the prose rather than reflowing the form.
+ * They keep the .formula-dialog class so Quick Add's Escape allowlist still
+ * recognises them.
  */
-.formula-dialog-compact {
+.editor-inline-popover {
   position: absolute;
   z-index: 40;
   width: min(400px, calc(100% - 20px));
@@ -520,7 +520,7 @@
   box-shadow: 0 10px 28px rgba(24, 23, 22, 0.22);
 }
 
-.formula-dialog-compact > input {
+.editor-inline-popover > input {
   flex: 1;
   min-width: 0;
 }
@@ -528,13 +528,6 @@
 .formula-done-key {
   margin-left: 6px;
   opacity: 0.75;
-}
-
-.formula-dialog-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
 }
 
 .formula-dialog > input {
@@ -555,18 +548,15 @@
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
-.formula-dialog-actions {
-  display: flex;
-  align-items: center;
-  gap: 5px;
+.link-dialog-compact {
+  flex-wrap: wrap;
 }
 
-.formula-dialog-actions button:hover:not(:disabled) {
-  border-color: var(--accent);
-}
-
-.formula-dialog-actions {
-  justify-content: flex-end;
+.link-dialog-error {
+  flex: 1 0 100%;
+  color: var(--text-warning);
+  font-size: var(--type-size-caption);
+  line-height: var(--type-leading-caption);
 }
 
 :root[data-appearance='DARK'] .rich-text-editor {

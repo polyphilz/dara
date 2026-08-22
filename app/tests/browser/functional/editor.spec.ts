@@ -1,4 +1,5 @@
 import { CardContentType } from '../../../src/review/contracts.ts'
+import { DaraIpcCommand } from '../../../src/lib/tauri-contracts.ts'
 import type { DaraBrowserTestApi } from '../harness/ipc-driver.ts'
 import { BrowserScenarioId } from '../harness/scenarios.ts'
 import { expect, test } from '../fixtures/test.ts'
@@ -83,6 +84,48 @@ test('image toolbar button opens an image-only file chooser', async ({
     'accept',
     'image/*',
   )
+})
+
+test('links use a compact editor, reveal their URL, and open externally', async ({
+  page,
+}) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const editor = page.getByTestId('front-editor')
+  const front = editor.getByRole('textbox', { name: 'Front' })
+  await front.fill('Open docs')
+  await front.press('ControlOrMeta+a')
+  await editor.getByRole('button', { name: 'Link' }).click()
+
+  const dialog = editor.getByRole('dialog', { name: 'Link editor' })
+  await expect(dialog).toHaveClass(/editor-inline-popover/)
+  const input = dialog.getByRole('textbox', { name: 'Link URL' })
+  await expect(input).toBeFocused()
+  await input.fill('https://example.com/docs?q=dara')
+  await dialog.getByRole('button', { name: 'Done' }).click()
+
+  const link = front.getByRole('link', { name: 'Open docs' })
+  const presentation = await link.evaluate((element) => ({
+    cursor: getComputedStyle(element).cursor,
+    preview: getComputedStyle(element, '::after').content,
+  }))
+  expect(presentation.cursor).toBe('pointer')
+  expect(presentation.preview).toContain('https://example.com/docs?q=dara')
+
+  await link.click()
+  await expect.poll(async () => {
+    const snapshot = await page.evaluate(() =>
+      (window as Window & { __DARA_BROWSER_TEST__: DaraBrowserTestApi })
+        .__DARA_BROWSER_TEST__.snapshot(),
+    )
+    return snapshot.commands.find(
+      ({ command }) => command === DaraIpcCommand.OpenExternalUrl,
+    )
+  }).toEqual({
+    command: DaraIpcCommand.OpenExternalUrl,
+    payload: { url: 'https://example.com/docs?q=dara' },
+  })
 })
 
 test('code-language listbox survives a held pointer click and applies selection', async ({ page }) => {

@@ -1,0 +1,60 @@
+:is(.dara-rich-text-content, .dara-markdown) a {
+  position: relative;
+  border-radius: 3px;
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.14em;
+}
+
+:is(.dara-rich-text-content, .dara-markdown) a:hover {
+  background: var(--accent-soft);
+}
+
+:is(.dara-rich-text-content, .dara-markdown) a:focus-visible {
+  outline: 3px solid var(--accent-soft);
+  outline-offset: 2px;
+}
+
+/* A URL glance, not a fetched preview: this stays instant, private, and
+   useful while writing or reviewing a card. */
+:is(.dara-rich-text-content, .dara-markdown) a::after {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 7px);
+  left: 0;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 48px));
+  padding: 5px 8px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: linear-gradient(var(--surface), var(--surface)), var(--canvas);
+  box-shadow: 0 7px 20px rgba(24, 23, 22, 0.2);
+  content: "↗  " attr(href);
+  font-family: var(--font-family-app);
+  font-size: var(--type-size-caption);
+  font-weight: var(--type-weight-body);
+  line-height: var(--type-leading-caption);
+  opacity: 0;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  transform: translateY(-3px);
+  transition:
+    opacity 100ms ease,
+    transform 100ms ease,
+    visibility 100ms ease;
+  -webkit-user-select: none;
+  user-select: none;
+  visibility: hidden;
+  white-space: nowrap;
+}
+
+:is(.dara-rich-text-content, .dara-markdown) a:hover::after,
+:is(.dara-rich-text-content, .dara-markdown) a:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+  visibility: visible;
+}
