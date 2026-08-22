@@ -93,7 +93,10 @@ test('editor links open through the external URL command in WebKit', async ({
     .fill('https://example.com/docs')
   await editor.getByRole('button', { name: 'Done' }).click()
 
-  await front.getByRole('link', { name: 'Open docs' }).click()
+  // WebKit does not consistently expose descendants of a contenteditable
+  // textbox in its accessibility tree. Locate the real anchor in the editor
+  // DOM so this contract tests the click bridge rather than AX-tree nesting.
+  await front.locator('a[href="https://example.com/docs"]').click()
 
   const snapshot = await page.evaluate(() =>
     (window as Window & { __DARA_BROWSER_TEST__: DaraBrowserTestApi })
