@@ -30,6 +30,42 @@ test('rich-text selection saves canonical Markdown through the public result', a
   })
 })
 
+test('hash shortcuts create styled H1 through H3 headings only', async ({
+  page,
+}) => {
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
+  )
+  const front = page.getByRole('textbox', { name: 'Front' })
+  await front.click()
+
+  for (const line of [
+    '# Heading one',
+    '## Heading two',
+    '### Heading three',
+    '#### Plain four',
+  ]) {
+    await page.keyboard.type(line)
+    await page.keyboard.press('Enter')
+  }
+
+  await expect(front.locator('h1')).toHaveText('Heading one')
+  await expect(front.locator('h2')).toHaveText('Heading two')
+  await expect(front.locator('h3')).toHaveText('Heading three')
+  await expect(front.locator('h4, h5, h6')).toHaveCount(0)
+  await expect(
+    front.locator('p').filter({ hasText: '#### Plain four' }),
+  ).toBeVisible()
+
+  const sizes = await front.locator('h1, h2, h3').evaluateAll((headings) =>
+    headings.map((heading) =>
+      Number.parseFloat(getComputedStyle(heading).fontSize),
+    ),
+  )
+  expect(sizes[0]).toBeGreaterThan(sizes[1] ?? 0)
+  expect(sizes[1]).toBeGreaterThan(sizes[2] ?? 0)
+})
+
 test('code-language listbox survives a held pointer click and applies selection', async ({ page }) => {
   await page.goto(
     `/tests/browser/harness/?scenario=${BrowserScenarioId.QuickAddEmpty}`,
