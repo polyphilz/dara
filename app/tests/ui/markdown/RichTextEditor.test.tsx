@@ -229,11 +229,126 @@ test('math toolbar inserts a rendered node and serializes delimiters', () => {
   fireEvent.change(formula, {
     target: { value: 'E = mc^2' },
   })
-  expect(getByRole('dialog', { name: 'Inline math editor' }).querySelector('.katex')).not.toBeNull()
-  fireEvent.click(getByRole('button', { name: 'Apply' }))
+  // The popover is a bare input and Done button; the rendered result is the
+  // node the editor drops into the document.
+  expect(
+    getByRole('dialog', { name: 'Inline math editor' }).querySelector('.katex'),
+  ).toBeNull()
+  fireEvent.click(getByRole('button', { name: 'Done' }))
 
   expect(serializeDaraMarkdown(view.state.doc)).toBe('formula: $E = mc^2$')
   expect(container.querySelector('.dara-math-inline .katex')).not.toBeNull()
+})
+
+test('clicking away closes the math popover and keeps what was typed', () => {
+  const { container, getByRole, queryByRole, view } = controlledEditor('before')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+    )
+    view.focus()
+  })
+
+  fireEvent.mouseDown(getByRole('button', { name: 'Inline math' }))
+  fireEvent.change(getByRole('textbox', { name: 'Formula' }), {
+    target: { value: 'E = mc^2' },
+  })
+  fireEvent.mouseDown(document.body)
+
+  expect(queryByRole('dialog', { name: 'Inline math editor' })).toBeNull()
+  expect(serializeDaraMarkdown(view.state.doc)).toBe('before$E = mc^2$')
+  expect(container.querySelector('.dara-math-inline')).not.toBeNull()
+})
+
+test('clicking away from an untouched math popover inserts nothing', () => {
+  const { container, getByRole, queryByRole, view } = controlledEditor('before')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+    )
+    view.focus()
+  })
+
+  fireEvent.mouseDown(getByRole('button', { name: 'Inline math' }))
+  fireEvent.mouseDown(document.body)
+
+  expect(queryByRole('dialog', { name: 'Inline math editor' })).toBeNull()
+  expect(serializeDaraMarkdown(view.state.doc)).toBe('before')
+  expect(container.querySelector('.dara-math-inline')).toBeNull()
+})
+
+test('clicking inside the math popover keeps it open', () => {
+  const { getByRole, view } = controlledEditor('before')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+    )
+    view.focus()
+  })
+
+  fireEvent.mouseDown(getByRole('button', { name: 'Inline math' }))
+  fireEvent.mouseDown(getByRole('textbox', { name: 'Formula' }))
+
+  expect(getByRole('dialog', { name: 'Inline math editor' })).not.toBeNull()
+})
+
+test('a display equation replaces the empty paragraph it was invoked from', () => {
+  const { getByRole, view } = controlledEditor('f')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+    )
+    view.focus()
+  })
+  fireEvent.keyDown(getByRole('textbox', { name: 'Editor' }), { key: 'Enter' })
+
+  fireEvent.mouseDown(getByRole('button', { name: 'Display math' }))
+  fireEvent.change(getByRole('textbox', { name: 'Formula' }), {
+    target: { value: 'e = mc^2' },
+  })
+  fireEvent.click(getByRole('button', { name: 'Done' }))
+
+  // No blank paragraph stranded under the block.
+  expect(
+    view.state.doc.children.map((child) => child.type.name),
+  ).toEqual(['paragraph', 'math_display'])
+  expect(serializeDaraMarkdown(view.state.doc)).toBe('f\n\n$$\ne = mc^2\n$$')
+})
+
+test('a display equation keeps a paragraph that still has text', () => {
+  const { getByRole, view } = controlledEditor('has text')
+  act(() => {
+    view.dispatch(
+      view.state.tr.setSelection(TextSelection.atEnd(view.state.doc)),
+    )
+    view.focus()
+  })
+
+  fireEvent.mouseDown(getByRole('button', { name: 'Display math' }))
+  fireEvent.change(getByRole('textbox', { name: 'Formula' }), {
+    target: { value: 'a + b' },
+  })
+  fireEvent.click(getByRole('button', { name: 'Done' }))
+
+  expect(
+    view.state.doc.children.map((child) => child.type.name),
+  ).toEqual(['paragraph', 'math_display'])
+  expect(view.state.doc.firstChild?.textContent).toBe('has text')
+})
+
+test('an existing math node reopens the editor with its formula', () => {
+  const { container, getByRole } = controlledEditor('before $E = mc^2$ after')
+
+  const node = container.querySelector<HTMLElement>('.dara-math-inline')
+  expect(node).not.toBeNull()
+  fireEvent.click(node!)
+
+  const input = getByRole('textbox', { name: 'Formula' }) as HTMLInputElement
+  expect(input.value).toBe('E = mc^2')
+  expect(document.activeElement).toBe(input)
+  // Caret at the end, nothing selected.
+  expect(input.selectionStart).toBe(input.value.length)
+  expect(input.selectionEnd).toBe(input.value.length)
 })
 
 test('code blocks lazy-load CodeMirror and synchronize code changes', async () => {
@@ -471,6 +586,36 @@ describe('keyboard structure', () => {
         daraEditorSchema.marks.code!,
       ),
     ).toBe(false)
+  })
+
+  test('closing a $$ pair becomes an inline equation', () => {
+    const { view } = controlledEditor('')
+
+    typeText(view, 'mass $$E = mc^2$$')
+
+    expect(serializeDaraMarkdown(view.state.doc)).toBe('mass $E = mc^2$')
+    expect(view.state.doc.firstChild?.lastChild?.type.name).toBe('math_inline')
+    expect(view.state.doc.firstChild?.lastChild?.attrs.formula).toBe('E = mc^2')
+  })
+
+  test('a lone dollar amount is left as plain text', () => {
+    const { view } = controlledEditor('')
+
+    typeText(view, 'costs $5 and $10')
+
+    expect(view.state.doc.textContent).toBe('costs $5 and $10')
+    expect(view.state.doc.firstChild?.childCount).toBe(1)
+    // The serializer escapes bare dollars so they cannot be re-read as math.
+    expect(serializeDaraMarkdown(view.state.doc)).toBe('costs \\$5 and \\$10')
+  })
+
+  test('$$ pairs remain literal inside a code block', () => {
+    const { view } = controlledEditor('```text\nvalue\n```')
+
+    typeText(view, '$$E = mc^2$$')
+
+    expect(view.state.doc.firstChild?.type.name).toBe('code_block')
+    expect(view.state.doc.textContent).toContain('$$E = mc^2$$')
   })
 
   test('single backticks remain literal inside a code block', () => {

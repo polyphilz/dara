@@ -328,6 +328,7 @@ export const RichTextEditor = forwardRef<
       {mathDialog && view && (
         <FormulaDialog
           dialog={mathDialog}
+          view={view}
           onCancel={() => {
             setMathDialog(null)
             view.focus()
@@ -511,6 +512,7 @@ function editorInputRules() {
     rules: [
       textblockTypeInputRule(/^```$/, codeBlock, { language: null }),
       inlineCodeInputRule(),
+      inlineMathInputRule(),
       wrappingInputRule(/^[-*•]\s$/, bulletList),
       wrappingInputRule(
         /^(\d+)\.\s$/,
@@ -537,6 +539,26 @@ function inlineCodeInputRule(): InputRule {
       // Closing the backtick leaves the caret just inside the new mark, so
       // clear it from the stored marks and let typing continue as plain text.
       return tr.removeStoredMark(code)
+    },
+    { inCodeMark: false },
+  )
+}
+
+/**
+ * Closing a `$$…$$` pair drops a rendered inline equation in place, mirroring
+ * how a closed backtick pair becomes inline code. Two delimiters rather than
+ * one so ordinary prose about "$5 and $10" is left alone.
+ */
+function inlineMathInputRule(): InputRule {
+  return new InputRule(
+    /\$\$([^$\n]+)\$\$$/,
+    (state, match, start, end) => {
+      const mathInline = state.schema.nodes.math_inline
+      const formula = match[1]?.trim()
+      if (!mathInline || !formula) {
+        return null
+      }
+      return state.tr.replaceWith(start, end, mathInline.create({ formula }))
     },
     { inCodeMark: false },
   )
@@ -1109,6 +1131,28 @@ function commitMath(
     : view.state.schema.nodes.math_inline!
   let transaction = view.state.tr
   if (dialog.display) {
+    // A caret sitting in its own empty paragraph means that paragraph is where
+    // the equation belongs. Inserting alongside it would strand a blank line
+    // under the block.
+    const { $from } = view.state.selection
+    const replaceableParagraph =
+      $from.depth === 1 &&
+      $from.parent.type.name === 'paragraph' &&
+      $from.parent.content.size === 0
+    if (replaceableParagraph) {
+      const start = $from.before()
+      transaction = transaction.replaceWith(
+        start,
+        $from.after(),
+        type.create({ formula }),
+      )
+      transaction = transaction.setSelection(
+        NodeSelection.create(transaction.doc, start),
+      )
+      view.dispatch(transaction.scrollIntoView())
+      view.focus()
+      return
+    }
     const position =
       insertPoint(view.state.doc, view.state.selection.to, type) ??
       insertPoint(view.state.doc, view.state.selection.from, type)
@@ -1131,55 +1175,94 @@ function FormulaDialog({
   dialog,
   onCancel,
   onConfirm,
+  view,
 }: {
   dialog: MathDialogState
   onCancel: () => void
   onConfirm: (formula: string) => void
+  view: EditorView
 }) {
   const [formula, setFormula] = useState(dialog.formula)
   const inputRef = useRef<HTMLInputElement>(null)
-  const previewRef = useRef<HTMLDivElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
+  const [placement, setPlacement] = useState<{
+    left: number
+    top: number
+  } | null>(null)
 
-  useEffect(() => {
-    inputRef.current?.focus()
-    inputRef.current?.select()
-  }, [])
-
-  useEffect(() => {
-    if (!previewRef.current) {
+  // Sit just under the equation being edited rather than at a fixed corner of
+  // the editor, flipping above it when there is no room below.
+  useLayoutEffect(() => {
+    const form = formRef.current
+    const shell = view.dom.closest('.rich-text-editor')
+    if (!form || !(shell instanceof HTMLElement)) {
       return
     }
-    katex.render(formula || '\\square', previewRef.current, {
-      displayMode: dialog.display,
-      maxExpand: 1_000,
-      maxSize: 20,
-      output: 'htmlAndMathml',
-      strict: 'warn',
-      throwOnError: false,
-      trust: false,
-    })
-  }, [dialog.display, formula])
+    const node =
+      dialog.position === undefined ? null : view.nodeDOM(dialog.position)
+    const anchor =
+      node instanceof HTMLElement
+        ? node.getBoundingClientRect()
+        : view.coordsAtPos(view.state.selection.from)
+    const shellRect = shell.getBoundingClientRect()
+    const gap = 6
+    const margin = 10
+    const rightmost = shell.clientWidth - form.offsetWidth - margin
+    const left = Math.min(
+      Math.max(margin, anchor.left - shellRect.left),
+      Math.max(margin, rightmost),
+    )
+    let top = anchor.bottom - shellRect.top + gap
+    if (top + form.offsetHeight > shell.clientHeight - margin) {
+      top = Math.max(margin, anchor.top - shellRect.top - form.offsetHeight - gap)
+    }
+    setPlacement({ left, top })
+  }, [dialog.position, view])
 
-  const insertSnippet = (snippet: string, cursorOffset = snippet.length) => {
+  const formulaRef = useRef(formula)
+  formulaRef.current = formula
+
+  // Clicking away closes the popover, keeping whatever was typed. Escape is
+  // the explicit discard.
+  useEffect(() => {
+    const handlePointerDown = (event: globalThis.MouseEvent) => {
+      if (formRef.current?.contains(event.target as Node)) {
+        return
+      }
+      const entered = formulaRef.current.trim()
+      if (entered) {
+        onConfirm(formulaRef.current)
+      } else {
+        onCancel()
+      }
+    }
+    document.addEventListener('mousedown', handlePointerDown, true)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true)
+    }
+  }, [onCancel, onConfirm])
+
+  useEffect(() => {
     const input = inputRef.current
     if (!input) {
       return
     }
-    const start = input.selectionStart ?? formula.length
-    const end = input.selectionEnd ?? start
-    const next = formula.slice(0, start) + snippet + formula.slice(end)
-    setFormula(next)
-    requestAnimationFrame(() => {
-      input.focus()
-      const cursor = start + cursorOffset
-      input.setSelectionRange(cursor, cursor)
-    })
-  }
+    // Focus with the caret parked at the end rather than selecting the
+    // formula, so re-opening an equation is ready to append to, not overtype.
+    input.focus()
+    input.setSelectionRange(input.value.length, input.value.length)
+  }, [])
 
   return (
     <form
       aria-label={dialog.display ? 'Display math editor' : 'Inline math editor'}
-      className="formula-dialog"
+      className="formula-dialog formula-dialog-compact"
+      ref={formRef}
+      style={{
+        left: placement?.left ?? 0,
+        top: placement?.top ?? 0,
+        visibility: placement ? 'visible' : 'hidden',
+      }}
       onKeyDown={(event) => {
         event.stopPropagation()
         if (event.key === 'Escape') {
@@ -1195,82 +1278,25 @@ function FormulaDialog({
       }}
       role="dialog"
     >
-      <div className="formula-dialog-heading">
-        <DaraText as="strong" variant={DaraTextVariant.Label}>
-          {dialog.display ? 'Display equation' : 'Inline equation'}
-        </DaraText>
-        <DaraText
-          as="span"
-          tone={DaraTextTone.Muted}
-          variant={DaraTextVariant.Caption}
-        >
-          LaTeX-style formula
-        </DaraText>
-      </div>
-      <div aria-live="polite" className="formula-preview" ref={previewRef} />
       <DaraInput
         aria-label="Formula"
         onChange={(event) => setFormula(event.target.value)}
+        placeholder={dialog.display ? 'E = mc^2' : 'e^{i\\pi} + 1 = 0'}
         ref={inputRef}
         type="text"
         value={formula}
       />
-      <div aria-label="Math symbols" className="formula-symbols" role="toolbar">
-        <DaraButton
-          onClick={() => insertSnippet('\\pi')}
-          size={DaraButtonSize.Compact}
-          variant={DaraButtonVariant.Ghost}
-        >
-          π
-        </DaraButton>
-        <DaraButton
-          onClick={() => insertSnippet('\\sqrt{}', 6)}
-          size={DaraButtonSize.Compact}
-          variant={DaraButtonVariant.Ghost}
-        >
-          √
-        </DaraButton>
-        <DaraButton
-          onClick={() => insertSnippet('^{}', 2)}
-          size={DaraButtonSize.Compact}
-          variant={DaraButtonVariant.Ghost}
-        >
-          x²
-        </DaraButton>
-        <DaraButton
-          onClick={() => insertSnippet('\\frac{}{}', 6)}
-          size={DaraButtonSize.Compact}
-          variant={DaraButtonVariant.Ghost}
-        >
-          a⁄b
-        </DaraButton>
-        <DaraButton
-          onClick={() => insertSnippet('\\sum_{}^{}', 6)}
-          size={DaraButtonSize.Compact}
-          variant={DaraButtonVariant.Ghost}
-        >
-          ∑
-        </DaraButton>
-        <DaraButton
-          onClick={() => insertSnippet('\\infty')}
-          size={DaraButtonSize.Compact}
-          variant={DaraButtonVariant.Ghost}
-        >
-          ∞
-        </DaraButton>
-      </div>
-      <div className="formula-dialog-actions">
-        <DaraButton onClick={onCancel} variant={DaraButtonVariant.Ghost}>
-          Cancel
-        </DaraButton>
-        <DaraButton
-          disabled={!formula.trim()}
-          type="submit"
-          variant={DaraButtonVariant.Primary}
-        >
-          Apply
-        </DaraButton>
-      </div>
+      <DaraButton
+        disabled={!formula.trim()}
+        size={DaraButtonSize.Compact}
+        type="submit"
+        variant={DaraButtonVariant.Primary}
+      >
+        Done
+        <span aria-hidden="true" className="formula-done-key">
+          ↵
+        </span>
+      </DaraButton>
     </form>
   )
 }
@@ -1392,7 +1418,7 @@ class MathNodeView implements NodeView {
     }`
     this.dom.contentEditable = 'false'
     this.dom.tabIndex = 0
-    this.dom.addEventListener('dblclick', this.edit)
+    this.dom.addEventListener('click', this.edit)
     this.dom.addEventListener('keydown', this.handleKeyDown)
     this.render()
   }
@@ -1410,12 +1436,12 @@ class MathNodeView implements NodeView {
   deselectNode = () => this.dom.classList.remove('dara-math-selected')
 
   destroy = () => {
-    this.dom.removeEventListener('dblclick', this.edit)
+    this.dom.removeEventListener('click', this.edit)
     this.dom.removeEventListener('keydown', this.handleKeyDown)
   }
 
   stopEvent = (event: Event) =>
-    event.type === 'dblclick' || event.type === 'keydown'
+    event.type === 'click' || event.type === 'keydown'
 
   private handleKeyDown = (event: globalThis.KeyboardEvent) => {
     if (event.key === 'Enter' || event.key === ' ') {
