@@ -94,14 +94,7 @@
 }
 
 .dara-cloze-placeholder {
-  padding: 0.08em 0.28em;
-  border: 1px solid color-mix(in srgb, var(--accent) 44%, transparent);
-  border-radius: 0.28em;
-  color: color-mix(in srgb, var(--accent) 88%, var(--ink));
-  background: var(--accent-soft);
-  box-decoration-break: clone;
-  font-weight: var(--type-weight-label);
-  -webkit-box-decoration-break: clone;
+  color: var(--accent);
 }
 
 .dara-markdown code {
