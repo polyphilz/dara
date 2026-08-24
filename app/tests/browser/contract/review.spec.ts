@@ -3,8 +3,13 @@ import {
   BrowserScenarioId,
 } from '../harness/scenarios.ts'
 import { expect, test } from '../fixtures/test.ts'
+import { Appearance } from '../../../src/settings/types.ts'
 
 const APP_FONT_FAMILY = 'JetBrains Mono Variable'
+const DARK_REVIEW_APPEARANCES = [
+  { appearance: Appearance.Dark, label: 'explicit dark mode' },
+  { appearance: Appearance.System, label: 'system dark mode' },
+] as const
 
 test('review reveal and grade focus work in WebKit', async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 720 })
@@ -54,3 +59,34 @@ test('review loads genuine JetBrains Mono emphasis faces in WebKit', async ({
   await expect(boldItalic).toHaveCSS('font-style', 'italic')
   await expect(boldItalic.locator('strong')).toHaveCSS('font-weight', '700')
 })
+
+for (const { appearance, label } of DARK_REVIEW_APPEARANCES) {
+  test(`review code blocks stay unhighlighted in ${label}`, async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme: 'dark' })
+    await page.goto(
+      `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewCodeBlock}&surface=${BrowserHarnessSurface.Main}&appearance=${appearance}`,
+    )
+    await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
+
+    const blockCode = page.locator('.review-card pre > code')
+    await expect(blockCode).toHaveCount(2)
+    for (const block of await blockCode.all()) {
+      await expect(block).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)')
+    }
+
+    const inlineCode = page
+      .locator('.review-card :not(pre) > code')
+      .filter({ hasText: 'main' })
+    const [inlineBackground, blockBackground] = await Promise.all([
+      inlineCode.evaluate((element) => getComputedStyle(element).backgroundColor),
+      page
+        .locator('.review-card pre')
+        .first()
+        .evaluate((element) => getComputedStyle(element).backgroundColor),
+    ])
+    expect(inlineBackground).toBe(blockBackground)
+    expect(inlineBackground).not.toBe('rgba(0, 0, 0, 0)')
+  })
+}

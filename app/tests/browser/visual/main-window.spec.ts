@@ -65,3 +65,15 @@ for (const appearance of [Appearance.Light, Appearance.Dark]) {
     )
   })
 }
+
+test('highlighted and plain review code blocks in dark mode', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 720 })
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewCodeBlock}&surface=${BrowserHarnessSurface.Main}&appearance=${Appearance.Dark}`,
+  )
+  await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
+  await expect(page.locator('.review-card pre > code')).toHaveCount(2)
+  await expect(page.locator('.main-window')).toHaveScreenshot(
+    'review-code-blocks-dark.png',
+  )
+})
