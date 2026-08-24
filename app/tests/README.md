@@ -42,11 +42,11 @@ menus, and AppKit activation/focus behavior.
 | `pnpm test:properties` | Fixed PR seed (`20260717`) for reproducible review, cloze, and geometry invariants. |
 | `pnpm test:browser` | Chromium journeys plus the focused WebKit contracts. |
 | `pnpm test:a11y` | Focused axe scans (also included by the Chromium browser project). |
-| `pnpm test:visual` | Canonical DPR-1 and focused DPR-2 comparisons. |
-| `pnpm test:visual:update` | Explicit baseline regeneration inside the pinned Playwright container only. |
+| `pnpm test:visual` | Canonical macOS ARM64/WebKit DPR-1 and focused DPR-2 comparisons. |
+| `pnpm test:visual:update` | Guarded baseline regeneration inside the Frontend visual GitHub Actions workflow only. |
 | `pnpm test:native` | Serial feature-gated native suite with a new database below `.data/e2e/`. |
 | `pnpm test:bundle-safety` | Ordinary production build plus structured module-graph/output isolation assertions. |
-| `pnpm check` | Ordinary local frontend gate; excludes Linux-canonical visual comparisons. |
+| `pnpm check` | Ordinary local frontend gate; excludes canonical visual comparisons. |
 | `pnpm release:build:app` | Build, stage, verify, bundle, ad-hoc sign, and inspect the pinned arm64 release app. |
 | `pnpm release:verify-app` | Recheck an already-built `.app` without rebuilding llama.cpp. |
 | `pnpm release:build:distribution` | Rebuild and verify the pinned sidecars, Developer ID sign every executable with hardened runtime, notarize and staple the app and DMG, then run Gatekeeper checks against the mounted artifact. |
@@ -54,10 +54,13 @@ menus, and AppKit activation/focus behavior.
 | `pnpm release:verify-distribution -- <app> <dmg>` | Recheck an existing signed and notarized public artifact without rebuilding sidecars. |
 | `pnpm release:acceptance help` | Drive clean-first-run and previous-schema upgrade acceptance against isolated `.data/` directories and the packaged app. |
 
-Canonical screenshots use
-`mcr.microsoft.com/playwright:v1.61.0-noble@sha256:57b65fdc9ceabe0ef613124c7bbe2babcf9362c4d85e382fe3b03604e84b428a`.
-CI never updates baselines. Run `test:visual:update` in that exact image, inspect every changed
-expected image at full size, and commit only an intentional reviewed delta.
+Canonical screenshots use Playwright's pinned WebKit browser on the `macos-15` ARM64 GitHub
+Actions image, matching Dara's supported production platform and WKWebView more closely than the
+Linux Chromium harness did. Local comparisons are available on macOS ARM64, but the update command
+is guarded: trigger the Frontend visual workflow with `update_snapshots` enabled to receive a
+canonical baseline artifact. A failed comparison also generates that artifact automatically.
+Inspect every replacement image at full size and commit only an intentional reviewed delta; the
+workflow never commits or pushes snapshots itself.
 
 The files in `tests/bundle/baselines/` are the historical before/after size and module-graph
 record required by plan 008. They document the reviewed infrastructure delta; they are not moving

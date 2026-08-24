@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      update_snapshots:
+        description: Generate canonical macOS/WebKit baselines as an artifact
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: frontend-visual-${{ github.ref }}
@@ -11,9 +18,7 @@ concurrency:
 
 jobs:
   frontend-visual:
-    runs-on: ubuntu-24.04
-    container:
-      image: mcr.microsoft.com/playwright:v1.61.0-noble@sha256:57b65fdc9ceabe0ef613124c7bbe2babcf9362c4d85e382fe3b03604e84b428a
+    runs-on: macos-15
     defaults:
       run:
         working-directory: app
@@ -28,10 +33,15 @@ jobs:
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Compare canonical DPR-1 and focused DPR-2 baselines
+      - name: Install the pinned WebKit browser
+        run: pnpm exec playwright install webkit
+      - name: Compare canonical WebKit DPR-1 and focused DPR-2 baselines
+        id: visual_compare
+        if: ${{ inputs.update_snapshots != true }}
+        continue-on-error: true
         run: pnpm test:visual
       - name: Upload visual diagnostics
-        if: ${{ failure() }}
+        if: ${{ !cancelled() && steps.visual_compare.outcome == 'failure' }}
         uses: actions/upload-artifact@v4
         with:
           name: frontend-visual-diagnostics
@@ -40,3 +50,23 @@ jobs:
             app/test-results/playwright/
           if-no-files-found: warn
           retention-days: 14
+      - name: Generate canonical WebKit baselines
+        if: ${{ !cancelled() && (inputs.update_snapshots == true || steps.visual_compare.outcome == 'failure') }}
+        env:
+          DARA_CANONICAL_VISUAL_UPDATE: '1'
+        run: pnpm test:visual:update
+      - name: Upload canonical WebKit baselines
+        if: ${{ !cancelled() && (inputs.update_snapshots == true || steps.visual_compare.outcome == 'failure') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-visual-baselines-${{ github.run_id }}
+          path: |
+            app/tests/browser/__screenshots__/webkit-visual/
+            app/tests/browser/__screenshots__/webkit-hidpi-visual/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Report the visual comparison failure
+        if: ${{ !cancelled() && steps.visual_compare.outcome == 'failure' }}
+        run: |
+          echo 'Canonical WebKit screenshots differ. Download the frontend-visual-baselines artifact, inspect it, and replace the reviewed baselines.'
+          exit 1

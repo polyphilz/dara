@@ -1,6 +1,12 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const CI_RETRIES = 1
+const BrowserProjectName = {
+  ChromiumFunctional: 'chromium-functional',
+  WebkitContract: 'webkit-contract',
+  WebkitVisual: 'webkit-visual',
+  WebkitHidpiVisual: 'webkit-hidpi-visual',
+} as const
 
 export default defineConfig({
   testDir: './tests/browser',
@@ -36,7 +42,7 @@ export default defineConfig({
   },
   projects: [
     {
-      name: 'chromium-functional',
+      name: BrowserProjectName.ChromiumFunctional,
       testMatch: [
         'functional/**/*.spec.ts',
         'accessibility/**/*.spec.ts',
@@ -47,7 +53,7 @@ export default defineConfig({
       },
     },
     {
-      name: 'webkit-contract',
+      name: BrowserProjectName.WebkitContract,
       testMatch: ['contract/**/*.spec.ts'],
       use: {
         ...devices['Desktop Safari'],
@@ -55,21 +61,21 @@ export default defineConfig({
       },
     },
     {
-      name: 'chromium-visual',
+      name: BrowserProjectName.WebkitVisual,
       testMatch: ['visual/**/*.spec.ts'],
       workers: 1,
       use: {
-        ...devices['Desktop Chrome'],
+        ...devices['Desktop Safari'],
         deviceScaleFactor: 1,
         viewport: { width: 920, height: 760 },
       },
     },
     {
-      name: 'chromium-hidpi-visual',
+      name: BrowserProjectName.WebkitHidpiVisual,
       testMatch: ['visual-hidpi/**/*.spec.ts'],
       workers: 1,
       use: {
-        ...devices['Desktop Chrome HiDPI'],
+        ...devices['Desktop Safari'],
         deviceScaleFactor: 2,
         viewport: { width: 920, height: 760 },
       },
