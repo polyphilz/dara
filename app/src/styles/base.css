@@ -77,6 +77,9 @@
   --type-size-content-review: 1.375rem; /* 22px review reading size */
   --type-size-content-editor: 0.9375rem; /* 15px authoring size */
   --type-size-content-code: 0.8125rem; /* 13px block-code size */
+  --type-size-content-h1: 1.45em;
+  --type-size-content-h2: 1.28em;
+  --type-size-content-h3: 1.14em;
   --type-leading-content: 1.5;
   --type-leading-content-editor: 1.55;
   --type-leading-content-heading: 1.2;

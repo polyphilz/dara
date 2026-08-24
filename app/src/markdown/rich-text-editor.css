@@ -243,15 +243,15 @@
 }
 
 .dara-rich-text-content h1 {
-  font-size: 1.45em;
+  font-size: var(--type-size-content-h1);
 }
 
 .dara-rich-text-content h2 {
-  font-size: 1.28em;
+  font-size: var(--type-size-content-h2);
 }
 
 .dara-rich-text-content h3 {
-  font-size: 1.14em;
+  font-size: var(--type-size-content-h3);
 }
 
 .dara-editor-image {
