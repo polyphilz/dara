@@ -87,7 +87,7 @@ run('gh', [
 ], { stdio: 'inherit' })
 
 console.info(
-  `Draft ${tag} created with ${artifactPaths.map(basename).join(', ')}.`,
+  `Draft ${tag} created with ${artifactPaths.map((artifactPath) => basename(artifactPath)).join(', ')}.`,
 )
 
 function verifyReleaseMetadata(root, expectedVersion, expectedSourceCommit) {
