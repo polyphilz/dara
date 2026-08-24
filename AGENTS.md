@@ -14,6 +14,13 @@
 - Do not allow development commands to fall back to Dara's platform data directory or otherwise read or mutate a non-testing user database. Automated tests may continue to use their isolated temporary database directories.
 - Treat existing files under `app/.data/` as test data that may still be useful to the developer: do not delete, reset, or replace them unless the user explicitly requests it. For destructive migration experiments, first copy the database pair to a separate task-specific directory under `app/.data/` and work on the copy.
 
+## Release distribution and validation
+
+- Use Dara's built-in Tauri updater for normal production upgrades. Build, sign, notarize, and verify the release from clean `main`; create and push the annotated version tag; upload and verify the updater assets in a draft GitHub Release; then publish that release. Publishing the GitHub Release, not merely pushing the tag, exposes `latest.json` to installed applications.
+- Do not manually replace `/Applications/Dara.app` with a release candidate or run a pre-publication smoke check against the production Dara database. After publication, the user validates the real upgrade path by accepting Dara's in-app update notification from the previously installed production version.
+- Skip the manual repository-local packaged release acceptance suite by default. Run any part of that suite only when the user explicitly requests it for the specific release.
+- Do not launch a release candidate against the production data directory or otherwise read or modify production Dara data as part of release automation.
+
 ## UI consistency and existing patterns
 
 - Before adding or styling an interactive control, search the repository for existing controls with the same role or interaction model. Inspect their component code, styles, states, keyboard behavior, and tests. The closest established Dara control is the default design reference; do not treat a new feature as a blank-slate styling exercise.
