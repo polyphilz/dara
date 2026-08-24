@@ -1,6 +1,7 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import '@fontsource-variable/reddit-mono/wght.css'
+import '@fontsource-variable/jetbrains-mono/wght.css'
+import '@fontsource-variable/jetbrains-mono/wght-italic.css'
 import 'katex/dist/katex.min.css'
 import '../../../src/styles/base.css'
 import '../../../src/markdown/interactive-link.css'

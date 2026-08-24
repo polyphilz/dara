@@ -504,7 +504,7 @@ function createClozeReviewContext(): ReviewContext {
       backMd: '',
       createdAt: context.cardContent.createdAt,
       frontMd: [
-        'I am in Neovim, loaded with my personal setup. I type `gd` over a function in a Python file. This is what happens:',
+        'I am in Neovim, loaded with my *personal* setup. I type `gd` over **a Python function**. This is what happens:',
         '',
         '1. Your buffer-local map fires {{c1::`snacks.picker.lsp_definitions()`::a picker plugin that handles several editor quality-of-life features}}.',
         '2. {{c1::The picker builds a position and hands it to Neovim’s built-in LSP client::the picker integration}}.',
@@ -528,12 +528,22 @@ function createReviewContext(item?: CardContentListItem): ReviewContext {
     cache: createNewReviewCardCache(),
     cacheSchedulerConfigId: null,
     cardContent: item?.cardContent ?? {
-      backMd:
-        'Retrieval near the edge of forgetting strengthens memory efficiently.',
+      backMd: [
+        '`?1` — **48**',
+        '',
+        '`?2` — **0x30**',
+        '',
+        '***Both forms return*** `0`.',
+      ].join('\n'),
       createdAt: now,
-      frontMd: 'Why does spaced repetition work?',
+      frontMd: [
+        'Given this Unicode code point: `U+0030`, replace `?1` and `?2` with the two values I *could* use to get the corresponding character in Python:',
+        '',
+        '- `chr(?1)`',
+        '- `chr(?2)`',
+      ].join('\n'),
       id: '01980c8e-6c00-7000-8000-000000000201',
-      source: 'Learning notes',
+      source: 'Python · Unicode',
       type: CardContentType.Basic,
       updatedAt: now,
     },

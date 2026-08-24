@@ -13,7 +13,9 @@ test('review held Space reveals once and grades only after keyup', async ({ page
     `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewBasic}&surface=${BrowserHarnessSurface.Main}`,
   )
   await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
-  await expect(page.getByText('Why does spaced repetition work?')).toBeVisible()
+  await expect(page.locator('.review-card')).toContainText(
+    'Given this Unicode code point',
+  )
 
   await page.keyboard.down(' ')
   await expect(page.getByRole('group', { name: 'Grade this card' })).toBeVisible()
@@ -70,7 +72,9 @@ test('review grade focus clamps, direct grades, and Meta+Z undoes', async ({ pag
   expect((await snapshot(page)).recordedGrades[0]?.review.grade).toBe(4)
 
   await page.keyboard.press('Meta+z')
-  await expect(page.getByText('Why does spaced repetition work?')).toBeVisible()
+  await expect(page.locator('.review-card')).toContainText(
+    'Given this Unicode code point',
+  )
   await expect(page.getByRole('group', { name: 'Grade this card' })).toHaveCount(0)
   const commands = (await snapshot(page)).commands.map(({ command }) => command)
   expect(commands).toContain(DaraIpcCommand.UndoLastGrade)
