@@ -108,7 +108,7 @@ function notificationContent(
     case UpdatePhase.Available:
       return {
         heading: `Dara ${state.update.version} is available`,
-        detail: 'Install the signed update and reopen Dara when it is ready.',
+        detail: 'Install the update and reopen Dara when it is ready.',
       }
     case UpdatePhase.Downloading:
       return {

@@ -33,6 +33,9 @@ test('uses Dara buttons for installing or deferring an update', async () => {
   expect(getByRole('status').textContent).toContain(
     'Dara 0.2.0 is available',
   )
+  expect(getByRole('status').textContent).toContain(
+    'Install the update and reopen Dara when it is ready.',
+  )
   expect(
     getByRole('button', { name: 'Install and restart' }).classList.contains(
       'dara-button',
