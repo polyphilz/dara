@@ -19,16 +19,27 @@ import { externalHttpUrl, markdownUrlTransform } from './url-policy.ts'
 
 interface MarkdownRendererProps {
   openExternalUrl?: (url: string) => Promise<void> | void
+  renderLink?: MarkdownLinkRenderer
   source: string
 }
 
+export interface MarkdownLinkRenderInput {
+  children: ReactNode
+  href: string | undefined
+}
+
+export type MarkdownLinkRenderer = (
+  input: MarkdownLinkRenderInput,
+) => ReactNode | undefined
+
 export function MarkdownRenderer({
   openExternalUrl = native.openExternalUrl,
+  renderLink,
   source,
 }: MarkdownRendererProps) {
   const components = useMemo(
-    () => rendererComponents(openExternalUrl),
-    [openExternalUrl],
+    () => rendererComponents(openExternalUrl, renderLink),
+    [openExternalUrl, renderLink],
   )
 
   return (
@@ -49,6 +60,7 @@ export function MarkdownRenderer({
 
 function rendererComponents(
   openExternalUrl: (url: string) => Promise<void> | void,
+  renderLink: MarkdownLinkRenderer | undefined,
 ): Components {
   return {
     // Read-only counterpart to the editor's header: the language, no controls.
@@ -65,6 +77,10 @@ function rendererComponents(
       )
     },
     a({ children, href }) {
+      const replacement = renderLink?.({ children, href })
+      if (replacement !== undefined) {
+        return replacement
+      }
       const url = externalHttpUrl(href)
       if (!url) {
         return <span className="dara-markdown-inert-link">{children}</span>

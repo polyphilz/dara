@@ -520,7 +520,6 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
   mocks.loadCardContent.mockResolvedValue(clozeItem)
   const {
     findByRole,
-    getAllByText,
     getByRole,
     queryByRole,
     queryByText,
@@ -530,14 +529,24 @@ test('renders and edits CLOZE content without exposing its stored delimiters', a
   })
 
   await waitFor(() => {
-    expect(getAllByText('The [...] of France is Paris.').length).toBeGreaterThan(0)
+    expect(
+      getByRole('note', { name: 'Hidden cloze deletion' }).textContent,
+    ).toBe('[...]')
   })
+  expect(getByRole('article').textContent).toContain(
+    'The [...] of France is Paris.',
+  )
   expect(getByRole('button', { name: /Edit/ })).toBeTruthy()
   expect(queryByText(/\{\{c1::/)).toBeNull()
   expect(getByRole('article').textContent).toContain('A geography prompt.')
 
   fireEvent.click(getByRole('button', { name: /Cloze 2.*Due/ }))
-  expect(getAllByText('The capital of France is [city].').length).toBeGreaterThan(0)
+  expect(
+    getByRole('note', { name: 'Hidden cloze deletion' }).textContent,
+  ).toBe('[city]')
+  expect(getByRole('article').textContent).toContain(
+    'The capital of France is [city].',
+  )
 
   fireEvent.click(getByRole('button', { name: /Edit/ }))
   expect(await findByRole('heading', { name: 'Edit card' })).toBeTruthy()

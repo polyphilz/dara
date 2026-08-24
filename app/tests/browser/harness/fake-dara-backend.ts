@@ -65,7 +65,7 @@ export class FakeDaraBackend {
   readonly #items: CardContentListItem[] = []
   readonly #commands: FakeCommandRecord[] = []
   readonly #recordedGrades: RecordGradeInput[] = []
-  readonly #reviewContext = createReviewContext()
+  readonly #reviewContext: ReviewContext
   #offsiteBackupStatus = disabledBackupStatus()
   #restoredBackupTakeoverRequired = false
   #dismissedQuickAdd = 0
@@ -73,6 +73,10 @@ export class FakeDaraBackend {
 
   constructor(scenario: BrowserScenario) {
     this.scenario = scenario
+    this.#reviewContext =
+      scenario.id === BrowserScenarioId.MainReviewCloze
+        ? createClozeReviewContext()
+        : createReviewContext()
     if (scenario.id === BrowserScenarioId.MainBrowseBasic) {
       this.#insertBasicCard(
         'Why does retrieval practice work?',
@@ -489,6 +493,32 @@ export class FakeDaraBackend {
       throw malformed(command, `unknown card content id ${id}`)
     }
     return item
+  }
+}
+
+function createClozeReviewContext(): ReviewContext {
+  const context = createReviewContext()
+  return {
+    ...context,
+    cardContent: {
+      backMd: '',
+      createdAt: context.cardContent.createdAt,
+      frontMd: [
+        'I am in Neovim, loaded with my personal setup. I type `gd` over a function in a Python file. This is what happens:',
+        '',
+        '1. Your buffer-local map fires {{c1::`snacks.picker.lsp_definitions()`::a picker plugin that handles several editor quality-of-life features}}.',
+        '2. {{c1::The picker builds a position and hands it to Neovim’s built-in LSP client::the picker integration}}.',
+        '3. `vim.lsp` sends `textDocument/definition` to the running language server.',
+      ].join('\n'),
+      id: context.cardContent.id,
+      source: null,
+      type: CardContentType.Cloze,
+      updatedAt: context.cardContent.updatedAt,
+    },
+    reviewCard: {
+      ...context.reviewCard,
+      variantKey: 'cloze:1',
+    },
   }
 }
 

@@ -364,12 +364,18 @@ test('renders the selected CLOZE variant in the review question', async () => {
       selectionCursor: 0,
     },
   } as unknown as ReviewControllerState
-  const { findByText, getByRole, queryByText } = render(<MainWindow />)
+  const { container, findByRole, findByText, getByRole, queryByText } =
+    render(<MainWindow />)
   await findByText('7')
 
   fireEvent.click(getByRole('button', { name: /Review.*reviewed today/ }))
 
-  expect(await findByText('The capital of France is [city].')).toBeTruthy()
+  expect(
+    (await findByRole('note', { name: 'Hidden cloze deletion' })).textContent,
+  ).toBe('[city]')
+  expect(container.querySelector('.review-card')?.textContent).toContain(
+    'The capital of France is [city].',
+  )
   expect(queryByText(/Paris/)).toBeNull()
   fireEvent.click(getByRole('button', { name: 'Reveal answer' }))
   expect(mocks.reveal).toHaveBeenCalledTimes(1)

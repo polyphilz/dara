@@ -20,6 +20,21 @@ test('Home and revealed Review have no detectable accessibility violations', asy
   expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
 })
 
+test('Cloze Review question has no detectable accessibility violations', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1000, height: 720 })
+  await page.goto(
+    `/tests/browser/harness/?scenario=${BrowserScenarioId.MainReviewCloze}&surface=${BrowserHarnessSurface.Main}`,
+  )
+  await page.getByRole('button', { name: /Review.*reviewed today/ }).click()
+  await expect(
+    page.getByRole('note', { name: 'Hidden cloze deletion' }),
+  ).toHaveCount(2)
+
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
+})
+
 test('Browse and Settings have no detectable accessibility violations', async ({ page }) => {
   await page.setViewportSize({ width: 1000, height: 720 })
   await page.goto(

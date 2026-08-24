@@ -7,6 +7,10 @@ const CLOZE_FIELD_SEPARATOR = '::'
 const CLOZE_VARIANT_PREFIX = 'cloze:'
 const DEFAULT_QUESTION_PLACEHOLDER = '...'
 
+export type ClozeQuestionPlaceholderRenderer = (
+  placeholderMarkdown: string,
+) => string
+
 export const ClozeParseErrorCode = {
   EmptyAnswer: 'EMPTY_ANSWER',
   InvalidHeader: 'INVALID_HEADER',
@@ -125,6 +129,8 @@ export function projectClozeMarkdown(
   document: ClozeDocument,
   projection: ClozeProjection,
   selectedIndex?: string,
+  renderQuestionPlaceholder: ClozeQuestionPlaceholderRenderer =
+    defaultQuestionPlaceholder,
 ): string {
   if (
     projection === ClozeProjection.Question &&
@@ -148,13 +154,17 @@ export function projectClozeMarkdown(
         occurrence.hintMarkdown === null
           ? DEFAULT_QUESTION_PLACEHOLDER
           : unescapeClozeDelimiters(occurrence.hintMarkdown)
-      result += `\\[${placeholder}\\]`
+      result += renderQuestionPlaceholder(placeholder)
     } else {
       result += unescapeClozeDelimiters(occurrence.answerMarkdown)
     }
     offset = occurrence.end
   }
   return result + document.source.slice(offset)
+}
+
+function defaultQuestionPlaceholder(placeholderMarkdown: string): string {
+  return `\\[${placeholderMarkdown}\\]`
 }
 
 export function clozeQuestionMarkdown(
