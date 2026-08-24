@@ -3,6 +3,7 @@ export const BrowserScenarioId = {
   MainBrowseDeepRoute: 'MAIN_BROWSE_DEEP_ROUTE',
   MainBrowseHistory: 'MAIN_BROWSE_HISTORY',
   MainReviewBasic: 'MAIN_REVIEW_BASIC',
+  MainReviewCloze: 'MAIN_REVIEW_CLOZE',
   QuickAddCreateFailsOnce: 'QUICK_ADD_CREATE_FAILS_ONCE',
   QuickAddEmpty: 'QUICK_ADD_EMPTY',
 } as const
@@ -37,6 +38,9 @@ export const browserScenarios: Record<BrowserScenarioId, BrowserScenario> = {
   [BrowserScenarioId.MainReviewBasic]: {
     id: BrowserScenarioId.MainReviewBasic,
   },
+  [BrowserScenarioId.MainReviewCloze]: {
+    id: BrowserScenarioId.MainReviewCloze,
+  },
   [BrowserScenarioId.QuickAddCreateFailsOnce]: {
     id: BrowserScenarioId.QuickAddCreateFailsOnce,
   },
@@ -54,6 +58,9 @@ export function parseBrowserScenario(value: string | null): BrowserScenario {
   }
   if (value === BrowserScenarioId.MainReviewBasic) {
     return browserScenarios[BrowserScenarioId.MainReviewBasic]
+  }
+  if (value === BrowserScenarioId.MainReviewCloze) {
+    return browserScenarios[BrowserScenarioId.MainReviewCloze]
   }
   if (value === BrowserScenarioId.MainBrowseBasic) {
     return browserScenarios[BrowserScenarioId.MainBrowseBasic]

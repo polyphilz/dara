@@ -93,6 +93,10 @@
   font-style: italic;
 }
 
+.dara-cloze-placeholder {
+  color: var(--accent);
+}
+
 .dara-markdown code {
   border-radius: 0.25em;
   background: rgba(24, 23, 22, 0.07);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { render } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import { createElement } from 'react'
 import { ClozeMarkdownRenderer } from '../../../src/cloze/ClozeMarkdownRenderer.tsx'
 import {
@@ -115,6 +115,21 @@ describe('cloze parsing', () => {
     expect(container.textContent).not.toContain('Paris')
     expect(container.textContent).toContain('{{c9::literal}}')
     expect(container.querySelector('strong')?.textContent).toBe('capital')
+    const placeholder = screen.getByRole('note', {
+      name: 'Hidden cloze deletion',
+    })
+    expect(placeholder.classList.contains('dara-cloze-placeholder')).toBe(true)
+    expect(placeholder.textContent).toBe('[city]')
+    expect(container.querySelector('a')).toBeNull()
+
+    rerender(createElement(ClozeMarkdownRenderer, {
+      projection: ClozeProjection.Question,
+      source,
+      variantKey: 'cloze:1',
+    }))
+    expect(
+      screen.getByRole('note', { name: 'Hidden cloze deletion' }).textContent,
+    ).toBe('[...]')
 
     rerender(createElement(ClozeMarkdownRenderer, {
       projection: ClozeProjection.Answer,
@@ -124,5 +139,25 @@ describe('cloze parsing', () => {
       'The capital of France is Paris. {{c9::literal}}',
     )
     expect(container.textContent).not.toContain('city')
+    expect(
+      screen.queryByRole('note', { name: 'Hidden cloze deletion' }),
+    ).toBeNull()
+  })
+
+  test('keeps ordinary links distinct from a question placeholder', () => {
+    const source =
+      'Read [the notes](https://example.com) about {{c1::Paris::the city}}.'
+    render(createElement(ClozeMarkdownRenderer, {
+      projection: ClozeProjection.Question,
+      source,
+      variantKey: 'cloze:1',
+    }))
+
+    expect(
+      screen.getByRole('link', { name: 'the notes' }).getAttribute('href'),
+    ).toBe('https://example.com/')
+    expect(
+      screen.getByRole('note', { name: 'Hidden cloze deletion' }).textContent,
+    ).toBe('[the city]')
   })
 })

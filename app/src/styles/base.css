@@ -74,7 +74,7 @@
    * Authored card content reads at a deliberately larger scale than
    * application chrome. Markdown hierarchy stays relative to these bases.
    */
-  --type-size-content-review: 1.375rem; /* 22px review reading size */
+  --type-size-content-review: 1rem; /* 16px review reading size */
   --type-size-content-editor: 0.9375rem; /* 15px authoring size */
   --type-size-content-code: 0.8125rem; /* 13px block-code size */
   --type-size-content-h1: 1.45em;
