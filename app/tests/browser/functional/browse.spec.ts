@@ -173,6 +173,7 @@ test('dirty editors require an app-owned discard decision', async ({ page }) => 
   await page.getByRole('button', { name: 'Browse' }).click()
   await page.getByRole('button', { name: /Edit/ }).click()
   const front = page.getByRole('textbox', { name: 'Front' })
+  await expect(front).toBeFocused()
   await front.fill('unfinished route-aware draft')
 
   await page.getByRole('button', { name: 'Home' }).click()
