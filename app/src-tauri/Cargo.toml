@@ -1,6 +1,6 @@
 [package]
 name = "dara"
-version = "0.1.1"
+version = "0.1.2"
 description = "A fast, local-first spaced-repetition app for macOS"
 edition = "2021"
 rust-version = "1.97.0"
