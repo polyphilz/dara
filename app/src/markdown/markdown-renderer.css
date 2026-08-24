@@ -99,13 +99,13 @@
 
 .dara-markdown code {
   border-radius: 0.25em;
-  background: rgba(24, 23, 22, 0.07);
   font-family: var(--font-family-app);
   font-size: 0.84em;
 }
 
 .dara-markdown :not(pre) > code {
   padding: 0.12em 0.3em;
+  background: rgba(24, 23, 22, 0.07);
 }
 
 .dara-markdown pre[data-language-label] {
@@ -226,7 +226,7 @@
   color: var(--text-danger);
 }
 
-:root[data-appearance='DARK'] .dara-markdown code,
+:root[data-appearance='DARK'] .dara-markdown :not(pre) > code,
 :root[data-appearance='DARK'] .dara-markdown pre,
 :root[data-appearance='DARK'] .dara-markdown th {
   background: rgba(255, 255, 255, 0.065);
@@ -261,7 +261,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-appearance='LIGHT']) .dara-markdown code,
+  :root:not([data-appearance='LIGHT']) .dara-markdown :not(pre) > code,
   :root:not([data-appearance='LIGHT']) .dara-markdown pre,
   :root:not([data-appearance='LIGHT']) .dara-markdown th {
     background: rgba(255, 255, 255, 0.065);

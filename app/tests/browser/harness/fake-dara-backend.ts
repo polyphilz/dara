@@ -76,6 +76,8 @@ export class FakeDaraBackend {
     this.#reviewContext =
       scenario.id === BrowserScenarioId.MainReviewCloze
         ? createClozeReviewContext()
+        : scenario.id === BrowserScenarioId.MainReviewCodeBlock
+          ? createCodeBlockReviewContext()
         : createReviewContext()
     if (scenario.id === BrowserScenarioId.MainBrowseBasic) {
       this.#insertBasicCard(
@@ -518,6 +520,31 @@ function createClozeReviewContext(): ReviewContext {
     reviewCard: {
       ...context.reviewCard,
       variantKey: 'cloze:1',
+    },
+  }
+}
+
+function createCodeBlockReviewContext(): ReviewContext {
+  const context = createReviewContext()
+  return {
+    ...context,
+    cardContent: {
+      ...context.cardContent,
+      backMd: '',
+      frontMd: [
+        'Compare inline `main` with highlighted and plain code blocks:',
+        '',
+        '```python',
+        'def main():',
+        '    ...',
+        '```',
+        '',
+        '```',
+        'def main():',
+        '    hello',
+        '```',
+      ].join('\n'),
+      source: null,
     },
   }
 }
