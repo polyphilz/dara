@@ -17,8 +17,8 @@ use super::{
     },
     embedding_index::InstallEmbeddingDisposition,
     initialize, CanonicalImage, Database, DatabaseError, DatabasePaths, InitializationOptions,
-    InstallSchedulerReplayInput, PrepareDesiredRetentionReplayInput, RecordGradeInput,
-    ReviewContext, SearchMaintenanceOperation, UndoLastGradeInput,
+    InstallSchedulerReplayInput, LoadHomeStatsInput, PrepareDesiredRetentionReplayInput,
+    RecordGradeInput, ReviewContext, SearchMaintenanceOperation, UndoLastGradeInput,
 };
 
 const FIXTURE_CONTENT_ID: &str = "01980c8e-6c00-7000-8000-000000000101";
@@ -1432,6 +1432,132 @@ fn image_occlusion_persists_layers_and_reconciles_siblings_by_stable_layer_id() 
         )
         .expect("removed mask tombstones");
     assert_eq!(removed_mask_count, 2);
+}
+
+#[test]
+fn home_stats_count_cloze_variants_and_occlusion_layers_individually() {
+    const DEFINITION_ID: &str = "01980c8e-6c00-7000-8000-000000000401";
+    const LAYER_ONE_ID: &str = "01980c8e-6c00-7000-8000-000000000402";
+    const LAYER_TWO_ID: &str = "01980c8e-6c00-7000-8000-000000000403";
+    const MASK_ONE_A_ID: &str = "01980c8e-6c00-7000-8000-000000000404";
+    const MASK_ONE_B_ID: &str = "01980c8e-6c00-7000-8000-000000000405";
+    const MASK_TWO_ID: &str = "01980c8e-6c00-7000-8000-000000000406";
+    const REVIEW_EVENT_IDS: [&str; 4] = [
+        "01980c8e-6c00-7000-8000-000000000411",
+        "01980c8e-6c00-7000-8000-000000000412",
+        "01980c8e-6c00-7000-8000-000000000413",
+        "01980c8e-6c00-7000-8000-000000000414",
+    ];
+
+    let fixture = fixture();
+    let first_step = &fixture.steps[0];
+    let (_directory, paths) = test_paths();
+    let database = initialize_test(&paths);
+    let cloze = database
+        .create_card_content(cloze_draft(
+            "The {{c1::capital}} of France is {{c2::Paris}}.",
+            "A geography prompt.",
+            None,
+            &["cloze:1", "cloze:2"],
+            "The capital of France is Paris.",
+        ))
+        .expect("cloze card");
+    let image = database
+        .ingest_image(CanonicalImage {
+            bytes: b"home stats occlusion source".to_vec(),
+            natural_width: 1200,
+            natural_height: 800,
+        })
+        .expect("source image");
+    let occlusion = database
+        .create_card_content(occlusion_draft(
+            &image.id,
+            DEFINITION_ID,
+            OcclusionMode::HideAllGuessOne,
+            vec![
+                occlusion_layer(
+                    LAYER_ONE_ID,
+                    "Pulmonary veins",
+                    &[
+                        (
+                            MASK_ONE_A_ID,
+                            0.1,
+                            0.2,
+                            0.15,
+                            0.1,
+                            OcclusionMaskColor::White,
+                        ),
+                        (
+                            MASK_ONE_B_ID,
+                            0.4,
+                            0.2,
+                            0.12,
+                            0.08,
+                            OcclusionMaskColor::Black,
+                        ),
+                    ],
+                ),
+                occlusion_layer(
+                    LAYER_TWO_ID,
+                    "Aorta",
+                    &[(MASK_TWO_ID, 0.7, 0.4, 0.1, 0.12, OcclusionMaskColor::White)],
+                ),
+            ],
+        ))
+        .expect("image occlusion card");
+
+    let stats = database
+        .load_home_stats(LoadHomeStatsInput {
+            now: first_step.review.reviewed_at,
+            study_day: first_step.review.study_day,
+            activity_start_study_day: first_step.review.study_day,
+        })
+        .expect("initial home stats");
+    assert_eq!(stats.queue.new, 4);
+    assert_eq!(stats.queue.learning, 0);
+    assert_eq!(stats.queue.review, 0);
+    assert_eq!(stats.reviewed_today, 0);
+
+    let connection = connection::open_read_only(&paths.main, DatabaseKind::Main)
+        .expect("read-only main database");
+    let review_card_ids = connection
+        .prepare(
+            "SELECT id
+             FROM review_card
+             WHERE card_content_id IN (?1, ?2) AND deleted_at IS NULL
+             ORDER BY card_content_id, variant_key",
+        )
+        .expect("variant query")
+        .query_map(
+            params![cloze.card_content.id(), occlusion.card_content.id()],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("variant rows")
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .expect("variant ids");
+    drop(connection);
+    assert_eq!(review_card_ids.len(), REVIEW_EVENT_IDS.len());
+
+    for (review_card_id, event_id) in review_card_ids.iter().zip(REVIEW_EVENT_IDS) {
+        let context = database
+            .load_review_context(review_card_id.clone())
+            .expect("variant context");
+        let mut input = grade_input(&context, first_step);
+        input.event_id = event_id.into();
+        database.record_grade(input).expect("grade variant");
+    }
+
+    let stats = database
+        .load_home_stats(LoadHomeStatsInput {
+            now: first_step.expected_cache.due_at.expect("learning due time"),
+            study_day: first_step.review.study_day,
+            activity_start_study_day: first_step.review.study_day,
+        })
+        .expect("graded home stats");
+    assert_eq!(stats.queue.new, 0);
+    assert_eq!(stats.queue.learning, 4);
+    assert_eq!(stats.queue.review, 0);
+    assert_eq!(stats.reviewed_today, 4);
 }
 
 #[test]
