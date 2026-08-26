@@ -68,18 +68,21 @@ type RecordHandler = (
 type UndoHandler = (
   input: UndoLastGradeInput,
 ) => Promise<ReviewMutationResult>
+type SelectionResult =
+  | ReviewQueueSelection
+  | Promise<ReviewQueueSelection>
 
 class FakeGateway implements ReviewGateway {
   readonly selectionInputs: SelectNextReviewCardInput[] = []
   readonly recordInputs: RecordGradeInput[] = []
   readonly undoInputs: UndoLastGradeInput[] = []
-  private readonly selections: ReviewQueueSelection[]
+  private readonly selections: SelectionResult[]
   private readonly recordHandler: RecordHandler
   private readonly undoHandler: UndoHandler
   private recordCalls = 0
 
   constructor(
-    selections: ReviewQueueSelection[],
+    selections: SelectionResult[],
     recordHandler: RecordHandler,
     undoHandler: UndoHandler,
   ) {
@@ -170,6 +173,48 @@ test('drives queue, preview, grade, caught-up, and undo as one loop', async () =
   assert.equal(gateway.undoInputs[0]!.targetEventId, gateway.recordInputs[0]!.eventId)
   assert.deepEqual(gateway.undoInputs[0]!.nextCache, createNewReviewCardCache())
   assert.equal(reviewDataChanges, 2)
+})
+
+test('retains the submitting card until the next selection is ready', async () => {
+  const initial = initialContext()
+  const nextSelection = deferred<ReviewQueueSelection>()
+  const gateway = new FakeGateway(
+    [cardSelection(initial), nextSelection.promise],
+    async (input) => mutation(input.eventId, 1, gradedContext(input)),
+    async (input) => mutation(input.eventId, 2, undoneContext(input.eventId)),
+  )
+  const controller = new ReviewController(gateway, {
+    captureMoment: () => moment,
+    createEventId: () => '01980c8e-6c00-7000-8000-000000000305',
+  })
+
+  await controller.start()
+  controller.reveal()
+  const phases: ReviewControllerPhase[] = []
+  const unsubscribe = controller.subscribe(() => {
+    phases.push(controller.getSnapshot().phase)
+  })
+  const submission = controller.submitGrade(1)
+  await new Promise<void>((resolve) => setImmediate(resolve))
+
+  assert.equal(gateway.selectionInputs.length, 2)
+  assert.equal(
+    controller.getSnapshot().phase,
+    ReviewControllerPhase.Submitting,
+  )
+  assert.deepEqual(phases, [ReviewControllerPhase.Submitting])
+
+  nextSelection.resolve(cardSelection(initial))
+  await submission
+  unsubscribe()
+  assert.equal(
+    controller.getSnapshot().phase,
+    ReviewControllerPhase.Question,
+  )
+  assert.deepEqual(phases, [
+    ReviewControllerPhase.Submitting,
+    ReviewControllerPhase.Question,
+  ])
 })
 
 test('retries an uncertain grade with the same event id', async () => {
@@ -308,6 +353,17 @@ function initialContext(): ReviewContext {
     },
     reviewHistory: [],
   }
+}
+
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+} {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((complete) => {
+    resolve = complete
+  })
+  return { promise, resolve }
 }
 
 function gradedContext(input: RecordGradeInput): ReviewContext {

@@ -45,6 +45,10 @@ body {
   width: min(var(--wide-workspace-width), 100%);
 }
 
+.main-window-review-scratchpad-open {
+  width: min(var(--wide-workspace-width), 100%);
+}
+
 .card-editor-route-status {
   display: grid;
   align-content: center;
@@ -906,7 +910,22 @@ body {
   padding-top: 44px;
 }
 
+.review-workspace {
+  position: relative;
+}
+
+.review-workspace-open {
+  display: grid;
+  grid-template-areas:
+    'card toggle scratchpad'
+    'actions . scratchpad';
+  grid-template-columns: minmax(0, 1fr) 42px minmax(320px, 0.72fr);
+  align-items: start;
+  column-gap: 14px;
+}
+
 .review-card {
+  grid-area: card;
   min-height: 250px;
   padding: 34px;
   border: 1px solid var(--line);
@@ -918,6 +937,70 @@ body {
   margin-top: 32px;
   padding-top: 32px;
   border-top: 1px solid var(--line);
+}
+
+.review-actions {
+  grid-area: actions;
+}
+
+.review-scratchpad-toggle {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 13px);
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  color: var(--muted);
+}
+
+.review-scratchpad-toggle:hover:not(:disabled),
+.review-scratchpad-toggle[aria-expanded='true'] {
+  border-color: var(--line);
+  color: var(--accent);
+  background: var(--surface);
+}
+
+.review-workspace-open .review-scratchpad-toggle {
+  position: static;
+  grid-area: toggle;
+  margin-top: 0;
+}
+
+.review-scratchpad-icon {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.review-scratchpad {
+  grid-area: scratchpad;
+  min-width: 0;
+}
+
+.review-scratchpad .rich-text-editor {
+  display: flex;
+  max-height: var(--review-scratchpad-max-height);
+  flex-direction: column;
+}
+
+.review-scratchpad .rich-text-toolbar {
+  flex: 0 0 auto;
+}
+
+.review-scratchpad .rich-text-editor-surface {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.review-scratchpad .dara-rich-text-content {
+  min-height: 250px;
 }
 
 .source {
@@ -1404,6 +1487,51 @@ body {
   }
 
   .card-detail-actions kbd {
+    display: none;
+  }
+}
+
+@media (max-width: 880px) {
+  .review-workspace,
+  .review-workspace-open {
+    display: grid;
+    grid-template-areas:
+      'card toggle'
+      'scratchpad scratchpad'
+      'actions actions';
+    grid-template-columns: minmax(0, 1fr) 42px;
+    column-gap: 10px;
+  }
+
+  .review-scratchpad-toggle,
+  .review-workspace-open .review-scratchpad-toggle {
+    position: static;
+    grid-area: toggle;
+    margin-top: 0;
+  }
+
+  .review-scratchpad:not([hidden]) {
+    margin-top: 14px;
+  }
+
+  .review-scratchpad .rich-text-editor-surface,
+  .review-scratchpad .dara-rich-text-content {
+    min-height: 118px;
+  }
+}
+
+@media (max-width: 640px) {
+  .main-window-review-scratchpad-open {
+    width: min(760px, 100%);
+  }
+
+  .review-workspace,
+  .review-workspace-open {
+    display: block;
+  }
+
+  .review-scratchpad-toggle,
+  .review-scratchpad {
     display: none;
   }
 }

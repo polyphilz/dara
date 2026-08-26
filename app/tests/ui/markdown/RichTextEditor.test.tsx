@@ -7,6 +7,7 @@ import {
   RichTextEditor,
   type RichTextEditorHandle,
 } from '../../../src/markdown/RichTextEditor.tsx'
+import { RichTextToolbarControl } from '../../../src/markdown/rich-text-toolbar-controls.ts'
 import { richTextEditorViewFromDOM } from '../../../src/markdown/editor-view-registry.ts'
 import {
   daraEditorSchema,
@@ -86,6 +87,41 @@ test('external value replacement preserves the view and does not echo onChange',
   expect(onChange).not.toHaveBeenCalled()
 })
 
+test('reset key clears document history without recreating the editor view', () => {
+  const { getByRole, rerender } = render(
+    <RichTextEditor
+      ariaLabel="Front"
+      onChange={() => undefined}
+      resetKey="card-a"
+      value="scratch"
+    />,
+  )
+  const textbox = getByRole('textbox', { name: 'Front' })
+  const firstView = editorView(textbox)
+  act(() => {
+    firstView.dispatch(firstView.state.tr.insertText(' work', 8))
+  })
+  expect(getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(
+    false,
+  )
+
+  rerender(
+    <RichTextEditor
+      ariaLabel="Front"
+      onChange={() => undefined}
+      resetKey="card-b"
+      value=""
+    />,
+  )
+
+  const resetView = editorView(getByRole('textbox', { name: 'Front' }))
+  expect(resetView).toBe(firstView)
+  expect(resetView.state.doc.textContent).toBe('')
+  expect(getByRole('button', { name: 'Undo' }).hasAttribute('disabled')).toBe(
+    true,
+  )
+})
+
 test('imperative focus and disabled state do not recreate the editor', () => {
   const ref = createRef<RichTextEditorHandle>()
   const { getByRole, rerender } = render(
@@ -129,6 +165,35 @@ test('toolbar formatting operates on the selection and preserves editor focus', 
   expect(serializeDaraMarkdown(view.state.doc)).toBe('**bold**')
   expect(document.activeElement).toBe(getByRole('textbox', { name: 'Editor' }))
   expect(getByRole('button', { name: 'Bold' }).getAttribute('aria-pressed')).toBe('true')
+})
+
+test('toolbar hides selected controls without leaving an orphaned divider', () => {
+  const { getByRole, queryByRole } = render(
+    <RichTextEditor
+      ariaLabel="Front"
+      hiddenToolbarControls={[
+        RichTextToolbarControl.Bold,
+        RichTextToolbarControl.Italic,
+        RichTextToolbarControl.Strikethrough,
+        RichTextToolbarControl.Link,
+        RichTextToolbarControl.BlockQuote,
+      ]}
+      onChange={() => undefined}
+      value=""
+    />,
+  )
+
+  for (const label of ['Bold', 'Italic', 'Strikethrough', 'Link', 'Block quote']) {
+    expect(queryByRole('button', { name: label })).toBeNull()
+  }
+  expect(getByRole('button', { name: 'Bulleted list' })).not.toBeNull()
+  expect(getByRole('button', { name: 'Code block' })).not.toBeNull()
+
+  const toolbar = getByRole('toolbar', { name: 'Front formatting' })
+  expect(toolbar.querySelector('button')?.getAttribute('aria-label')).toBe(
+    'Bulleted list',
+  )
+  expect(toolbar.querySelectorAll('.toolbar-divider')).toHaveLength(2)
 })
 
 test('indent toolbar buttons nest and unnest the caret list item', () => {

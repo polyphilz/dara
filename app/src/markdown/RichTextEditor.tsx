@@ -93,6 +93,10 @@ import {
   parseDaraMarkdown,
   serializeDaraMarkdown,
 } from './markdown-conversion.ts'
+import {
+  RichTextToolbarControl,
+  type RichTextToolbarControl as RichTextToolbarControlValue,
+} from './rich-text-toolbar-controls.ts'
 import { externalHttpUrl } from './url-policy.ts'
 
 export interface RichTextEditorHandle {
@@ -102,6 +106,7 @@ export interface RichTextEditorHandle {
 interface RichTextEditorProps {
   ariaLabel: string
   disabled?: boolean
+  hiddenToolbarControls?: readonly RichTextToolbarControlValue[]
   ingestImage?: () => Promise<ImageRecord>
   ingestImageFile?: (file: File) => Promise<ImageRecord>
   onChange: (value: string) => void
@@ -110,6 +115,7 @@ interface RichTextEditorProps {
   onMediaError?: (error: unknown) => void
   onPendingMediaChange?: (pending: boolean) => void
   placeholder?: string
+  resetKey?: string
   value: string
 }
 
@@ -126,9 +132,6 @@ interface LinkDialogState {
 const externalValueUpdate = 'dara-external-value-update'
 let codeBlockNodeViewPromise: Promise<NodeViewConstructor> | null = null
 let pendingImageRequestSequence = 0
-const unavailableImageIngestion = () =>
-  Promise.reject(new Error('Image ingestion requires an active editor lease.'))
-
 export const RichTextEditor = forwardRef<
   RichTextEditorHandle,
   RichTextEditorProps
@@ -136,7 +139,8 @@ export const RichTextEditor = forwardRef<
   {
     ariaLabel,
     disabled = false,
-    ingestImage = unavailableImageIngestion,
+    hiddenToolbarControls = [],
+    ingestImage,
     ingestImageFile,
     onChange,
     onFileDialogOpenChange,
@@ -144,6 +148,7 @@ export const RichTextEditor = forwardRef<
     onMediaError,
     onPendingMediaChange,
     placeholder,
+    resetKey,
     value,
   },
   ref,
@@ -165,6 +170,8 @@ export const RichTextEditor = forwardRef<
   const initialValueRef = useRef(value)
   const initialAriaLabelRef = useRef(ariaLabel)
   const initialPlaceholderRef = useRef(placeholder)
+  const activeResetKeyRef = useRef(resetKey)
+  const valueRef = useRef(value)
   const [, renderToolbar] = useReducer((count) => count + 1, 0)
   const [mathDialog, setMathDialog] = useState<MathDialogState | null>(null)
   const [linkDialog, setLinkDialog] = useState<LinkDialogState | null>(null)
@@ -176,6 +183,7 @@ export const RichTextEditor = forwardRef<
   onMediaErrorRef.current = onMediaError
   onPendingMediaChangeRef.current = onPendingMediaChange
   disabledRef.current = disabled
+  valueRef.current = value
   openMathDialogRef.current = (display, formula, position) => {
     setLinkDialog(null)
     setMathDialog({ display, formula, position })
@@ -197,20 +205,10 @@ export const RichTextEditor = forwardRef<
       return
     }
 
-    const state = EditorState.create({
-      doc: parseDaraMarkdown(initialValueRef.current, daraEditorSchema),
-      plugins: [
-        history(),
-        editorInputRules(),
-        codeBlockSelectAll(),
-        keymap(editorKeyBindings((editorView) => openLinkDialogRef.current(editorView))),
-        keymap(baseKeymap),
-        dropCursor(),
-        gapCursor(),
-        tableEditing(),
-      ],
-      schema: daraEditorSchema,
-    })
+    const state = createRichTextEditorState(
+      initialValueRef.current,
+      (editorView) => openLinkDialogRef.current(editorView),
+    )
 
     const props: DirectEditorProps = {
       attributes: {
@@ -263,6 +261,7 @@ export const RichTextEditor = forwardRef<
           const clipboardEvent = event as ClipboardEvent
           if (
             disabledRef.current ||
+            !ingestImageRef.current ||
             !clipboardContainsImage(clipboardEvent.clipboardData)
           ) {
             return false
@@ -315,6 +314,28 @@ export const RichTextEditor = forwardRef<
     }
   }, [])
 
+  useLayoutEffect(() => {
+    if (activeResetKeyRef.current === resetKey) {
+      return
+    }
+    activeResetKeyRef.current = resetKey
+    setMathDialog(null)
+    setLinkDialog(null)
+    const view = viewRef.current
+    if (!view) {
+      return
+    }
+    const state = createRichTextEditorState(
+      valueRef.current,
+      (editorView) => openLinkDialogRef.current(editorView),
+    )
+    view.updateState(state)
+    updateEmptyState(view)
+    notifyPendingMedia(state.doc, onPendingMediaChangeRef.current)
+    void installCodeBlockNodeView(view)
+    renderToolbar()
+  }, [resetKey])
+
   useEffect(() => {
     const view = viewRef.current
     if (!view) {
@@ -355,6 +376,7 @@ export const RichTextEditor = forwardRef<
       <EditorToolbar
         ariaLabel={ariaLabel}
         disabled={disabled}
+        hiddenControls={hiddenToolbarControls}
         onImage={
           ingestImageFile
             ? () => imageFilePickerRef.current?.open()
@@ -367,25 +389,27 @@ export const RichTextEditor = forwardRef<
         }}
         view={view}
       />
-      <DaraFilePicker
-        accept="image/*"
-        className="rich-text-image-input"
-        disabled={disabled || !ingestImageFile}
-        onFile={(file) => {
-          const editorView = viewRef.current
-          const ingest = ingestImageFileRef.current
-          if (editorView && ingest) {
-            beginImageIngestion(
-              editorView,
-              () => ingest(file),
-              onMediaErrorRef,
-              viewRef,
-            )
-          }
-        }}
-        onFileDialogOpenChange={onFileDialogOpenChange}
-        ref={imageFilePickerRef}
-      />
+      {ingestImageFile && (
+        <DaraFilePicker
+          accept="image/*"
+          className="rich-text-image-input"
+          disabled={disabled}
+          onFile={(file) => {
+            const editorView = viewRef.current
+            const ingest = ingestImageFileRef.current
+            if (editorView && ingest) {
+              beginImageIngestion(
+                editorView,
+                () => ingest(file),
+                onMediaErrorRef,
+                viewRef,
+              )
+            }
+          }}
+          onFileDialogOpenChange={onFileDialogOpenChange}
+          ref={imageFilePickerRef}
+        />
+      )}
       <div className="rich-text-editor-surface" ref={hostRef} />
       {mathDialog && view && (
         <FormulaDialog
@@ -418,6 +442,26 @@ export const RichTextEditor = forwardRef<
     </div>
   )
 })
+
+function createRichTextEditorState(
+  value: string,
+  openLinkDialog: (view: EditorView) => void,
+): EditorState {
+  return EditorState.create({
+    doc: parseDaraMarkdown(value, daraEditorSchema),
+    plugins: [
+      history(),
+      editorInputRules(),
+      codeBlockSelectAll(),
+      keymap(editorKeyBindings(openLinkDialog)),
+      keymap(baseKeymap),
+      dropCursor(),
+      gapCursor(),
+      tableEditing(),
+    ],
+    schema: daraEditorSchema,
+  })
+}
 
 function clipboardContainsImage(data: DataTransfer | null): boolean {
   if (!data) {
@@ -700,6 +744,7 @@ function insertHardBreak(): Command {
 function EditorToolbar({
   ariaLabel,
   disabled,
+  hiddenControls,
   onImage,
   onLink,
   onMath,
@@ -707,11 +752,34 @@ function EditorToolbar({
 }: {
   ariaLabel: string
   disabled: boolean
+  hiddenControls: readonly RichTextToolbarControlValue[]
   onImage?: () => void
   onLink: () => void
   onMath: (display: boolean) => void
   view: EditorView | null
 }) {
+  const hidden = new Set(hiddenControls)
+  const visible = (control: RichTextToolbarControlValue) => !hidden.has(control)
+  const textControlsVisible =
+    visible(RichTextToolbarControl.Bold) ||
+    visible(RichTextToolbarControl.Italic) ||
+    visible(RichTextToolbarControl.Strikethrough) ||
+    visible(RichTextToolbarControl.Link) ||
+    (Boolean(onImage) && visible(RichTextToolbarControl.Image))
+  const listControlsVisible =
+    visible(RichTextToolbarControl.BulletedList) ||
+    visible(RichTextToolbarControl.NumberedList) ||
+    visible(RichTextToolbarControl.DecreaseIndent) ||
+    visible(RichTextToolbarControl.IncreaseIndent)
+  const technicalControlsVisible =
+    visible(RichTextToolbarControl.BlockQuote) ||
+    visible(RichTextToolbarControl.InlineCode) ||
+    visible(RichTextToolbarControl.CodeBlock) ||
+    visible(RichTextToolbarControl.InlineMath) ||
+    visible(RichTextToolbarControl.DisplayMath)
+  const historyControlsVisible =
+    visible(RichTextToolbarControl.Undo) ||
+    visible(RichTextToolbarControl.Redo)
   const commandButton = (
     label: string,
     shortLabel: ReactNode,
@@ -740,107 +808,135 @@ function EditorToolbar({
       role="toolbar"
       tabIndex={-1}
     >
-      {commandButton(
-        'Bold',
-        'B',
-        toggleMark(daraEditorSchema.marks.strong!),
-        markIsActive(view, 'strong'),
-        '⌘B',
+      {visible(RichTextToolbarControl.Bold) &&
+        commandButton(
+          'Bold',
+          'B',
+          toggleMark(daraEditorSchema.marks.strong!),
+          markIsActive(view, 'strong'),
+          '⌘B',
+        )}
+      {visible(RichTextToolbarControl.Italic) &&
+        commandButton(
+          'Italic',
+          'I',
+          toggleMark(daraEditorSchema.marks.em!),
+          markIsActive(view, 'em'),
+          '⌘I',
+        )}
+      {visible(RichTextToolbarControl.Strikethrough) &&
+        commandButton(
+          'Strikethrough',
+          <span className="toolbar-strike">S</span>,
+          toggleMark(daraEditorSchema.marks.strike!),
+          markIsActive(view, 'strike'),
+          '⇧⌘S',
+        )}
+      {visible(RichTextToolbarControl.Link) && (
+        <ToolbarButton
+          active={markIsActive(view, 'link')}
+          disabled={disabled || !view}
+          label="Link"
+          onPress={onLink}
+          shortcut="⌘K"
+        >
+          <LinkIcon />
+        </ToolbarButton>
       )}
-      {commandButton(
-        'Italic',
-        'I',
-        toggleMark(daraEditorSchema.marks.em!),
-        markIsActive(view, 'em'),
-        '⌘I',
+      {onImage && visible(RichTextToolbarControl.Image) && (
+        <ToolbarButton
+          disabled={disabled || !view}
+          label="Insert image"
+          onPress={onImage}
+        >
+          <DaraImageIcon className="toolbar-icon" />
+        </ToolbarButton>
       )}
-      {commandButton(
-        'Strikethrough',
-        <span className="toolbar-strike">S</span>,
-        toggleMark(daraEditorSchema.marks.strike!),
-        markIsActive(view, 'strike'),
-        '⇧⌘S',
+      {textControlsVisible && listControlsVisible && (
+        <span aria-hidden="true" className="toolbar-divider" />
       )}
-      <ToolbarButton
-        active={markIsActive(view, 'link')}
-        disabled={disabled || !view}
-        label="Link"
-        onPress={onLink}
-        shortcut="⌘K"
-      >
-        <LinkIcon />
-      </ToolbarButton>
-      <ToolbarButton
-        disabled={disabled || !view || !onImage}
-        label="Insert image"
-        onPress={() => onImage?.()}
-      >
-        <DaraImageIcon className="toolbar-icon" />
-      </ToolbarButton>
-      <span aria-hidden="true" className="toolbar-divider" />
-      {commandButton(
-        'Bulleted list',
-        <ListIcon variant="bulleted" />,
-        toggleList('bullet_list'),
-        blockIsActive(view, 'bullet_list'),
+      {visible(RichTextToolbarControl.BulletedList) &&
+        commandButton(
+          'Bulleted list',
+          <ListIcon variant="bulleted" />,
+          toggleList('bullet_list'),
+          blockIsActive(view, 'bullet_list'),
+        )}
+      {visible(RichTextToolbarControl.NumberedList) &&
+        commandButton(
+          'Numbered list',
+          <ListIcon variant="numbered" />,
+          toggleList('ordered_list'),
+          blockIsActive(view, 'ordered_list'),
+        )}
+      {visible(RichTextToolbarControl.DecreaseIndent) &&
+        commandButton(
+          'Decrease indent',
+          <IndentIcon direction="decrease" />,
+          liftListItem(daraEditorSchema.nodes.list_item!),
+          false,
+          '⌘[',
+        )}
+      {visible(RichTextToolbarControl.IncreaseIndent) &&
+        commandButton(
+          'Increase indent',
+          <IndentIcon direction="increase" />,
+          sinkListItem(daraEditorSchema.nodes.list_item!),
+          false,
+          '⌘]',
+        )}
+      {(textControlsVisible || listControlsVisible) &&
+        technicalControlsVisible && (
+          <span aria-hidden="true" className="toolbar-divider" />
+        )}
+      {visible(RichTextToolbarControl.BlockQuote) &&
+        commandButton(
+          'Block quote',
+          <QuoteIcon />,
+          toggleBlock('blockquote'),
+          blockIsActive(view, 'blockquote'),
+        )}
+      {visible(RichTextToolbarControl.InlineCode) &&
+        commandButton(
+          'Inline code',
+          <InlineCodeIcon />,
+          toggleMark(daraEditorSchema.marks.code!),
+          markIsActive(view, 'code'),
+          '⌘E',
+        )}
+      {visible(RichTextToolbarControl.CodeBlock) &&
+        commandButton(
+          'Code block',
+          <CodeBlockIcon />,
+          toggleTextBlock('code_block'),
+          blockIsActive(view, 'code_block'),
+        )}
+      {visible(RichTextToolbarControl.InlineMath) && (
+        <ToolbarButton
+          disabled={disabled || !view}
+          label="Inline math"
+          onPress={() => onMath(false)}
+        >
+          <span className="toolbar-math">fx</span>
+        </ToolbarButton>
       )}
-      {commandButton(
-        'Numbered list',
-        <ListIcon variant="numbered" />,
-        toggleList('ordered_list'),
-        blockIsActive(view, 'ordered_list'),
+      {visible(RichTextToolbarControl.DisplayMath) && (
+        <ToolbarButton
+          disabled={disabled || !view}
+          label="Display math"
+          onPress={() => onMath(true)}
+        >
+          <span className="toolbar-math-symbol">∑</span>
+        </ToolbarButton>
       )}
-      {commandButton(
-        'Decrease indent',
-        <IndentIcon direction="decrease" />,
-        liftListItem(daraEditorSchema.nodes.list_item!),
-        false,
-        '⌘[',
-      )}
-      {commandButton(
-        'Increase indent',
-        <IndentIcon direction="increase" />,
-        sinkListItem(daraEditorSchema.nodes.list_item!),
-        false,
-        '⌘]',
-      )}
-      <span aria-hidden="true" className="toolbar-divider" />
-      {commandButton(
-        'Block quote',
-        <QuoteIcon />,
-        toggleBlock('blockquote'),
-        blockIsActive(view, 'blockquote'),
-      )}
-      {commandButton(
-        'Inline code',
-        <InlineCodeIcon />,
-        toggleMark(daraEditorSchema.marks.code!),
-        markIsActive(view, 'code'),
-        '⌘E',
-      )}
-      {commandButton(
-        'Code block',
-        <CodeBlockIcon />,
-        toggleTextBlock('code_block'),
-        blockIsActive(view, 'code_block'),
-      )}
-      <ToolbarButton
-        disabled={disabled || !view}
-        label="Inline math"
-        onPress={() => onMath(false)}
-      >
-        <span className="toolbar-math">fx</span>
-      </ToolbarButton>
-      <ToolbarButton
-        disabled={disabled || !view}
-        label="Display math"
-        onPress={() => onMath(true)}
-      >
-        <span className="toolbar-math-symbol">∑</span>
-      </ToolbarButton>
-      <span aria-hidden="true" className="toolbar-divider" />
-      {commandButton('Undo', <HistoryIcon direction="undo" />, undo, false, '⌘Z')}
-      {commandButton('Redo', <HistoryIcon direction="redo" />, redo, false, '⇧⌘Z')}
+      {(textControlsVisible || listControlsVisible || technicalControlsVisible) &&
+        historyControlsVisible && (
+          <span aria-hidden="true" className="toolbar-divider" />
+        )}
+      {visible(RichTextToolbarControl.Undo) &&
+        commandButton('Undo', <HistoryIcon direction="undo" />, undo, false, '⌘Z')}
+      {visible(RichTextToolbarControl.Redo) &&
+        commandButton('Redo', <HistoryIcon direction="redo" />, redo, false, '⇧⌘Z')}
     </div>
   )
 }

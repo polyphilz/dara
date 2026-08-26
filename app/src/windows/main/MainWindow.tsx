@@ -29,6 +29,7 @@ import {
   tauriReviewGateway,
   type CardContent,
   type ReviewControllerState,
+  type ReviewContext,
 } from '../../review/index.ts'
 import {
   nextStudyDayBoundary,
@@ -53,6 +54,10 @@ import { CardBrowser } from './CardBrowser.tsx'
 import { Home } from './Home.tsx'
 import { invalidateHomeStats } from './home-stats-cache.ts'
 import { MainNavigation } from './MainNavigation.tsx'
+import {
+  ReviewScratchpad,
+  ReviewScratchpadToggle,
+} from './ReviewScratchpad.tsx'
 import { RoutedCardForm } from './RoutedCardForm.tsx'
 import { Settings } from './Settings.tsx'
 import { MainWindowRoutePath } from './main-window-routes.ts'
@@ -66,6 +71,7 @@ const grades = [
 
 const MAX_TIMER_DELAY = 2_147_000_000
 const CLOCK_REFRESH_GRACE = 25
+const REVIEW_SCRATCHPAD_ID = 'review-scratchpad'
 
 const MainWindowMode = {
   Home: 'HOME',
@@ -168,6 +174,7 @@ function MainWindowContent() {
   const [browseNavigationToken, setBrowseNavigationToken] = useState(0)
   const [browseRefreshToken, setBrowseRefreshToken] = useState(0)
   const [homeRefreshToken, setHomeRefreshToken] = useState(0)
+  const [reviewScratchpadOpen, setReviewScratchpadOpen] = useState(false)
   const [settingsNavigationToken, setSettingsNavigationToken] = useState(0)
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [restoredBackupTakeoverAvailable, setRestoredBackupTakeoverAvailable] =
@@ -209,6 +216,12 @@ function MainWindowContent() {
       priorMode !== MainWindowMode.Review
     ) {
       void controller.refresh()
+    }
+    if (
+      mode !== MainWindowMode.Review &&
+      priorMode === MainWindowMode.Review
+    ) {
+      setReviewScratchpadOpen(false)
     }
   }, [controller, mode])
 
@@ -289,7 +302,11 @@ function MainWindowContent() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (mode !== MainWindowMode.Review) {
+      if (
+        mode !== MainWindowMode.Review ||
+        event.defaultPrevented ||
+        isReviewScratchpadTarget(event.target)
+      ) {
         return
       }
       const interpreted = interpretReviewKeyDown({
@@ -476,10 +493,14 @@ function MainWindowContent() {
     refreshHomeStats()
     setBrowseRefreshToken((value) => value + 1)
   }, [controller, refreshHomeStats])
+  const scratchpadExpanded =
+    mode === MainWindowMode.Review &&
+    reviewScratchpadOpen &&
+    'card' in state
 
   return (
     <main
-      className={`main-window${mode === MainWindowMode.Home ? ' main-window-home' : ''}${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}${mode === MainWindowMode.Settings ? ' main-window-settings' : ''}`}
+      className={`main-window${mode === MainWindowMode.Home ? ' main-window-home' : ''}${mode === MainWindowMode.Create ? ' main-window-creating' : ''}${mode === MainWindowMode.Browse ? ' main-window-browsing' : ''}${mode === MainWindowMode.Settings ? ' main-window-settings' : ''}${scratchpadExpanded ? ' main-window-review-scratchpad-open' : ''}`}
     >
       <h1 className="visually-hidden">Dara</h1>
       <header className="main-header">
@@ -556,7 +577,12 @@ function MainWindowContent() {
           }
         />
       ) : mode === MainWindowMode.Review ? (
-        <ReviewContent controller={controller} state={state} />
+        <ReviewContent
+          controller={controller}
+          onScratchpadOpenChange={setReviewScratchpadOpen}
+          scratchpadOpen={reviewScratchpadOpen}
+          state={state}
+        />
       ) : mode === MainWindowMode.Settings ? (
         <Settings
           navigationToken={settingsNavigationToken}
@@ -571,9 +597,13 @@ function MainWindowContent() {
 
 function ReviewContent({
   controller,
+  onScratchpadOpenChange,
+  scratchpadOpen,
   state,
 }: {
   controller: ReviewController
+  onScratchpadOpenChange: (open: boolean) => void
+  scratchpadOpen: boolean
   state: ReviewControllerState
 }) {
   switch (state.phase) {
@@ -593,28 +623,36 @@ function ReviewContent({
               {state.notice}
             </DaraText>
           )}
-          <article className="review-card">
+          <ReviewWorkspace
+            actions={
+              <>
+                <DaraButton
+                  className="reveal-action"
+                  type="button"
+                  onClick={() => controller.reveal()}
+                  variant={DaraButtonVariant.Primary}
+                >
+                  Reveal answer
+                </DaraButton>
+                <DaraText
+                  as="p"
+                  className="key-hint"
+                  tone={DaraTextTone.Muted}
+                  variant={DaraTextVariant.Caption}
+                >
+                  Space to reveal
+                </DaraText>
+              </>
+            }
+            context={state.card.context}
+            onScratchpadOpenChange={onScratchpadOpenChange}
+            scratchpadOpen={scratchpadOpen}
+          >
             <CardQuestion
               content={state.card.context.cardContent}
               variantKey={state.card.context.reviewCard.variantKey}
             />
-          </article>
-          <DaraButton
-            className="reveal-action"
-            type="button"
-            onClick={() => controller.reveal()}
-            variant={DaraButtonVariant.Primary}
-          >
-            Reveal answer
-          </DaraButton>
-          <DaraText
-            as="p"
-            className="key-hint"
-            tone={DaraTextTone.Muted}
-            variant={DaraTextVariant.Caption}
-          >
-            Space to reveal
-          </DaraText>
+          </ReviewWorkspace>
         </section>
       )
     case ReviewControllerPhase.Revealed:
@@ -633,41 +671,58 @@ function ReviewContent({
               {state.notice}
             </DaraText>
           )}
-          <article className="review-card">
+          <ReviewWorkspace
+            actions={
+              <>
+                <div
+                  className="grade-grid"
+                  aria-label="Grade this card"
+                  role="group"
+                >
+                  {grades.map(({ grade, label }) => (
+                    <DaraButton
+                      className={
+                        grade === state.focusedGrade
+                          ? 'grade-button grade-focused'
+                          : 'grade-button'
+                      }
+                      disabled={saving}
+                      key={grade}
+                      type="button"
+                      onClick={() => void controller.submitGrade(grade)}
+                    >
+                      <span>{label}</span>
+                      <small>
+                        {formatInterval(
+                          state.previews[grade].cache,
+                          state.previewedAt,
+                        )}
+                      </small>
+                      <kbd>{grade}</kbd>
+                    </DaraButton>
+                  ))}
+                </div>
+                <DaraText
+                  as="p"
+                  className="key-hint"
+                  tone={DaraTextTone.Muted}
+                  variant={DaraTextVariant.Caption}
+                >
+                  {saving
+                    ? 'Saving…'
+                    : '1–4 to grade · Tab to choose · Enter to submit'}
+                </DaraText>
+              </>
+            }
+            context={state.card.context}
+            onScratchpadOpenChange={onScratchpadOpenChange}
+            scratchpadOpen={scratchpadOpen}
+          >
             <CardAnswer
               content={content}
               variantKey={state.card.context.reviewCard.variantKey}
             />
-          </article>
-          <div className="grade-grid" aria-label="Grade this card" role="group">
-            {grades.map(({ grade, label }) => (
-              <DaraButton
-                className={
-                  grade === state.focusedGrade
-                    ? 'grade-button grade-focused'
-                    : 'grade-button'
-                }
-                disabled={saving}
-                key={grade}
-                type="button"
-                onClick={() => void controller.submitGrade(grade)}
-              >
-                <span>{label}</span>
-                <small>
-                  {formatInterval(state.previews[grade].cache, state.previewedAt)}
-                </small>
-                <kbd>{grade}</kbd>
-              </DaraButton>
-            ))}
-          </div>
-          <DaraText
-            as="p"
-            className="key-hint"
-            tone={DaraTextTone.Muted}
-            variant={DaraTextVariant.Caption}
-          >
-            {saving ? 'Saving…' : '1–4 to grade · Tab to choose · Enter to submit'}
-          </DaraText>
+          </ReviewWorkspace>
         </section>
       )
     }
@@ -696,6 +751,53 @@ function ReviewContent({
         </StatusScreen>
       )
   }
+}
+
+function ReviewWorkspace({
+  actions,
+  children,
+  context,
+  onScratchpadOpenChange,
+  scratchpadOpen,
+}: {
+  actions: ReactNode
+  children: ReactNode
+  context: ReviewContext
+  onScratchpadOpenChange: (open: boolean) => void
+  scratchpadOpen: boolean
+}) {
+  return (
+    <div
+      className={`review-workspace${scratchpadOpen ? ' review-workspace-open' : ''}`}
+    >
+      <article className="review-card">{children}</article>
+      <ReviewScratchpadToggle
+        controls={REVIEW_SCRATCHPAD_ID}
+        onToggle={() => onScratchpadOpenChange(!scratchpadOpen)}
+        open={scratchpadOpen}
+      />
+      <ReviewScratchpad
+        hidden={!scratchpadOpen}
+        id={REVIEW_SCRATCHPAD_ID}
+        sessionKey={reviewScratchpadSessionKey(context)}
+      />
+      <div className="review-actions">{actions}</div>
+    </div>
+  )
+}
+
+function reviewScratchpadSessionKey(context: ReviewContext): string {
+  return `${context.reviewCard.id}:${context.lastCardSequence}`
+}
+
+function isReviewScratchpadTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false
+  }
+  return (
+    target.closest('.review-scratchpad, .review-scratchpad-toggle') !== null ||
+    target.closest('input, textarea, [contenteditable="true"]') !== null
+  )
 }
 
 function CardQuestion({

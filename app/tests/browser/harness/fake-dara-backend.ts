@@ -65,7 +65,7 @@ export class FakeDaraBackend {
   readonly #items: CardContentListItem[] = []
   readonly #commands: FakeCommandRecord[] = []
   readonly #recordedGrades: RecordGradeInput[] = []
-  readonly #reviewContext: ReviewContext
+  readonly #reviewContexts: ReviewContext[]
   #offsiteBackupStatus = disabledBackupStatus()
   #restoredBackupTakeoverRequired = false
   #dismissedQuickAdd = 0
@@ -73,12 +73,16 @@ export class FakeDaraBackend {
 
   constructor(scenario: BrowserScenario) {
     this.scenario = scenario
-    this.#reviewContext =
+    const reviewContext =
       scenario.id === BrowserScenarioId.MainReviewCloze
         ? createClozeReviewContext()
         : scenario.id === BrowserScenarioId.MainReviewCodeBlock
           ? createCodeBlockReviewContext()
-        : createReviewContext()
+          : createReviewContext()
+    this.#reviewContexts =
+      scenario.id === BrowserScenarioId.MainReviewTwoCards
+        ? [reviewContext, createSecondReviewContext()]
+        : [reviewContext]
     if (scenario.id === BrowserScenarioId.MainBrowseBasic) {
       this.#insertBasicCard(
         'Why does retrieval practice work?',
@@ -270,12 +274,16 @@ export class FakeDaraBackend {
           envelope.input,
           command,
         ) as unknown as RecordGradeInput
+        const reviewContext = this.#requireReviewContext(
+          input.reviewCardId,
+          command,
+        )
         this.#recordedGrades.push(structuredClone(input))
-        this.#reviewContext.cache = structuredClone(input.nextCache)
-        this.#reviewContext.lastCardSequence = input.expectedCardSequence + 1
-        this.#reviewContext.reviewCard.updatedAt += 1
-        this.#reviewContext.reviewHistory.push({
-          cardSequence: this.#reviewContext.lastCardSequence,
+        reviewContext.cache = structuredClone(input.nextCache)
+        reviewContext.lastCardSequence = input.expectedCardSequence + 1
+        reviewContext.reviewCard.updatedAt += 1
+        reviewContext.reviewHistory.push({
+          cardSequence: reviewContext.lastCardSequence,
           eventId: input.eventId,
           review: structuredClone(input.review),
           schedulerConfigId: input.expectedSchedulerConfigId,
@@ -284,27 +292,33 @@ export class FakeDaraBackend {
         return {
           disposition: MutationDisposition.Applied,
           eventId: input.eventId,
-          cardSequence: this.#reviewContext.lastCardSequence,
-          context: this.#reviewContext,
+          cardSequence: reviewContext.lastCardSequence,
+          context: reviewContext,
         }
       }
       case DaraIpcCommand.UndoLastGrade: {
         const envelope = requireRecord(payload, command)
         const input = requireRecord(envelope.input, command)
         const eventId = requireString(input.eventId, 'input.eventId', command)
+        const reviewCardId = requireString(
+          input.reviewCardId,
+          'input.reviewCardId',
+          command,
+        )
+        const reviewContext = this.#requireReviewContext(reviewCardId, command)
         requireString(input.targetEventId, 'input.targetEventId', command)
         this.#recordedGrades.pop()
-        this.#reviewContext.reviewHistory.pop()
-        this.#reviewContext.cache = structuredClone(
+        reviewContext.reviewHistory.pop()
+        reviewContext.cache = structuredClone(
           requireRecord(input.nextCache, command),
         ) as unknown as ReviewContext['cache']
-        this.#reviewContext.lastCardSequence += 1
-        this.#reviewContext.reviewCard.updatedAt += 1
+        reviewContext.lastCardSequence += 1
+        reviewContext.reviewCard.updatedAt += 1
         return {
           disposition: MutationDisposition.Applied,
           eventId,
-          cardSequence: this.#reviewContext.lastCardSequence,
-          context: this.#reviewContext,
+          cardSequence: reviewContext.lastCardSequence,
+          context: reviewContext,
         }
       }
       case DaraIpcCommand.RenewMediaLease: {
@@ -343,9 +357,9 @@ export class FakeDaraBackend {
         return semanticReadyStatus()
       case DaraIpcCommand.SelectNextReviewCard:
         requireRecord(payload, command)
-        return this.#recordedGrades.length === 0
+        return this.#recordedGrades.length < this.#reviewContexts.length
           ? {
-              context: this.#reviewContext,
+              context: this.#reviewContexts[this.#recordedGrades.length],
               kind: ReviewQueueSelectionKind.Card,
               lane: ReviewQueueLane.New,
               nextNormalLaneCursor: 0,
@@ -496,6 +510,19 @@ export class FakeDaraBackend {
     }
     return item
   }
+
+  #requireReviewContext(
+    reviewCardId: string,
+    command: DaraIpcCommandType,
+  ): ReviewContext {
+    const context = this.#reviewContexts.find(
+      (candidate) => candidate.reviewCard.id === reviewCardId,
+    )
+    if (!context) {
+      throw malformed(command, `unknown review card id ${reviewCardId}`)
+    }
+    return context
+  }
 }
 
 function createClozeReviewContext(): ReviewContext {
@@ -545,6 +572,27 @@ function createCodeBlockReviewContext(): ReviewContext {
         '```',
       ].join('\n'),
       source: null,
+    },
+  }
+}
+
+function createSecondReviewContext(): ReviewContext {
+  const context = createReviewContext()
+  return {
+    ...context,
+    cardContent: {
+      ...context.cardContent,
+      backMd: 'The scratchpad should still be open, with a fresh editor.',
+      frontMd: 'What should happen to an open scratchpad after grading the previous card?',
+      id: '01980c8e-6c00-7000-8000-000000000211',
+    },
+    reviewCard: {
+      ...context.reviewCard,
+      id: '01980c8e-6c00-7000-8000-000000000212',
+    },
+    schedulerConfig: {
+      ...context.schedulerConfig,
+      id: '01980c8e-6c00-7000-8000-000000000213',
     },
   }
 }
