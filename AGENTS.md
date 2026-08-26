@@ -29,6 +29,12 @@
 - Native controls remain appropriate when their native semantics or platform integration are intentional requirements. If an established Dara pattern cannot be reused, state the concrete reason before implementation and keep the new control aligned with the existing visual tokens and interaction conventions.
 - Review a new control beside its closest existing analogue before considering the work complete. Verify at least its normal, hover, focus, open/active, disabled, and dark-mode states as applicable, along with keyboard navigation and focus return. Add behavior tests for shared primitives; when visual prior art exists, explicitly compare against it rather than judging the new control in isolation.
 
+## Frontend visual validation
+
+- Treat every tangible frontend change—including layout, styling, controls, typography, responsive behavior, and rendered states—as requiring canonical visual validation before completion. Run `pnpm test:visual` from `app/` even when the faster frontend suites already pass.
+- Inspect every failed actual/diff image locally at full size and confirm that each pixel delta matches the intended behavior. Do not accept or replace a baseline merely to make CI green.
+- When an intentional UI change alters a baseline, replace only the affected canonical WebKit screenshots with reviewed output from the Frontend visual workflow, then rerun `pnpm test:visual` locally. Because local baseline generation is guarded, download the `frontend-visual-baselines-<run-id>` artifact from a failed visual run or trigger the workflow with `update_snapshots` enabled. Do not consider the work complete while its baselines are stale or visual CI is knowingly failing.
+
 ## Closed string sets
 
 - Represent every finite domain, state-machine, protocol, lifecycle, or UI-mode string set with named values. Do not scatter raw string literals through comparisons, constructors, switches, database queries, or tests.

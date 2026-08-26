@@ -90,6 +90,10 @@ interface UndoRecord {
   nextNormalLaneCursor: number
 }
 
+interface LoadNextOptions {
+  retainCurrentState?: boolean
+}
+
 type Listener = () => void
 type RetryOperation = () => Promise<void>
 
@@ -303,7 +307,9 @@ export class ReviewController {
       }
       this.onReviewDataChanged()
       this.normalLaneCursor = card.nextNormalLaneCursor
-      await this.loadNext(this.normalLaneCursor, null)
+      await this.loadNext(this.normalLaneCursor, null, {
+        retainCurrentState: true,
+      })
     } catch (error) {
       if (operationId !== this.operationId) {
         return
@@ -363,14 +369,20 @@ export class ReviewController {
     }
   }
 
-  private async loadNext(cursor: number, notice: string | null): Promise<void> {
+  private async loadNext(
+    cursor: number,
+    notice: string | null,
+    { retainCurrentState = false }: LoadNextOptions = {},
+  ): Promise<void> {
     const operationId = ++this.operationId
     this.retryOperation = null
-    this.publish({
-      phase: ReviewControllerPhase.Loading,
-      notice,
-      canUndo: this.lastGrade !== null,
-    })
+    if (!retainCurrentState) {
+      this.publish({
+        phase: ReviewControllerPhase.Loading,
+        notice,
+        canUndo: this.lastGrade !== null,
+      })
+    }
     try {
       const moment = this.captureMoment()
       const result = await this.gateway.selectNextReviewCard({
