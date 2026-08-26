@@ -54,6 +54,7 @@ const MAX_RESTORE_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 const RESTORE_DRY_RUN_TIMEOUT: Duration = Duration::from_secs(35);
 const RESTORE_EXECUTION_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const RESTORE_PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const RESTORE_TASK_INITIALIZATION_GRACE_PERIOD: Duration = Duration::from_secs(60);
 const DRILL_REPORT_FILE_NAME: &str = "restore-drill-report-v2.json";
 const DRILL_REPORT_FORMAT_VERSION: u32 = 2;
 const MAX_DRILL_REPORT_BYTES: u64 = 64 * 1024;
@@ -1691,9 +1692,22 @@ fn sweep_stale_restore_tasks(base: &Path, prefix: &str) -> Result<(), BackupErro
             continue;
         }
         let path = entry.path();
-        let metadata =
-            fs::symlink_metadata(&path).map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        let metadata = match fs::symlink_metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
+        };
         if !metadata.file_type().is_dir() {
+            continue;
+        }
+        // A creator publishes the directory before it can acquire the lock. Give that
+        // initialization window the same grace period whether or not the lock file exists yet.
+        let recently_created = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age < RESTORE_TASK_INITIALIZATION_GRACE_PERIOD);
+        if recently_created {
             continue;
         }
         let lock_path = path.join(".dara-restore-task.lock");
@@ -1705,20 +1719,14 @@ fn sweep_stale_restore_tasks(base: &Path, prefix: &str) -> Result<(), BackupErro
                     return Err(BackupErrorCode::RestoreValidationFailed);
                 }
             },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let recently_created = metadata
-                    .modified()
-                    .ok()
-                    .and_then(|modified| modified.elapsed().ok())
-                    .is_some_and(|age| age < Duration::from_secs(60));
-                if recently_created {
-                    continue;
-                }
-                None
-            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
             Err(_) => return Err(BackupErrorCode::RestoreValidationFailed),
         };
-        fs::remove_dir_all(&path).map_err(|_| BackupErrorCode::RestoreValidationFailed)?;
+        if let Err(error) = fs::remove_dir_all(&path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(BackupErrorCode::RestoreValidationFailed);
+            }
+        }
         drop(lock);
     }
     Ok(())
@@ -1852,8 +1860,9 @@ mod tests {
         collections::HashSet,
         sync::{
             atomic::{AtomicUsize, Ordering},
-            Arc, Mutex,
+            Arc, Barrier, Mutex,
         },
+        time::SystemTime,
     };
 
     use super::*;
@@ -3425,6 +3434,14 @@ mod tests {
         create_private_directory(&stale).expect("stale task");
         fs::write(stale.join("authored.sqlite3"), b"stale").expect("stale data");
         File::create(stale.join(".dara-restore-task.lock")).expect("stale task lock");
+        File::open(&stale)
+            .expect("stale task directory")
+            .set_times(fs::FileTimes::new().set_modified(
+                SystemTime::now()
+                    - RESTORE_TASK_INITIALIZATION_GRACE_PERIOD
+                    - Duration::from_secs(1),
+            ))
+            .expect("age stale task");
         let unrelated = base.path().join(".dara-restore-drill-not-a-uuid");
         create_private_directory(&unrelated).expect("unrelated directory");
 
@@ -3443,6 +3460,41 @@ mod tests {
         assert!(!first_path.exists());
         assert!(!second_path.exists());
         assert!(unrelated.exists());
+    }
+
+    #[test]
+    fn concurrent_restore_task_creation_and_cleanup_is_race_safe() {
+        const WORKER_COUNT: usize = 8;
+        const TASKS_PER_WORKER: usize = 64;
+
+        let base = tempfile::tempdir().expect("task base");
+        let base_path = Arc::new(base.path().to_owned());
+        let barrier = Arc::new(Barrier::new(WORKER_COUNT));
+        let workers = (0..WORKER_COUNT)
+            .map(|_| {
+                let base_path = Arc::clone(&base_path);
+                let barrier = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    barrier.wait();
+                    for _ in 0..TASKS_PER_WORKER {
+                        let task = RestoreTask::create(
+                            base_path.as_path(),
+                            ".dara-concurrent-restore-test-",
+                        )?;
+                        thread::yield_now();
+                        drop(task);
+                    }
+                    Ok::<(), BackupErrorCode>(())
+                })
+            })
+            .collect::<Vec<_>>();
+
+        for worker in workers {
+            worker
+                .join()
+                .expect("restore task worker")
+                .expect("concurrent restore task cleanup");
+        }
     }
 
     #[cfg(unix)]
